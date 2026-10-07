@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         NotionAI++ [20261007] v1.0.1
+// @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
 // @version      20261007.1.0.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.

@@ -13,7 +13,7 @@ const REPO = "https://github.com/0-V-linuxdo/NotionPP";
 const RAW = "https://raw.githubusercontent.com/0-V-linuxdo/NotionPP/main/userscript/NotionPP.user.js";
 
 const HEADER = `// ==UserScript==
-// @name         NotionAI++ ${displayVersion}
+// @name         NotionAI++
 // @namespace    ${REPO}
 // @version      ${VERSION_DATE}.${pkg.version}
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
