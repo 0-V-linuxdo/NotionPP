@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         NotionAI++ [20261007] v1.0.0
+// @name         NotionAI++ [20261007] v1.0.1
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.0.0
+// @version      20261007.1.0.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -370,6 +370,25 @@
       }
     }
   }
+  function resetValues(plugin, keys) {
+    const current = bag[plugin];
+    if (!current || !keys.some((key) => (key in current)))
+      return;
+    const next = { ...current };
+    for (const key of keys)
+      delete next[key];
+    bag = { ...bag, [plugin]: next };
+    persist();
+    for (const key of keys) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(plugin, key);
+        } catch (error) {
+          logger2.error("Settings listener failed:", error);
+        }
+      }
+    }
+  }
   function onSettingsChange(listener) {
     listeners.add(listener);
     return () => void listeners.delete(listener);
@@ -513,6 +532,38 @@
     };
   }
 
+  // src/utils/icons.ts
+  var Icons = {
+    gauge: `<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>`,
+    list: `<path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M3 6h.01"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M8 6h13"/>`,
+    collapse: `<path d="m7 20 5-5 5 5"/><path d="m7 4 5 5 5-5"/>`,
+    highlighter: `<path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/>`,
+    smile: `<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><path d="M9 9h.01"/><path d="M15 9h.01"/>`,
+    cog: `<path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z"/><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M12 2v2"/><path d="M12 22v-2"/><path d="m17 20.66-1-1.73"/><path d="M11 10.27 7 3.34"/><path d="m20.66 17-1.73-1"/><path d="m3.34 7 1.73 1"/><path d="M14 12h8"/><path d="M2 12h2"/><path d="m20.66 7-1.73 1"/><path d="m3.34 17 1.73-1"/><path d="m17 3.34-1 1.73"/><path d="m11 13.73-4 6.93"/>`,
+    plug: `<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>`,
+    sliders: `<path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/>`,
+    star: `<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>`,
+    pin: `<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>`,
+    x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+    info: `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`,
+    alert: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
+    lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
+  };
+  function svgIcon(markup, filled = false) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", filled ? "currentColor" : "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "2");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${markup}</svg>`, "image/svg+xml");
+    for (const child of [...doc.documentElement.childNodes])
+      svg.appendChild(document.importNode(child, true));
+    return svg;
+  }
+
   // src/plugins/autoCollapseThinking/index.ts
   var TOGGLE = "[role='button'][aria-expanded][aria-controls]";
   var STEP_TITLE = ".notion-agent-tool-use-title";
@@ -604,6 +655,8 @@
     name: "AutoCollapseThinking",
     title: "自动折叠 AI 思考",
     description: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+    icon: Icons.collapse,
+    tags: ["chat"],
     enabledByDefault: true,
     settings,
     start() {
@@ -1170,6 +1223,8 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     name: PLUGIN,
     title: "输入框高亮色",
     description: "给 Notion AI 输入框描一圈自定义颜色（普通 / 黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+    icon: Icons.highlighter,
+    tags: ["composer", "appearance"],
     enabledByDefault: true,
     settings: settings2,
     start() {
@@ -1693,6 +1748,8 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     name: "GreetingCustomizer",
     title: "自定义问候语",
     description: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+    icon: Icons.smile,
+    tags: ["home", "appearance"],
     enabledByDefault: true,
     settings: settings3,
     start() {
@@ -2161,6 +2218,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     name: "chatNavigator",
     title: "对话目录 / Chat navigator",
     description: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+    icon: Icons.list,
+    tags: ["chat"],
     enabledByDefault: true,
     settings: settings4,
     start() {
@@ -2214,154 +2273,483 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       handler(payload);
   }
 
-  // src/plugins/settings/index.ts
-  var SETTINGS_HOST_ID = "notionai-pp-settings";
+  // src/plugins/settings/styles.ts
   var CSS2 = `
 :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.05); --accent: #2383e2;
-  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-:host([data-theme="dark"]) { --bg: #252525; --text: #ebebea; --muted: #9b9b9b; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.06); }
+  --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #f7f7f5; --surface-hover: rgba(55,53,47,.06);
+  --border-l1: rgba(55,53,47,.09); --border-l2: rgba(55,53,47,.16);
+  --fg-primary: #37352f; --fg-secondary: #787774; --fg-tertiary: #a5a29a; --fg-invert: #ffffff;
+  --fg-danger: #e03e3e; --fg-warning: #d9730d; --overlay: rgba(15,15,15,.45); --shadow: 0 16px 48px rgba(15,15,15,.2);
+  color-scheme: light;
+  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--fg-primary); }
+:host([data-theme="dark"]) {
+  --surface-base: #191919; --surface-l1: #202020; --surface-l2: #252525; --surface-hover: rgba(255,255,255,.055);
+  --border-l1: rgba(255,255,255,.08); --border-l2: rgba(255,255,255,.14);
+  --fg-primary: #ebebea; --fg-secondary: #9b9b9b; --fg-tertiary: #6e6e6e; --fg-invert: #191919;
+  --fg-danger: #ff7369; --overlay: rgba(0,0,0,.6); --shadow: 0 16px 48px rgba(0,0,0,.5);
+  color-scheme: dark; }
 * { box-sizing: border-box; }
-.backdrop { position: absolute; inset: 0; background: rgba(15,15,15,.45); display: grid; place-items: center; }
-.dialog { width: min(520px, calc(100vw - 32px)); max-height: min(80vh, 680px); overflow: auto; border-radius: 12px;
-  color: var(--text); background: var(--bg); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--border); background: var(--bg); }
-h2 { margin: 0; font-size: 16px; } small { color: var(--muted); font-weight: 400; margin-left: 6px; }
-.close { width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 18px; cursor: pointer; }
-.close:hover { background: var(--hover); color: var(--text); }
-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
-section:last-child { border-bottom: 0; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.name { font-weight: 600; } .desc { margin-top: 3px; color: var(--muted); font-size: 12.5px; }
-.options { margin-top: 10px; display: grid; gap: 8px; padding-left: 2px; }
-.options[data-off] { opacity: .45; pointer-events: none; }
-label.opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
-input[type="color"] { width: 44px; height: 24px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer; }
-input.num { width: 72px; font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-button.act { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-button.act:hover { background: var(--hover); }
-select { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-.switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; appearance: none; margin: 0; border-radius: 99px;
-  background: rgba(135,131,120,.3); cursor: pointer; transition: background .15s; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.switch:checked { background: var(--accent); } .switch:checked::after { transform: translateX(14px); }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
+svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--fg-primary) 55%, transparent); outline-offset: 1px; }
+
+.layer { position: fixed; inset: 0; display: grid; place-items: center; padding: 1rem; }
+.layer-root { background: var(--overlay); }
+.layer-nested { background: transparent; }
+.layer-confirm { background: color-mix(in srgb, var(--overlay) 60%, transparent); }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; height: 2rem; padding: 0 .875rem;
+  border-radius: .625rem; border: 1px solid transparent; font-size: .8125rem; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background-color .12s, border-color .12s, color .12s; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--fg-primary); color: var(--fg-invert); }
+.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-primary) 86%, var(--surface-base)); }
+.btn-secondary { background: var(--surface-l1); border-color: var(--border-l2); }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-tertiary { background: transparent; }
+.btn-tertiary:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-danger { background: var(--fg-danger); color: #fff; }
+.btn-danger:hover { background: color-mix(in srgb, var(--fg-danger) 85%, #000); }
+.btn-square { width: 2rem; padding: 0; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; padding: 0;
+  border: 0; border-radius: .5rem; background: transparent; color: var(--fg-tertiary); cursor: pointer; }
+.icon-btn:hover { background: var(--surface-hover); color: var(--fg-primary); }
+.icon-btn.active { color: var(--fg-primary); }
+.icon-btn svg { width: .9375rem; height: .9375rem; }
+
+/* Switch (Grok/Void++ SettingsSwitch) */
+.switch { position: relative; flex-shrink: 0; width: 2.25rem; height: 1.25rem; margin: 0; padding: 0; border: 0; border-radius: 999px;
+  background: color-mix(in srgb, var(--fg-primary) 22%, transparent); cursor: pointer; transition: background-color .15s; }
+.switch::after { content: ""; position: absolute; top: .125rem; left: .125rem; width: 1rem; height: 1rem; border-radius: 50%;
+  background: var(--surface-base); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
+.switch[aria-checked="true"] { background: var(--fg-primary); }
+.switch[aria-checked="true"]::after { transform: translateX(1rem); }
+.switch:disabled { cursor: default; opacity: .6; }
+
+/* Inputs */
+.input, .select { height: 2.25rem; border-radius: .75rem; border: 1px solid var(--border-l2); background: var(--surface-l1);
+  color: var(--fg-primary); font: inherit; font-size: .875rem; padding: 0 .75rem; }
+.input::placeholder { color: var(--fg-tertiary); }
+.input:focus, .select:focus { outline: none; border-color: color-mix(in srgb, var(--fg-primary) 45%, transparent); }
+.select { appearance: none; padding-right: 2rem; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-secondary) 50%), linear-gradient(135deg, var(--fg-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 1rem) 52%, calc(100% - .7rem) 52%; background-size: .3rem .3rem; background-repeat: no-repeat; }
+.select option { background: var(--surface-l1); color: var(--fg-primary); }
+
+/* Main dialog: nav + content */
+.dialog { position: relative; display: flex; width: min(56rem, calc(100vw - 2rem)); height: min(40rem, calc(100vh - 2rem));
+  border-radius: 1rem; border: 1px solid var(--border-l1); background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
+.nav { position: relative; flex: 0 0 13rem; display: flex; flex-direction: column; gap: .125rem; padding: 1rem .75rem;
+  background: var(--surface-l2); border-right: 1px solid var(--border-l1); }
+.nav-group { padding: .25rem .5rem .375rem; font-size: .75rem; font-weight: 500; color: var(--fg-tertiary); }
+.nav-item { display: flex; align-items: center; gap: .5rem; height: 2rem; padding: 0 .625rem; border: 0; border-radius: .5rem;
+  background: transparent; color: var(--fg-secondary); font-size: .875rem; text-align: left; cursor: pointer; }
+.nav-item:hover { background: var(--surface-hover); color: var(--fg-primary); }
+.nav-item[aria-current="page"] { background: var(--surface-hover); color: var(--fg-primary); font-weight: 500; }
+.version { position: absolute; left: 0; right: 0; bottom: 0; padding: .75rem; font-size: .625rem; line-height: 1rem;
+  color: var(--fg-secondary); opacity: .45; user-select: text; }
+.version a { color: inherit; text-decoration: none; } .version a:hover { text-decoration: underline; }
+.content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 1.25rem; }
+.content-head { display: flex; align-items: center; gap: .375rem; padding: 0 3.5rem 0 1.25rem; margin-bottom: 1rem; }
+.content-head h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
+.hint { display: inline-flex; color: var(--fg-tertiary); cursor: help; }
+.hint svg { width: .875rem; height: .875rem; }
+.close { position: absolute; top: 1rem; right: 1rem; z-index: 2; color: var(--fg-secondary); }
+.tab-root { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1rem; padding: 0 1.25rem; }
+
+/* Plugins tab */
+.tabs { display: flex; flex-wrap: wrap; gap: .125rem; border-bottom: 1px solid var(--border-l1); }
+.tab { position: relative; height: 2rem; padding: 0 .75rem; border: 0; border-radius: .5rem .5rem 0 0; background: transparent;
+  color: var(--fg-secondary); font-size: .8125rem; font-weight: 500; cursor: pointer; }
+.tab:hover { color: var(--fg-primary); }
+.tab.active { color: var(--fg-primary); }
+.tab.active::after { content: ""; position: absolute; inset-inline: .5rem; bottom: -1px; height: 2px; border-radius: 1px; background: var(--fg-primary); }
+.search-bar { display: flex; align-items: center; gap: .75rem; }
+.search-bar .input { flex: 1; min-width: 0; }
+.search-bar .select { width: 7.5rem; }
+.list { flex: 1; min-height: 0; overflow-y: auto; margin-inline: -1.25rem; padding: .25rem 1.25rem 2rem; display: flex; flex-direction: column; gap: 1rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.separator { height: 1px; flex-shrink: 0; background: var(--border-l1); }
+.empty { padding: 2rem 0; text-align: center; color: var(--fg-secondary); }
+@media (max-width: 40rem) { .grid { grid-template-columns: minmax(0, 1fr); } .nav { display: none; } }
+
+/* Plugin card (Void++ BaseCard) */
+.card { contain: content; display: flex; flex-direction: column; min-width: 0; min-height: 7.5rem; border-radius: .5rem;
+  border: 1px solid var(--border-l1); background: var(--surface-l1); overflow: hidden; }
+.card.required { opacity: .4; }
+.card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
+.card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }
+.card-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem;
+  border-radius: .5rem; color: var(--fg-primary); background: color-mix(in srgb, var(--fg-primary) 10%, transparent); }
+.card-icon svg { width: .875rem; height: .875rem; }
+.card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; font-weight: 500; }
+.badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
+.badge.danger { color: var(--fg-danger); }
+.card-controls { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
+.card-controls .switch { margin-left: .25rem; }
+.card-desc { margin-top: .25rem; font-size: .8125rem; line-height: 1.5; color: var(--fg-secondary); display: -webkit-box;
+  -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card-footer { display: flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-top: 1px solid var(--border-l1);
+  font-size: .7rem; color: var(--fg-tertiary); min-width: 0; }
+.card-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Nested dialogs (Void++ VoidPPDialogShell) */
+.sheet { position: relative; display: flex; flex-direction: column; gap: 1rem; width: min(32rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem); padding: 1.5rem; border-radius: 1rem; border: 1px solid var(--border-l1);
+  background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
+.sheet-sm { width: min(28rem, calc(100vw - 2rem)); }
+.sheet-head { padding-right: 2.5rem; }
+.sheet-title { margin: 0; font-size: 1.125rem; font-weight: 600; line-height: 1.5rem; }
+.sheet-desc { margin: .375rem 0 0; font-size: .875rem; color: var(--fg-secondary); }
+.field { display: flex; flex-direction: column; gap: .25rem; min-height: 0; }
+.field-label { font-size: .875rem; font-weight: 500; }
+.field-text { margin: 0; font-size: .875rem; color: var(--fg-secondary); }
+.settings-list { display: flex; flex-direction: column; gap: .75rem; min-height: 0; overflow-y: auto; padding: .25rem 0; }
+.settings-list[data-off] { opacity: .55; }
+.footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: auto; }
+
+/* Setting rows (Grok SettingsRow / Void++ SettingField) */
+.row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.row-body { flex: 1; min-width: 8rem; display: flex; flex-direction: column; }
+.stack { display: flex; flex-direction: column; gap: .5rem; }
+.s-title { font-size: .875rem; font-weight: 500; line-height: 1.25rem; color: var(--fg-primary); }
+.s-desc { font-size: .75rem; line-height: 1rem; color: var(--fg-secondary); }
+.color { display: flex; align-items: center; gap: .5rem; }
+.color input { width: 2rem; height: 2rem; padding: .125rem; border: 1px solid var(--border-l2); border-radius: .5rem; background: transparent; cursor: pointer; }
+.color input::-webkit-color-swatch-wrapper { padding: 0; } .color input::-webkit-color-swatch { border: 0; border-radius: .375rem; }
+.color input::-moz-color-swatch { border: 0; border-radius: .375rem; }
+.color-value { min-width: 4.5rem; font-size: .875rem; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; }
+.number { width: 6rem; }
+.row .select { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dialog:focus, .sheet:focus { outline: none; }
+
+/* About tab */
+.about { display: flex; flex-direction: column; gap: .75rem; overflow-y: auto; padding-bottom: 1.5rem; }
+.about p { margin: 0; color: var(--fg-secondary); font-size: .875rem; line-height: 1.6; }
+.about a { color: var(--fg-primary); }
 `;
-  var overlay3 = null;
-  var cleanups3 = [];
-  function switchInput(checked, label, onChange) {
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.className = "switch";
-    input.checked = checked;
-    input.setAttribute("aria-label", label);
-    input.addEventListener("change", () => onChange(input.checked));
-    return input;
+
+  // src/plugins/settings/index.ts
+  var SETTINGS_HOST_ID = "notionai-pp-settings";
+  var SELF = "settings";
+  var REPO_URL = "https://github.com/0-V-linuxdo/NotionPP";
+  function h(tag, props = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (value == null || value === false)
+        continue;
+      if (key === "class")
+        node.className = String(value);
+      else if (key.startsWith("on") && typeof value === "function")
+        node.addEventListener(key.slice(2), value);
+      else if (key in node && !key.includes("-"))
+        node[key] = value;
+      else
+        node.setAttribute(key, value === true ? "" : String(value));
+    }
+    for (const child of children)
+      if (child != null && child !== false)
+        node.append(child);
+    return node;
   }
+  var option = (value, text, selected = false) => h("option", { value, selected }, text);
+  var icon = (markup, filled = false) => svgIcon(markup, filled);
+  function button(variant, label, onclick, extra = "") {
+    return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
+  }
+  function iconButton(markup, label, onclick, { active = false, filled = false } = {}) {
+    return h("button", { type: "button", class: active ? "icon-btn active" : "icon-btn", title: label, "aria-label": label, onclick }, icon(markup, filled));
+  }
+  function switchControl(checked, label, onChange, disabled = false) {
+    const el = h("button", { type: "button", role: "switch", class: "switch", "aria-label": label, disabled });
+    el.setAttribute("aria-checked", String(checked));
+    el.addEventListener("click", () => {
+      const next = el.getAttribute("aria-checked") !== "true";
+      el.setAttribute("aria-checked", String(next));
+      onChange(next);
+    });
+    return el;
+  }
+  function readList(key) {
+    const raw = getValue(SELF, key);
+    return typeof raw === "string" && raw ? raw.split(",") : [];
+  }
+  function toggleInList(key, name) {
+    const list = readList(key);
+    const next = list.includes(name) ? list.filter((n) => n !== name) : [...list, name];
+    setValue(SELF, key, next.join(","));
+  }
+  var CATEGORY_LABELS = {
+    favorites: () => t("收藏", "Favorites"),
+    all: () => t("全部", "All"),
+    composer: () => t("输入框", "Composer"),
+    chat: () => t("对话", "Chat"),
+    home: () => t("首页", "Home"),
+    appearance: () => t("外观", "Appearance")
+  };
+  var overlay3 = null;
+  var layers = [];
+  var cleanups3 = [];
+  var settingKeys = (plugin) => Object.entries(plugin.settings?.def ?? {});
+  var hasSettings = (plugin) => settingKeys(plugin).length > 0;
+  function pushLayer(kind, content, onClose) {
+    const el = h("div", { class: `layer layer-${kind}` }, content);
+    const entry = {
+      el,
+      close() {
+        const index = layers.indexOf(entry);
+        if (index >= 0)
+          layers.splice(index, 1);
+        el.remove();
+        onClose?.();
+      }
+    };
+    el.addEventListener("mousedown", (event) => event.target === el && entry.close());
+    overlay3.root.append(el);
+    layers.push(entry);
+    return entry;
+  }
+  function sheet(title, subtitle, onClose, size = "md") {
+    const node = h("div", { class: size === "sm" ? "sheet sheet-sm" : "sheet", role: "dialog", "aria-modal": "true" }, h("div", { class: "sheet-head" }, h("h3", { class: "sheet-title" }, title), subtitle && h("p", { class: "sheet-desc" }, subtitle)));
+    const close = iconButton(Icons.x, t("关闭", "Close"), onClose);
+    close.classList.add("close");
+    node.prepend(close);
+    return node;
+  }
+  function confirmDialog(title, description, confirmText, onConfirm) {
+    let layer;
+    const node = sheet(title, description, () => layer.close(), "sm");
+    const cancel = button("secondary", t("取消", "Cancel"), () => layer.close());
+    node.append(h("div", { class: "footer" }, cancel, button("danger", confirmText, () => {
+      layer.close();
+      onConfirm();
+    })));
+    layer = pushLayer("confirm", node);
+    node.tabIndex = -1;
+    node.focus();
+  }
+  function label(def) {
+    return h("div", { class: "row-body" }, h("div", { class: "s-title" }, def.label), def.description && h("div", { class: "s-desc" }, def.description));
+  }
+  function settingField(plugin, key, def) {
+    const store = plugin.settings.store;
+    const set = (value) => setValue(plugin.name, key, value);
+    switch (def.type) {
+      case "boolean":
+        return h("div", { class: "row" }, label(def), switchControl(Boolean(store[key]), def.label, set));
+      case "select": {
+        const select = h("select", { class: "select", "aria-label": def.label, onchange: () => set(select.value) });
+        for (const o of def.options)
+          select.append(option(o.value, o.label, store[key] === o.value));
+        return h("div", { class: "row" }, label(def), select);
+      }
+      case "color": {
+        const value = h("span", { class: "color-value" }, String(store[key]));
+        const input = h("input", { type: "color", value: String(store[key]), "aria-label": def.label });
+        input.addEventListener("input", () => {
+          value.textContent = input.value.toLowerCase();
+          set(input.value.toLowerCase());
+        });
+        return h("div", { class: "row" }, label(def), h("div", { class: "color" }, input, value));
+      }
+      case "number": {
+        const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": def.label });
+        input.addEventListener("change", () => {
+          const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
+          input.value = String(value);
+          set(value);
+        });
+        return h("div", { class: "stack" }, label(def), input);
+      }
+      case "action":
+        return h("div", { class: "row" }, label(def), button("secondary", def.button, () => def.run()));
+    }
+  }
+  function openPluginDialog(plugin) {
+    let layer;
+    const node = sheet(plugin.title, plugin.description, () => layer.close());
+    const entries = settingKeys(plugin);
+    const list = h("div", { class: "settings-list" });
+    const render = () => {
+      list.replaceChildren(...entries.map(([key, def]) => settingField(plugin, key, def)));
+      list.toggleAttribute("data-off", !isEnabled(plugin));
+    };
+    render();
+    node.append(h("div", { class: "separator" }));
+    node.append(h("div", { class: "field" }, h("div", { class: "field-label" }, t("设置", "Settings")), entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
+    const storable = entries.filter(([, def]) => def.type !== "action").map(([key]) => key);
+    if (storable.length) {
+      node.append(h("div", { class: "footer" }, button("secondary", t("恢复默认", "Reset"), () => confirmDialog(t("恢复默认设置", "Reset settings"), t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."), t("恢复默认", "Reset"), () => {
+        resetValues(plugin.name, storable);
+        render();
+      }))));
+    }
+    layer = pushLayer("nested", node);
+    node.tabIndex = -1;
+    node.focus();
+  }
+  function pluginCard(plugin, refresh) {
+    const enabled = isEnabled(plugin);
+    const starred = readList("starred").includes(plugin.name);
+    const pinned = readList("pinned").includes(plugin.name);
+    const crashed = enabled && !plugin.started && !plugin.required;
+    const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
+    const controls = h("div", { class: "card-controls" }, iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
+      toggleInList("starred", plugin.name);
+      refresh();
+    }, { active: starred, filled: starred }), !plugin.required && iconButton(Icons.pin, pinned ? t("取消置顶", "Unpin from top") : t("置顶", "Pin to top"), () => {
+      toggleInList("pinned", plugin.name);
+      refresh();
+    }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)), switchControl(enabled, plugin.title, (value) => {
+      setEnabled(plugin, value);
+      refresh();
+    }, plugin.required));
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title: plugin.title }, plugin.title), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), controls), h("div", { class: "card-desc", title: plugin.description }, plugin.description)), h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
+  }
+  function pluginsTab() {
+    const all = allPlugins().slice().sort((a, b) => a.title.localeCompare(b.title));
+    const user = all.filter((p) => !p.required);
+    const required = all.filter((p) => p.required);
+    const state = { category: readList("starred").length ? "favorites" : "all", search: "", filter: "all" };
+    const categories = Object.keys(CATEGORY_LABELS).filter((c) => c === "favorites" || c === "all" || all.some((p) => p.tags?.includes(c)));
+    const tabs = h("div", { class: "tabs", role: "tablist" });
+    const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
+    const filter = h("select", { class: "select", "aria-label": t("筛选", "Filter") });
+    for (const [value, text] of [["all", t("全部", "All")], ["enabled", t("已启用", "Enabled")], ["disabled", t("已禁用", "Disabled")]])
+      filter.append(option(value, text));
+    const list = h("div", { class: "list" });
+    const matches = (p) => {
+      if (state.filter !== "all" && isEnabled(p) !== (state.filter === "enabled"))
+        return false;
+      const q = state.search.trim().toLowerCase();
+      return !q || `${p.title} ${p.name} ${p.description}`.toLowerCase().includes(q);
+    };
+    const render = () => {
+      tabs.replaceChildren(...categories.map((c) => h("button", {
+        type: "button",
+        role: "tab",
+        class: c === state.category ? "tab active" : "tab",
+        "aria-selected": String(c === state.category),
+        onclick: () => {
+          state.category = c;
+          render();
+        }
+      }, CATEGORY_LABELS[c]())));
+      const starred = readList("starred");
+      const pinned = readList("pinned");
+      let top;
+      let bottom = [];
+      if (state.category === "favorites")
+        top = all.filter((p) => starred.includes(p.name));
+      else if (state.category === "all") {
+        top = user;
+        bottom = required;
+      } else
+        top = all.filter((p) => p.tags?.includes(state.category));
+      top = top.filter(matches);
+      bottom = bottom.filter(matches);
+      if (state.category !== "favorites") {
+        const rank = (p) => pinned.includes(p.name) ? pinned.indexOf(p.name) : Infinity;
+        top = top.slice().sort((a, b) => rank(a) - rank(b));
+      }
+      search.placeholder = t(`搜索 ${user.length + required.length} 个插件…`, `Search ${user.length + required.length} plugins...`);
+      const grid = (items) => h("div", { class: "grid" }, ...items.map((p) => pluginCard(p, render)));
+      const children = [];
+      if (top.length)
+        children.push(grid(top));
+      if (bottom.length)
+        children.push(h("div", { class: "separator" }), grid(bottom));
+      if (!children.length) {
+        children.push(h("p", { class: "empty" }, state.search ? t("没有匹配的插件。", "No plugins match your search.") : state.category === "favorites" ? t("还没有收藏。点星标即可收藏插件。", "No favorites yet. Star a plugin to see it here.") : t("没有插件。", "No plugins available.")));
+      }
+      list.replaceChildren(...children);
+    };
+    search.addEventListener("input", () => {
+      state.search = search.value;
+      render();
+    });
+    filter.addEventListener("change", () => {
+      state.filter = filter.value;
+      render();
+    });
+    render();
+    return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
+  }
+  function aboutTab() {
+    const version = "[20261007] v1.0.1";
+    return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
+  }
+  var TABS = [
+    { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab }
+  ];
   function close() {
+    for (const layer of layers.splice(0))
+      layer.el.remove();
     overlay3?.destroy();
     overlay3 = null;
   }
-  function openSettings() {
+  function openSettings(tab = "plugins") {
     close();
-    overlay3 = createOverlay(SETTINGS_HOST_ID, CSS2, `<div class="backdrop"><div class="dialog" role="dialog" aria-modal="true"><header><h2>NotionAI++<small></small></h2><button class="close" type="button">×</button></header><div class="body"></div></div></div>`);
+    overlay3 = createOverlay(SETTINGS_HOST_ID, CSS2, "");
     const { root } = overlay3;
-    root.querySelector("small").textContent = "[20261007] v1.0.0";
-    const closeButton = root.querySelector(".close");
-    closeButton.setAttribute("aria-label", t("关闭", "Close"));
-    closeButton.addEventListener("click", close);
-    root.querySelector(".backdrop").addEventListener("click", (event) => event.target === event.currentTarget && close());
-    root.addEventListener("keydown", (event) => event.key === "Escape" && close());
-    const body = root.querySelector(".body");
-    for (const plugin of allPlugins().filter((p) => !p.required)) {
-      const section = document.createElement("section");
-      const row = document.createElement("div");
-      row.className = "row";
-      const info = document.createElement("div");
-      const name = document.createElement("div");
-      name.className = "name";
-      name.textContent = plugin.title;
-      const desc = document.createElement("div");
-      desc.className = "desc";
-      desc.textContent = plugin.description;
-      info.append(name, desc);
-      const options = document.createElement("div");
-      options.className = "options";
-      options.toggleAttribute("data-off", !isEnabled(plugin));
-      row.append(info, switchInput(isEnabled(plugin), plugin.title, (value) => {
-        setEnabled(plugin, value);
-        options.toggleAttribute("data-off", !value);
-      }));
-      section.append(row);
-      for (const [key, def] of Object.entries(plugin.settings?.def ?? {})) {
-        const store = plugin.settings.store;
-        const label = document.createElement("label");
-        label.className = "opt";
-        const span = document.createElement("span");
-        span.textContent = def.label;
-        label.append(span);
-        if (def.type === "boolean") {
-          label.append(switchInput(Boolean(store[key]), def.label, (value) => setValue(plugin.name, key, value)));
-        } else if (def.type === "color") {
-          const input = document.createElement("input");
-          input.type = "color";
-          input.value = String(store[key]);
-          input.setAttribute("aria-label", def.label);
-          input.addEventListener("input", () => setValue(plugin.name, key, input.value.toLowerCase()));
-          label.append(input);
-        } else if (def.type === "number") {
-          const input = document.createElement("input");
-          input.type = "number";
-          input.className = "num";
-          input.min = String(def.min);
-          input.max = String(def.max);
-          input.step = "1";
-          input.value = String(store[key]);
-          input.addEventListener("change", () => {
-            const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
-            input.value = String(value);
-            setValue(plugin.name, key, value);
-          });
-          label.append(input);
-        } else if (def.type === "action") {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "act";
-          button.textContent = def.button;
-          button.addEventListener("click", (event) => {
-            event.preventDefault();
-            def.run();
-          });
-          label.append(button);
-        } else {
-          const select = document.createElement("select");
-          for (const option of def.options)
-            select.append(new Option(option.label, option.value, false, store[key] === option.value));
-          select.addEventListener("change", () => setValue(plugin.name, key, select.value));
-          label.append(select);
-        }
-        if (def.description)
-          label.title = def.description;
-        options.append(label);
+    const content = h("div", { class: "content" });
+    const navItems = new Map;
+    const select = (id) => {
+      const def = TABS.find((t) => t.id === id) ?? TABS[0];
+      for (const [key, item] of navItems) {
+        if (key === def.id)
+          item.setAttribute("aria-current", "page");
+        else
+          item.removeAttribute("aria-current");
       }
-      if (options.childElementCount)
-        section.append(options);
-      body.append(section);
-    }
-    closeButton.focus();
+      const hint = def.hint();
+      const closeBtn = iconButton(Icons.x, t("关闭", "Close"), close);
+      closeBtn.classList.add("close");
+      content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
+    };
+    const version = "[20261007] v1.0.1";
+    const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
+      const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
+      navItems.set(def.id, item);
+      return item;
+    }), h("div", { class: "version" }, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "NotionAI++"), version && ` · ${version}`, h("br"), t("用户脚本", "Userscript")));
+    const dialog = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": t("NotionAI++ 设置", "NotionAI++ settings") }, nav, content);
+    const backdrop = h("div", { class: "layer layer-root" }, dialog);
+    backdrop.addEventListener("mousedown", (event) => event.target === backdrop && close());
+    root.append(backdrop);
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape")
+        return;
+      event.stopPropagation();
+      const top = layers.at(-1);
+      if (top)
+        top.close();
+      else
+        close();
+    });
+    select(tab);
+    dialog.tabIndex = -1;
+    dialog.focus();
   }
   var settings_default = definePlugin({
-    name: "settings",
-    title: "Settings",
-    description: "NotionAI++ settings dialog and userscript menu commands.",
+    name: SELF,
+    title: "设置面板 / Settings",
+    description: "NotionAI++ 设置面板与脚本管理器菜单命令。",
+    icon: Icons.cog,
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups3.push(on("openSettings", openSettings));
+      cleanups3.push(on("openSettings", () => openSettings()));
       if (typeof GM_registerMenuCommand === "function") {
         try {
-          GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), openSettings);
+          GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
         } catch {}
       }
     },
@@ -3249,12 +3637,12 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 .dragging, .dragging * { cursor: grabbing !important; }
 @media (prefers-reduced-motion: reduce) { .fill, .tip { transition: none; } .spin svg.i { animation: none; opacity: .55; } }
 `;
-  var icon = (paths) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
+  var icon2 = (paths) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   var ICONS = {
-    refresh: icon('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
-    minimize: icon('<path d="M6 12h12"/>'),
-    external: icon('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
-    settings: icon('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
+    refresh: icon2('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
+    minimize: icon2('<path d="M6 12h12"/>'),
+    external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
+    settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
   };
   var USAGE_HTML = `
 <div class="shell">
@@ -3632,6 +4020,8 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     name: "usageMeter",
     title: "AI 用量 / AI usage",
     description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态；最小化后双圆环贴在 AI 输入框底部中央。",
+    icon: Icons.gauge,
+    tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
     start() {
@@ -3658,7 +4048,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.0.0";
+    win[FLAG] = "[20261007] v1.0.1";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -3668,7 +4058,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.0.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.0.1"} started`);
   }
   boot();
 })();

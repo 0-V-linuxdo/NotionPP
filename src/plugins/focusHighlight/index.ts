@@ -12,6 +12,7 @@ import { definePluginSettings, getValue, isHexColor, setValue } from "@api/Setti
 import { currentTheme, onThemeChange, type Theme } from "@api/Theme";
 import { CONTAINER_SELECTOR, surfaceFor } from "@plugins/usage/composer";
 import { t } from "@utils/page";
+import { Icons } from "@utils/icons";
 
 /*
  * Paints the Notion AI prompt box (the rounded surface around the editor) with
@@ -244,6 +245,8 @@ export default definePlugin({
     name: PLUGIN,
     title: "输入框高亮色",
     description: "给 Notion AI 输入框描一圈自定义颜色（普通 / 黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+    icon: Icons.highlighter,
+    tags: ["composer", "appearance"],
     enabledByDefault: true,
     settings,
 

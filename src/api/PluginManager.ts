@@ -14,10 +14,15 @@ export const enum StartAt {
     DomReady = "DomReady",
 }
 
+export type PluginTag = "composer" | "chat" | "home" | "appearance";
+
 export interface PluginDef {
     name: string;
     title: string;
     description: string;
+    /** Inner markup of a 24×24 stroke icon (lucide style) for the settings card. */
+    icon?: string;
+    tags?: PluginTag[];
     enabledByDefault: boolean;
     required?: boolean;
     startAt?: StartAt;

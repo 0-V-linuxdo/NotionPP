@@ -106,6 +106,25 @@ export function setValue(plugin: string, key: string, value: OptionValue) {
     }
 }
 
+/** Drops stored values so the keys fall back to their defaults. */
+export function resetValues(plugin: string, keys: string[]) {
+    const current = bag[plugin];
+    if (!current || !keys.some(key => key in current)) return;
+    const next = { ...current };
+    for (const key of keys) delete next[key];
+    bag = { ...bag, [plugin]: next };
+    persist();
+    for (const key of keys) {
+        for (const listener of [...listeners]) {
+            try {
+                listener(plugin, key);
+            } catch (error) {
+                logger.error("Settings listener failed:", error);
+            }
+        }
+    }
+}
+
 export function onSettingsChange(listener: Listener) {
     listeners.add(listener);
     return () => void listeners.delete(listener);

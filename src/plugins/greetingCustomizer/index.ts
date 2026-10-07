@@ -13,6 +13,7 @@ import { tr } from "./lang";
 import { closeManager, openManager } from "./manager";
 import { escapeCssContent, loadGreetings, loadIndex, pickIndex, saveIndex } from "./store";
 import { clearMarks, isHomePath, syncMark, TARGET_SELECTOR } from "./target";
+import { Icons } from "@utils/icons";
 
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
 
@@ -175,6 +176,8 @@ export default definePlugin({
     name: "GreetingCustomizer",
     title: "自定义问候语",
     description: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+    icon: Icons.smile,
+    tags: ["home", "appearance"],
     enabledByDefault: true,
     settings,
 

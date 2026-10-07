@@ -8,6 +8,7 @@ import { definePlugin, StartAt } from "@api/PluginManager";
 
 import { UsageService } from "./service";
 import { UsageWidget } from "./ui";
+import { Icons } from "@utils/icons";
 
 let service: UsageService | null = null;
 let widget: UsageWidget | null = null;
@@ -21,6 +22,8 @@ export default definePlugin({
     name: "usageMeter",
     title: "AI 用量 / AI usage",
     description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态；最小化后双圆环贴在 AI 输入框底部中央。",
+    icon: Icons.gauge,
+    tags: ["composer"],
     enabledByDefault: true,
     startAt: StartAt.DocumentStart,
     start() {

@@ -7,6 +7,7 @@
 import { onDomChange } from "@api/DomWatch";
 import { definePlugin } from "@api/PluginManager";
 import { definePluginSettings } from "@api/Settings";
+import { Icons } from "@utils/icons";
 
 /*
  * Notion AI shows its thinking as one collapsible group per reply: a toggle
@@ -111,6 +112,8 @@ export default definePlugin({
     name: "AutoCollapseThinking",
     title: "自动折叠 AI 思考",
     description: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+    icon: Icons.collapse,
+    tags: ["chat"],
     enabledByDefault: true,
     settings,
 

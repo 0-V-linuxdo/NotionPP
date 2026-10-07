@@ -16,6 +16,7 @@ import { debounce, frameThrottle } from "@utils/time";
 import { EFFECTS, type Effect, playEffect } from "./effects";
 import { type ChatMessage, collectMessages, summarize } from "./messages";
 import { NAV_CSS, NAV_HTML } from "./styles";
+import { Icons } from "@utils/icons";
 
 export const NAV_HOST_ID = "notionai-pp-navigator";
 const RESCAN_MS = 250;
@@ -158,6 +159,8 @@ export default definePlugin({
     name: "chatNavigator",
     title: "对话目录 / Chat navigator",
     description: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+    icon: Icons.list,
+    tags: ["chat"],
     enabledByDefault: true,
     settings,
     start() {

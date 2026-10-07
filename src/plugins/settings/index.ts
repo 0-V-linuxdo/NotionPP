@@ -6,163 +6,388 @@
 
 import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { allPlugins, definePlugin, isEnabled, setEnabled } from "@api/PluginManager";
-import { setValue } from "@api/Settings";
+import { allPlugins, definePlugin, isEnabled, type Plugin, type PluginTag, setEnabled } from "@api/PluginManager";
+import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
+import { Icons, svgIcon } from "@utils/icons";
 import { t } from "@utils/page";
+
+import { CSS } from "./styles";
 
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
 declare const VERSION: string;
 
 export const SETTINGS_HOST_ID = "notionai-pp-settings";
 
-const CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.05); --accent: #2383e2;
-  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-:host([data-theme="dark"]) { --bg: #252525; --text: #ebebea; --muted: #9b9b9b; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.06); }
-* { box-sizing: border-box; }
-.backdrop { position: absolute; inset: 0; background: rgba(15,15,15,.45); display: grid; place-items: center; }
-.dialog { width: min(520px, calc(100vw - 32px)); max-height: min(80vh, 680px); overflow: auto; border-radius: 12px;
-  color: var(--text); background: var(--bg); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 12px;
-  border-bottom: 1px solid var(--border); background: var(--bg); }
-h2 { margin: 0; font-size: 16px; } small { color: var(--muted); font-weight: 400; margin-left: 6px; }
-.close { width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 18px; cursor: pointer; }
-.close:hover { background: var(--hover); color: var(--text); }
-section { padding: 14px 18px; border-bottom: 1px solid var(--border); }
-section:last-child { border-bottom: 0; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.name { font-weight: 600; } .desc { margin-top: 3px; color: var(--muted); font-size: 12.5px; }
-.options { margin-top: 10px; display: grid; gap: 8px; padding-left: 2px; }
-.options[data-off] { opacity: .45; pointer-events: none; }
-label.opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
-input[type="color"] { width: 44px; height: 24px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer; }
-input.num { width: 72px; font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-button.act { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
-button.act:hover { background: var(--hover); }
-select { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-.switch { position: relative; width: 32px; height: 18px; flex: 0 0 auto; appearance: none; margin: 0; border-radius: 99px;
-  background: rgba(135,131,120,.3); cursor: pointer; transition: background .15s; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
-.switch:checked { background: var(--accent); } .switch:checked::after { transform: translateX(14px); }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
-`;
+const SELF = "settings";
+const REPO_URL = "https://github.com/0-V-linuxdo/NotionPP";
 
-let overlay: Overlay | null = null;
-const cleanups: (() => void)[] = [];
+type Child = Node | string | null | undefined | false;
 
-function switchInput(checked: boolean, label: string, onChange: (value: boolean) => void) {
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.className = "switch";
-    input.checked = checked;
-    input.setAttribute("aria-label", label);
-    input.addEventListener("change", () => onChange(input.checked));
-    return input;
+function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+        if (value == null || value === false) continue;
+        if (key === "class") node.className = String(value);
+        else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value as EventListener);
+        else if (key in node && !key.includes("-")) (node as any)[key] = value;
+        else node.setAttribute(key, value === true ? "" : String(value));
+    }
+    for (const child of children) if (child != null && child !== false) node.append(child);
+    return node;
 }
 
+const option = (value: string, text: string, selected = false) => h("option", { value, selected }, text);
+
+const icon = (markup: string, filled = false) => svgIcon(markup, filled);
+
+function button(variant: "primary" | "secondary" | "tertiary" | "danger", label: Child, onclick: () => void, extra = "") {
+    return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
+}
+
+function iconButton(markup: string, label: string, onclick: () => void, { active = false, filled = false } = {}) {
+    return h("button", { type: "button", class: active ? "icon-btn active" : "icon-btn", title: label, "aria-label": label, onclick }, icon(markup, filled));
+}
+
+function switchControl(checked: boolean, label: string, onChange: (value: boolean) => void, disabled = false) {
+    const el = h("button", { type: "button", role: "switch", class: "switch", "aria-label": label, disabled });
+    el.setAttribute("aria-checked", String(checked));
+    el.addEventListener("click", () => {
+        const next = el.getAttribute("aria-checked") !== "true";
+        el.setAttribute("aria-checked", String(next));
+        onChange(next);
+    });
+    return el;
+}
+
+/* ---------- starred / pinned lists ---------- */
+
+function readList(key: "starred" | "pinned"): string[] {
+    const raw = getValue(SELF, key);
+    return typeof raw === "string" && raw ? raw.split(",") : [];
+}
+
+function toggleInList(key: "starred" | "pinned", name: string) {
+    const list = readList(key);
+    const next = list.includes(name) ? list.filter(n => n !== name) : [...list, name];
+    setValue(SELF, key, next.join(","));
+}
+
+/* ---------- dialog state ---------- */
+
+type Category = "favorites" | "all" | PluginTag;
+type Filter = "all" | "enabled" | "disabled";
+
+const CATEGORY_LABELS: Record<Category, () => string> = {
+    favorites: () => t("收藏", "Favorites"),
+    all: () => t("全部", "All"),
+    composer: () => t("输入框", "Composer"),
+    chat: () => t("对话", "Chat"),
+    home: () => t("首页", "Home"),
+    appearance: () => t("外观", "Appearance"),
+};
+
+let overlay: Overlay | null = null;
+const layers: { el: HTMLElement; close(): void }[] = [];
+const cleanups: (() => void)[] = [];
+
+const settingKeys = (plugin: Plugin) => Object.entries(plugin.settings?.def ?? {}) as [string, OptionDef][];
+const hasSettings = (plugin: Plugin) => settingKeys(plugin).length > 0;
+
+function pushLayer(kind: "nested" | "confirm", content: HTMLElement, onClose?: () => void) {
+    const el = h("div", { class: `layer layer-${kind}` }, content);
+    const entry = {
+        el,
+        close() {
+            const index = layers.indexOf(entry);
+            if (index >= 0) layers.splice(index, 1);
+            el.remove();
+            onClose?.();
+        },
+    };
+    el.addEventListener("mousedown", event => event.target === el && entry.close());
+    overlay!.root.append(el);
+    layers.push(entry);
+    return entry;
+}
+
+function sheet(title: string, subtitle: string | undefined, onClose: () => void, size: "sm" | "md" = "md") {
+    const node = h("div", { class: size === "sm" ? "sheet sheet-sm" : "sheet", role: "dialog", "aria-modal": "true" },
+        h("div", { class: "sheet-head" },
+            h("h3", { class: "sheet-title" }, title),
+            subtitle && h("p", { class: "sheet-desc" }, subtitle)),
+    );
+    const close = iconButton(Icons.x, t("关闭", "Close"), onClose);
+    close.classList.add("close");
+    node.prepend(close);
+    return node;
+}
+
+function confirmDialog(title: string, description: string, confirmText: string, onConfirm: () => void) {
+    let layer: ReturnType<typeof pushLayer>;
+    const node = sheet(title, description, () => layer.close(), "sm");
+    const cancel = button("secondary", t("取消", "Cancel"), () => layer.close());
+    node.append(h("div", { class: "footer" }, cancel, button("danger", confirmText, () => {
+        layer.close();
+        onConfirm();
+    })));
+    layer = pushLayer("confirm", node);
+    node.tabIndex = -1;
+    node.focus();
+}
+
+/* ---------- setting fields ---------- */
+
+function label(def: OptionDef) {
+    return h("div", { class: "row-body" },
+        h("div", { class: "s-title" }, def.label),
+        def.description && h("div", { class: "s-desc" }, def.description));
+}
+
+function settingField(plugin: Plugin, key: string, def: OptionDef): HTMLElement {
+    const store = plugin.settings!.store as Record<string, unknown>;
+    const set = (value: string | number | boolean) => setValue(plugin.name, key, value);
+    switch (def.type) {
+        case "boolean":
+            return h("div", { class: "row" }, label(def), switchControl(Boolean(store[key]), def.label, set));
+        case "select": {
+            const select = h("select", { class: "select", "aria-label": def.label, onchange: () => set(select.value) });
+            for (const o of def.options) select.append(option(o.value, o.label, store[key] === o.value));
+            return h("div", { class: "row" }, label(def), select);
+        }
+        case "color": {
+            const value = h("span", { class: "color-value" }, String(store[key]));
+            const input = h("input", { type: "color", value: String(store[key]), "aria-label": def.label });
+            input.addEventListener("input", () => {
+                value.textContent = input.value.toLowerCase();
+                set(input.value.toLowerCase());
+            });
+            return h("div", { class: "row" }, label(def), h("div", { class: "color" }, input, value));
+        }
+        case "number": {
+            const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": def.label });
+            input.addEventListener("change", () => {
+                const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
+                input.value = String(value);
+                set(value);
+            });
+            return h("div", { class: "stack" }, label(def), input);
+        }
+        case "action":
+            return h("div", { class: "row" }, label(def), button("secondary", def.button, () => def.run()));
+    }
+}
+
+function openPluginDialog(plugin: Plugin) {
+    let layer: ReturnType<typeof pushLayer>;
+    const node = sheet(plugin.title, plugin.description, () => layer.close());
+    const entries = settingKeys(plugin);
+    const list = h("div", { class: "settings-list" });
+    const render = () => {
+        list.replaceChildren(...entries.map(([key, def]) => settingField(plugin, key, def)));
+        list.toggleAttribute("data-off", !isEnabled(plugin));
+    };
+    render();
+    node.append(h("div", { class: "separator" }));
+    node.append(h("div", { class: "field" }, h("div", { class: "field-label" }, t("设置", "Settings")),
+        entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
+    const storable = entries.filter(([, def]) => def.type !== "action").map(([key]) => key);
+    if (storable.length) {
+        node.append(h("div", { class: "footer" }, button("secondary", t("恢复默认", "Reset"), () => confirmDialog(
+            t("恢复默认设置", "Reset settings"),
+            t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."),
+            t("恢复默认", "Reset"),
+            () => {
+                resetValues(plugin.name, storable);
+                render();
+            },
+        ))));
+    }
+    layer = pushLayer("nested", node);
+    node.tabIndex = -1;
+    node.focus();
+}
+
+/* ---------- plugins tab ---------- */
+
+function pluginCard(plugin: Plugin, refresh: () => void) {
+    const enabled = isEnabled(plugin);
+    const starred = readList("starred").includes(plugin.name);
+    const pinned = readList("pinned").includes(plugin.name);
+    const crashed = enabled && !plugin.started && !plugin.required;
+    const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
+    const controls = h("div", { class: "card-controls" },
+        iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
+            toggleInList("starred", plugin.name);
+            refresh();
+        }, { active: starred, filled: starred }),
+        !plugin.required && iconButton(Icons.pin, pinned ? t("取消置顶", "Unpin from top") : t("置顶", "Pin to top"), () => {
+            toggleInList("pinned", plugin.name);
+            refresh();
+        }, { active: pinned, filled: pinned }),
+        hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)),
+        switchControl(enabled, plugin.title, value => {
+            setEnabled(plugin, value);
+            refresh();
+        }, plugin.required),
+    );
+    return h("div", { class: cls, "data-plugin": plugin.name },
+        h("div", { class: "card-body" },
+            h("div", { class: "card-head" },
+                h("div", { class: "card-name" },
+                    h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
+                    h("span", { class: "card-title", title: plugin.title }, plugin.title),
+                    crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)),
+                    plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
+                controls),
+            h("div", { class: "card-desc", title: plugin.description }, plugin.description)),
+        h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
+}
+
+function pluginsTab() {
+    const all = allPlugins().slice().sort((a, b) => a.title.localeCompare(b.title));
+    const user = all.filter(p => !p.required);
+    const required = all.filter(p => p.required);
+    const state = { category: (readList("starred").length ? "favorites" : "all") as Category, search: "", filter: "all" as Filter };
+
+    const categories = (Object.keys(CATEGORY_LABELS) as Category[])
+        .filter(c => c === "favorites" || c === "all" || all.some(p => p.tags?.includes(c as PluginTag)));
+    const tabs = h("div", { class: "tabs", role: "tablist" });
+    const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
+    const filter = h("select", { class: "select", "aria-label": t("筛选", "Filter") });
+    for (const [value, text] of [["all", t("全部", "All")], ["enabled", t("已启用", "Enabled")], ["disabled", t("已禁用", "Disabled")]]) filter.append(option(value, text));
+    const list = h("div", { class: "list" });
+
+    const matches = (p: Plugin) => {
+        if (state.filter !== "all" && isEnabled(p) !== (state.filter === "enabled")) return false;
+        const q = state.search.trim().toLowerCase();
+        return !q || `${p.title} ${p.name} ${p.description}`.toLowerCase().includes(q);
+    };
+
+    const render = () => {
+        tabs.replaceChildren(...categories.map(c => h("button", {
+            type: "button", role: "tab", class: c === state.category ? "tab active" : "tab", "aria-selected": String(c === state.category),
+            onclick: () => { state.category = c; render(); },
+        }, CATEGORY_LABELS[c]())));
+        const starred = readList("starred");
+        const pinned = readList("pinned");
+        let top: Plugin[];
+        let bottom: Plugin[] = [];
+        if (state.category === "favorites") top = all.filter(p => starred.includes(p.name));
+        else if (state.category === "all") { top = user; bottom = required; }
+        else top = all.filter(p => p.tags?.includes(state.category as PluginTag));
+        top = top.filter(matches);
+        bottom = bottom.filter(matches);
+        if (state.category !== "favorites") {
+            const rank = (p: Plugin) => (pinned.includes(p.name) ? pinned.indexOf(p.name) : Infinity);
+            top = top.slice().sort((a, b) => rank(a) - rank(b));
+        }
+        search.placeholder = t(`搜索 ${user.length + required.length} 个插件…`, `Search ${user.length + required.length} plugins...`);
+        const grid = (items: Plugin[]) => h("div", { class: "grid" }, ...items.map(p => pluginCard(p, render)));
+        const children: HTMLElement[] = [];
+        if (top.length) children.push(grid(top));
+        if (bottom.length) children.push(h("div", { class: "separator" }), grid(bottom));
+        if (!children.length) {
+            children.push(h("p", { class: "empty" }, state.search
+                ? t("没有匹配的插件。", "No plugins match your search.")
+                : state.category === "favorites"
+                    ? t("还没有收藏。点星标即可收藏插件。", "No favorites yet. Star a plugin to see it here.")
+                    : t("没有插件。", "No plugins available.")));
+        }
+        list.replaceChildren(...children);
+    };
+
+    search.addEventListener("input", () => { state.search = search.value; render(); });
+    filter.addEventListener("change", () => { state.filter = filter.value as Filter; render(); });
+    render();
+    return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
+}
+
+function aboutTab() {
+    const version = typeof VERSION === "string" ? VERSION : "";
+    return h("div", { class: "tab-root about" },
+        h("p", {}, t(
+            "NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。",
+            "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")),
+        h("p", {}, t(
+            "只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。",
+            "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")),
+        h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
+}
+
+/* ---------- shell ---------- */
+
+const TABS = [
+    { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab },
+];
+
 function close() {
+    for (const layer of layers.splice(0)) layer.el.remove();
     overlay?.destroy();
     overlay = null;
 }
 
-export function openSettings() {
+export function openSettings(tab = "plugins") {
     close();
-    overlay = createOverlay(SETTINGS_HOST_ID, CSS, `<div class="backdrop"><div class="dialog" role="dialog" aria-modal="true"><header><h2>NotionAI++<small></small></h2><button class="close" type="button">×</button></header><div class="body"></div></div></div>`);
+    overlay = createOverlay(SETTINGS_HOST_ID, CSS, "");
     const { root } = overlay;
-    root.querySelector("small")!.textContent = typeof VERSION === "string" ? VERSION : "";
-    const closeButton = root.querySelector<HTMLButtonElement>(".close")!;
-    closeButton.setAttribute("aria-label", t("关闭", "Close"));
-    closeButton.addEventListener("click", close);
-    root.querySelector(".backdrop")!.addEventListener("click", event => event.target === event.currentTarget && close());
-    root.addEventListener("keydown", event => (event as KeyboardEvent).key === "Escape" && close());
-    const body = root.querySelector(".body")!;
-    for (const plugin of allPlugins().filter(p => !p.required)) {
-        const section = document.createElement("section");
-        const row = document.createElement("div");
-        row.className = "row";
-        const info = document.createElement("div");
-        const name = document.createElement("div");
-        name.className = "name";
-        name.textContent = plugin.title;
-        const desc = document.createElement("div");
-        desc.className = "desc";
-        desc.textContent = plugin.description;
-        info.append(name, desc);
-        const options = document.createElement("div");
-        options.className = "options";
-        options.toggleAttribute("data-off", !isEnabled(plugin));
-        row.append(info, switchInput(isEnabled(plugin), plugin.title, value => {
-            setEnabled(plugin, value);
-            options.toggleAttribute("data-off", !value);
-        }));
-        section.append(row);
-        for (const [key, def] of Object.entries(plugin.settings?.def ?? {})) {
-            const store = plugin.settings!.store as Record<string, unknown>;
-            const label = document.createElement("label");
-            label.className = "opt";
-            const span = document.createElement("span");
-            span.textContent = def.label;
-            label.append(span);
-            if (def.type === "boolean") {
-                label.append(switchInput(Boolean(store[key]), def.label, value => setValue(plugin.name, key, value)));
-            } else if (def.type === "color") {
-                const input = document.createElement("input");
-                input.type = "color";
-                input.value = String(store[key]);
-                input.setAttribute("aria-label", def.label);
-                input.addEventListener("input", () => setValue(plugin.name, key, input.value.toLowerCase()));
-                label.append(input);
-            } else if (def.type === "number") {
-                const input = document.createElement("input");
-                input.type = "number";
-                input.className = "num";
-                input.min = String(def.min);
-                input.max = String(def.max);
-                input.step = "1";
-                input.value = String(store[key]);
-                input.addEventListener("change", () => {
-                    const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
-                    input.value = String(value);
-                    setValue(plugin.name, key, value);
-                });
-                label.append(input);
-            } else if (def.type === "action") {
-                const button = document.createElement("button");
-                button.type = "button";
-                button.className = "act";
-                button.textContent = def.button;
-                button.addEventListener("click", event => {
-                    event.preventDefault();
-                    def.run();
-                });
-                label.append(button);
-            } else {
-                const select = document.createElement("select");
-                for (const option of def.options) select.append(new Option(option.label, option.value, false, store[key] === option.value));
-                select.addEventListener("change", () => setValue(plugin.name, key, select.value));
-                label.append(select);
-            }
-            if (def.description) label.title = def.description;
-            options.append(label);
+    const content = h("div", { class: "content" });
+    const navItems = new Map<string, HTMLButtonElement>();
+    const select = (id: string) => {
+        const def = TABS.find(t => t.id === id) ?? TABS[0];
+        for (const [key, item] of navItems) {
+            if (key === def.id) item.setAttribute("aria-current", "page");
+            else item.removeAttribute("aria-current");
         }
-        if (options.childElementCount) section.append(options);
-        body.append(section);
-    }
-    closeButton.focus();
+        const hint = def.hint();
+        const closeBtn = iconButton(Icons.x, t("关闭", "Close"), close);
+        closeBtn.classList.add("close");
+        content.replaceChildren(
+            closeBtn,
+            h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))),
+            def.render(),
+        );
+    };
+    const version = typeof VERSION === "string" ? VERSION : "";
+    const nav = h("nav", { class: "nav" },
+        h("div", { class: "nav-group" }, "NotionAI++"),
+        ...TABS.map(def => {
+            const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
+            navItems.set(def.id, item);
+            return item;
+        }),
+        h("div", { class: "version" },
+            h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "NotionAI++"), version && ` · ${version}`,
+            h("br"), t("用户脚本", "Userscript")),
+    );
+    const dialog = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": t("NotionAI++ 设置", "NotionAI++ settings") }, nav, content);
+    const backdrop = h("div", { class: "layer layer-root" }, dialog);
+    backdrop.addEventListener("mousedown", event => event.target === backdrop && close());
+    root.append(backdrop);
+    root.addEventListener("keydown", event => {
+        if ((event as KeyboardEvent).key !== "Escape") return;
+        event.stopPropagation();
+        const top = layers.at(-1);
+        if (top) top.close();
+        else close();
+    });
+    select(tab);
+    dialog.tabIndex = -1;
+    dialog.focus();
 }
 
 export default definePlugin({
-    name: "settings",
-    title: "Settings",
-    description: "NotionAI++ settings dialog and userscript menu commands.",
+    name: SELF,
+    title: "设置面板 / Settings",
+    description: "NotionAI++ 设置面板与脚本管理器菜单命令。",
+    icon: Icons.cog,
     enabledByDefault: true,
     required: true,
     start() {
-        cleanups.push(on("openSettings", openSettings));
+        cleanups.push(on("openSettings", () => openSettings()));
         if (typeof GM_registerMenuCommand === "function") {
             try {
-                GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), openSettings);
+                GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
             } catch {}
         }
     },
