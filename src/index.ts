@@ -12,13 +12,16 @@ import { isTopmostNotionDocument, pageWindow } from "@utils/page";
 
 import autoCollapseThinking from "@plugins/autoCollapseThinking/index";
 import focusHighlight from "@plugins/focusHighlight/index";
+import composerLook from "@plugins/composerLook/index";
 import greetingCustomizer from "@plugins/greetingCustomizer/index";
+import healthCheck from "@plugins/healthCheck/index";
 import hideShare from "@plugins/hideShare/index";
 import inputHistory from "@plugins/inputHistory/index";
 import messageStars from "@plugins/messageStars/index";
 import chatNavigator from "@plugins/navigator/index";
 import replyNotification from "@plugins/replyNotification/index";
 import settings from "@plugins/settings/index";
+import sidebarTweaks from "@plugins/sidebarTweaks/index";
 import tabStatus from "@plugins/tabStatus/index";
 import usageMeter from "@plugins/usage/index";
 import widerChat from "@plugins/widerChat/index";
@@ -36,6 +39,7 @@ function boot() {
     registerPlugins([
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
         inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
+        composerLook, sidebarTweaks, healthCheck,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);

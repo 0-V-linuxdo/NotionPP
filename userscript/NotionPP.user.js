@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.6.1
+// @version      20261007.1.7.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -561,6 +561,9 @@
     width: `<path d="M21 12H3"/><path d="m15 6 6 6-6 6"/><path d="m9 18-6-6 6-6"/>`,
     shareOff: `<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m2 2 20 20"/>`,
     braces: `<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>`,
+    sidebar: `<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`,
+    droplet: `<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>`,
+    activity: `<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -1278,6 +1281,88 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     }
   });
 
+  // src/plugins/composerLook/index.ts
+  var STYLE_ID2 = "notionai-pp-composer-look";
+  var MARK = "data-npp-composer-box";
+  var COMPOSER = "[data-notion-chat-input-container]";
+  var settings3 = definePluginSettings({
+    opacity: {
+      type: "number",
+      label: { zh: "背景不透明度（%）", en: "Background opacity (%)" },
+      description: { zh: "100 为 Notion 原样", en: "100 is Notion's own look" },
+      default: 70,
+      min: 0,
+      max: 100
+    },
+    blur: {
+      type: "number",
+      label: { zh: "背景模糊（像素）", en: "Background blur (px)" },
+      description: { zh: "只有输入框后面有内容时才看得出来", en: "Only visible where something sits behind the composer" },
+      default: 8,
+      min: 0,
+      max: 30
+    }
+  });
+  function composerBox(container) {
+    for (const node of [container, ...container.querySelectorAll("div")]) {
+      if (node instanceof HTMLElement && /--c-bacSec/.test(node.style.backgroundColor))
+        return node;
+    }
+    return null;
+  }
+  function mark() {
+    for (const container of document.querySelectorAll(COMPOSER)) {
+      const box = composerBox(container);
+      if (box && !box.hasAttribute(MARK))
+        box.setAttribute(MARK, "");
+    }
+  }
+  function css(opacity, blur) {
+    const pct = Math.max(0, Math.min(100, Math.round(opacity)));
+    const px = Math.max(0, Math.min(30, Math.round(blur)));
+    const rules = [`background-color: color-mix(in srgb, var(--c-bacSec) ${pct}%, transparent) !important;`];
+    if (px)
+      rules.push(`backdrop-filter: blur(${px}px) saturate(1.2);`, `-webkit-backdrop-filter: blur(${px}px) saturate(1.2);`);
+    return `[${MARK}] { ${rules.join(" ")} }`;
+  }
+  var stopDom2 = null;
+  function apply() {
+    let style = document.getElementById(STYLE_ID2);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID2;
+      (document.head ?? document.documentElement).append(style);
+    }
+    style.textContent = css(settings3.store.opacity, settings3.store.blur);
+  }
+  var composerLook_default = definePlugin({
+    name: "composerLook",
+    title: { zh: "输入框透明度", en: "Composer opacity" },
+    description: {
+      zh: "调节 AI 输入框背景的不透明度和模糊程度，让输入框更轻、和背景融为一体。",
+      en: "Sets the opacity and blur of the AI composer's background, for a lighter composer that blends into the page."
+    },
+    icon: Icons.droplet,
+    tags: ["composer", "appearance"],
+    enabledByDefault: false,
+    settings: settings3,
+    start() {
+      apply();
+      mark();
+      stopDom2 = onDomChange(mark);
+    },
+    stop() {
+      stopDom2?.();
+      stopDom2 = null;
+      document.getElementById(STYLE_ID2)?.remove();
+      for (const node of document.querySelectorAll(`[${MARK}]`))
+        node.removeAttribute(MARK);
+    },
+    onSettingsChange() {
+      apply();
+    }
+  });
+
   // src/plugins/greetingCustomizer/store.ts
   var PLUGIN2 = "GreetingCustomizer";
   var MAX_LEN = 100;
@@ -1927,9 +2012,9 @@ button { font: inherit; color: inherit; }
   }
 
   // src/plugins/greetingCustomizer/index.ts
-  var STYLE_ID2 = "notionai-pp-greeting-style";
+  var STYLE_ID3 = "notionai-pp-greeting-style";
   var RIGHT_DOUBLE_MS = 400;
-  var settings3 = definePluginSettings({
+  var settings4 = definePluginSettings({
     manage: {
       type: "action",
       label: { zh: "问候语列表", en: "Greetings" },
@@ -1966,19 +2051,19 @@ button { font: inherit; color: inherit; }
       max: 3600
     }
   });
-  var stopDom2 = null;
+  var stopDom3 = null;
   var stopRoute = null;
   var timer = null;
   var wasHome = false;
   var lastRightClick = 0;
   var running = false;
   function upsertStyle(css) {
-    let style = document.getElementById(STYLE_ID2);
+    let style = document.getElementById(STYLE_ID3);
     if (style?.textContent === css)
       return;
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID2;
+      style.id = STYLE_ID3;
       (document.head ?? document.documentElement).append(style);
     }
     style.textContent = css;
@@ -1995,13 +2080,13 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 @media (max-width: 768px) { ${sel}::after { font-size: 1.25rem !important; line-height: 1.3 !important; } }
 `;
   }
-  function apply(advance = false) {
+  function apply2(advance = false) {
     const greetings = loadGreetings();
     const current = loadIndex();
-    const index = pickIndex(greetings.length, settings3.store.order, current, advance);
+    const index = pickIndex(greetings.length, settings4.store.order, current, advance);
     if (index !== current)
       saveIndex(index);
-    const clickable = settings3.store.mode === "manual" && greetings.length > 1;
+    const clickable = settings4.store.mode === "manual" && greetings.length > 1;
     upsertStyle(buildCss(greetings[index] ?? greetings[0], clickable));
     syncTitle();
   }
@@ -2009,14 +2094,14 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const target = document.querySelector(TARGET_SELECTOR);
     if (!target)
       return;
-    const want = settings3.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
+    const want = settings4.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
     if (want)
       target.title = want;
     else
       target.removeAttribute("title");
   }
   function syncTimer() {
-    const want = running && settings3.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
+    const want = running && settings4.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
     if (!want) {
       if (timer)
         clearInterval(timer);
@@ -2025,7 +2110,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
     if (timer)
       return;
-    timer = setInterval(() => apply(true), settings3.store.intervalSec * 1000);
+    timer = setInterval(() => apply2(true), settings4.store.intervalSec * 1000);
   }
   function restartTimer() {
     if (timer)
@@ -2037,7 +2122,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const home = isHomePath();
     const marked = syncMark();
     if (home && !wasHome)
-      apply(settings3.store.mode === "refresh");
+      apply2(settings4.store.mode === "refresh");
     else if (marked)
       syncTitle();
     wasHome = home;
@@ -2047,11 +2132,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function onClick(event) {
     if (event.button !== 0 || !targetOf(event))
       return;
-    if (settings3.store.mode !== "manual" || loadGreetings().length <= 1)
+    if (settings4.store.mode !== "manual" || loadGreetings().length <= 1)
       return;
     if (String(window.getSelection?.() ?? "").trim())
       return;
-    apply(true);
+    apply2(true);
   }
   function onContextMenu2(event) {
     if (!targetOf(event))
@@ -2067,9 +2152,9 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   }
   function openGreetingManager() {
-    const store = settings3.store;
+    const store = settings4.store;
     openManager({
-      defs: { mode: settings3.def.mode, order: settings3.def.order, intervalSec: settings3.def.intervalSec },
+      defs: { mode: settings4.def.mode, order: settings4.def.order, intervalSec: settings4.def.intervalSec },
       get: (key) => store[key],
       set: (key, value) => void (store[key] = value)
     }, loadIndex);
@@ -2084,14 +2169,14 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,
-    settings: settings3,
+    settings: settings4,
     start() {
       running = true;
       wasHome = false;
       lastRightClick = 0;
       document.addEventListener("click", onClick, true);
       document.addEventListener("contextmenu", onContextMenu2, true);
-      stopDom2 = onDomChange(check2);
+      stopDom3 = onDomChange(check2);
       stopRoute = onRouteChange(check2);
       check2();
     },
@@ -2099,228 +2184,19 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       running = false;
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("contextmenu", onContextMenu2, true);
-      stopDom2?.();
+      stopDom3?.();
       stopRoute?.();
-      stopDom2 = stopRoute = null;
+      stopDom3 = stopRoute = null;
       syncTimer();
       clearMarks();
-      document.getElementById(STYLE_ID2)?.remove();
+      document.getElementById(STYLE_ID3)?.remove();
       closeManager();
     },
     onSettingsChange(key) {
       if (key === "index")
-        return apply(false);
-      apply(false);
+        return apply2(false);
+      apply2(false);
       restartTimer();
-    }
-  });
-
-  // src/plugins/hideShare/index.ts
-  var STYLE_ID3 = "notionai-pp-hide-share";
-  var CHAT_SHARE = "[data-testid='share-chat-button']";
-  var PAGE_SHARE = ".notion-topbar-share-menu";
-  var settings4 = definePluginSettings({
-    pages: {
-      type: "boolean",
-      label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
-      description: { zh: "普通 Notion 页面右上角的「分享」按钮", en: "The Share button at the top right of ordinary Notion pages" },
-      default: false
-    }
-  });
-  function css(pages) {
-    const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
-    return `${selectors.join(", ")} { display: none !important; }`;
-  }
-  function apply2() {
-    let style = document.getElementById(STYLE_ID3);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = STYLE_ID3;
-      (document.head ?? document.documentElement).append(style);
-    }
-    style.textContent = css(settings4.store.pages);
-  }
-  var hideShare_default = definePlugin({
-    name: "hideShare",
-    title: { zh: "隐藏分享按钮", en: "Hide Share button" },
-    description: {
-      zh: "隐藏 Notion AI 对话右上角的分享按钮，避免误点把对话分享出去。也可以顺带隐藏普通页面的分享按钮。",
-      en: "Hides the Share button at the top right of Notion AI chats so a chat is not shared by accident. Can also hide Share on ordinary pages."
-    },
-    icon: Icons.shareOff,
-    tags: ["appearance"],
-    enabledByDefault: true,
-    settings: settings4,
-    start() {
-      apply2();
-    },
-    stop() {
-      document.getElementById(STYLE_ID3)?.remove();
-    },
-    onSettingsChange() {
-      apply2();
-    }
-  });
-
-  // src/plugins/inputHistory/index.ts
-  var STORE_KEY = "notionai-pp:input-history:v1";
-  var COMPOSER = "[data-notion-chat-input-container]";
-  var EDITOR2 = `${COMPOSER} [contenteditable='true']`;
-  var SEND = "[data-testid='agent-send-message-button']";
-  var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
-  var settings5 = definePluginSettings({
-    max: {
-      type: "number",
-      label: { zh: "最多保存条数", en: "Prompts to keep" },
-      default: 100,
-      min: 10,
-      max: 500
-    },
-    clear: {
-      type: "action",
-      label: { zh: "清空输入历史", en: "Clear prompt history" },
-      button: { zh: "清空", en: "Clear" },
-      run: () => save([])
-    }
-  });
-  function load() {
-    try {
-      const list = safeJson(pageWindow.localStorage.getItem(STORE_KEY) ?? "");
-      return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
-    } catch {
-      return [];
-    }
-  }
-  function save(list) {
-    try {
-      pageWindow.localStorage.setItem(STORE_KEY, JSON.stringify(list));
-    } catch {}
-  }
-  function remember(list, text, max) {
-    const value = text.trim();
-    if (!value)
-      return list;
-    return [...list.filter((item) => item !== value), value].slice(-max);
-  }
-  var textOf = (editor) => (editor.innerText ?? "").replace(/\n$/, "");
-  function caretAt(editor, edge) {
-    const selection = document.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode))
-      return false;
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    const caret = selection.getRangeAt(0);
-    if (edge === "start")
-      range.setEnd(caret.startContainer, caret.startOffset);
-    else
-      range.setStart(caret.endContainer, caret.endOffset);
-    return range.toString().length === 0;
-  }
-  function fill(editor, text) {
-    editor.focus();
-    const selection = document.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(editor);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-    if (text)
-      document.execCommand("insertText", false, text);
-    else
-      document.execCommand("delete");
-    const end = document.createRange();
-    end.selectNodeContents(editor);
-    end.collapse(false);
-    selection?.removeAllRanges();
-    selection?.addRange(end);
-  }
-  var browsing = -1;
-  var draft = "";
-  var browsingEditor = null;
-  function reset() {
-    browsing = -1;
-    draft = "";
-    browsingEditor = null;
-  }
-  function record(editor) {
-    if (!editor)
-      return;
-    save(remember(load(), textOf(editor), settings5.store.max));
-    reset();
-  }
-  function consume(event) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-  }
-  var popupOpen = () => [...document.querySelectorAll(POPUP)].some((node) => node.getClientRects().length > 0);
-  function onKeyDown(event) {
-    const editor = event.target?.closest?.(EDITOR2);
-    if (!editor || event.isComposing || event.altKey || event.ctrlKey || event.metaKey)
-      return;
-    if (event.key === "Enter" && !event.shiftKey) {
-      if (!popupOpen())
-        record(editor);
-      return;
-    }
-    if (event.shiftKey || popupOpen())
-      return;
-    if (browsingEditor && browsingEditor !== editor)
-      reset();
-    const list = load();
-    if (event.key === "ArrowUp") {
-      const empty = !textOf(editor).trim();
-      if (!list.length || !empty && !caretAt(editor, "start"))
-        return;
-      if (browsing === -1) {
-        draft = textOf(editor);
-        browsing = list.length;
-        browsingEditor = editor;
-      }
-      consume(event);
-      if (browsing === 0)
-        return;
-      browsing--;
-      fill(editor, list[browsing]);
-    } else if (event.key === "ArrowDown" && browsing !== -1) {
-      if (!caretAt(editor, "end"))
-        return;
-      consume(event);
-      browsing++;
-      if (browsing >= list.length) {
-        fill(editor, draft);
-        reset();
-      } else
-        fill(editor, list[browsing]);
-    } else if (event.key === "Escape" && browsing !== -1) {
-      consume(event);
-      fill(editor, draft);
-      reset();
-    }
-  }
-  function onClick2(event) {
-    const send = event.target?.closest?.(SEND);
-    if (!send || send.getAttribute("aria-disabled") === "true")
-      return;
-    record(send.closest(COMPOSER)?.querySelector("[contenteditable='true']") ?? null);
-  }
-  var inputHistory_default = definePlugin({
-    name: "inputHistory",
-    title: { zh: "输入历史", en: "Prompt history" },
-    description: {
-      zh: "在 AI 输入框里按 ↑ / ↓ 调出以前发过的提问，像终端一样；Esc 恢复刚才的草稿。只保存在本浏览器。",
-      en: "Press ↑ / ↓ in the AI composer to recall prompts you sent before, like a shell; Esc restores your draft. Kept in this browser only."
-    },
-    icon: Icons.history,
-    tags: ["composer"],
-    enabledByDefault: true,
-    settings: settings5,
-    start() {
-      document.addEventListener("keydown", onKeyDown, true);
-      document.addEventListener("click", onClick2, true);
-    },
-    stop() {
-      document.removeEventListener("keydown", onKeyDown, true);
-      document.removeEventListener("click", onClick2, true);
-      reset();
     }
   });
 
@@ -2344,7 +2220,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   var failed = false;
   var chatId = "";
   var users = 0;
-  var stopDom3 = null;
+  var stopDom4 = null;
   var stopNet = null;
   var currentChatId = () => new URL(pageWindow.location.href).searchParams.get("t") ?? "";
   var replyState = () => state;
@@ -2362,7 +2238,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   }
   function watchReplies() {
     if (users++ === 0) {
-      stopDom3 = onDomChange(check3);
+      stopDom4 = onDomChange(check3);
       stopNet = observeNetwork({
         matches: (url, method) => method === "POST" && INFERENCE_PATH.test(url.pathname),
         onExchange(exchange) {
@@ -2381,46 +2257,59 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       released = true;
       if (--users > 0)
         return;
-      stopDom3?.();
+      stopDom4?.();
       stopNet?.();
-      stopDom3 = stopNet = null;
+      stopDom4 = stopNet = null;
       state = "idle";
     };
   }
 
-  // src/utils/time.ts
-  function debounce(fn, wait, maxWait = Infinity) {
-    let timer;
-    let firstAt = 0;
-    const run = (...args) => {
-      clearTimeout(timer);
-      const now = Date.now();
-      if (!firstAt)
-        firstAt = now;
-      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
-      timer = setTimeout(() => {
-        firstAt = 0;
-        fn(...args);
-      }, delay);
-    };
-    run.cancel = () => {
-      clearTimeout(timer);
-      firstAt = 0;
-    };
-    return run;
+  // src/plugins/hideShare/index.ts
+  var STYLE_ID4 = "notionai-pp-hide-share";
+  var CHAT_SHARE = "[data-testid='share-chat-button']";
+  var PAGE_SHARE = ".notion-topbar-share-menu";
+  var settings5 = definePluginSettings({
+    pages: {
+      type: "boolean",
+      label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
+      description: { zh: "普通 Notion 页面右上角的「分享」按钮", en: "The Share button at the top right of ordinary Notion pages" },
+      default: false
+    }
+  });
+  function css2(pages) {
+    const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
+    return `${selectors.join(", ")} { display: none !important; }`;
   }
-  function frameThrottle(fn) {
-    let pending = false;
-    return () => {
-      if (pending)
-        return;
-      pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        fn();
-      });
-    };
+  function apply3() {
+    let style = document.getElementById(STYLE_ID4);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID4;
+      (document.head ?? document.documentElement).append(style);
+    }
+    style.textContent = css2(settings5.store.pages);
   }
+  var hideShare_default = definePlugin({
+    name: "hideShare",
+    title: { zh: "隐藏分享按钮", en: "Hide Share button" },
+    description: {
+      zh: "隐藏 Notion AI 对话右上角的分享按钮，避免误点把对话分享出去。也可以顺带隐藏普通页面的分享按钮。",
+      en: "Hides the Share button at the top right of Notion AI chats so a chat is not shared by accident. Can also hide Share on ordinary pages."
+    },
+    icon: Icons.shareOff,
+    tags: ["appearance"],
+    enabledByDefault: true,
+    settings: settings5,
+    start() {
+      apply3();
+    },
+    stop() {
+      document.getElementById(STYLE_ID4)?.remove();
+    },
+    onSettingsChange() {
+      apply3();
+    }
+  });
 
   // src/plugins/navigator/messages.ts
   var USER_STEP = "data-agent-chat-user-step-id";
@@ -2615,6 +2504,391 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       const cut = Math.max(LABEL_HEAD, text.lastIndexOf(" ", shared) + 1);
       return summarize(`${text.slice(0, LABEL_HEAD)}… ${text.slice(cut)}`, max);
     });
+  }
+
+  // src/plugins/healthCheck/index.ts
+  var STORE_KEY = "notionai-pp:health:v1";
+  var SETTLE_MS = 6000;
+  var ATTEMPTS = 3;
+  var hasMessages = () => !!document.querySelector(`[${USER_STEP}]`);
+  var CHECKS = [
+    {
+      id: "composer",
+      label: { zh: "AI 输入框", en: "AI composer" },
+      plugins: ["usageMeter", "inputHistory", "focusHighlight", "widerChat", "composerLook"],
+      found: () => !!document.querySelector("[data-notion-chat-input-container]")
+    },
+    {
+      id: "send",
+      label: { zh: "发送 / 停止按钮", en: "Send / stop button" },
+      plugins: ["replyNotification", "tabStatus", "chatNavigator"],
+      found: () => !!document.querySelector(`[data-testid='agent-send-message-button'], ${STOP_BUTTON}`)
+    },
+    {
+      id: "messages",
+      label: { zh: "对话里的提问", en: "Questions in the chat" },
+      plugins: ["chatNavigator", "messageStars", "widerChat"],
+      found: hasMessages
+    },
+    {
+      id: "copy",
+      label: { zh: "回复下方的「复制」按钮", en: "Copy button under replies" },
+      plugins: ["chatNavigator", "messageStars"],
+      applies: () => hasMessages() && replyState() !== "streaming",
+      found: () => [...document.querySelectorAll("button, [role='button']")].some((button) => copyRole(button) === "assistant")
+    },
+    {
+      id: "share",
+      label: { zh: "右上角的分享按钮", en: "Share button at the top right" },
+      plugins: ["hideShare", "messageStars"],
+      found: () => !!document.querySelector(CHAT_SHARE)
+    },
+    {
+      id: "sidebar",
+      label: { zh: "左侧侧栏", en: "Left sidebar" },
+      plugins: ["sidebarTweaks"],
+      found: () => !!document.querySelector("nav.notion-sidebar-container")
+    }
+  ];
+  var notionVersion = () => document.documentElement.dataset.notionVersion ?? "";
+  function failedChecks(checks = CHECKS) {
+    return checks.filter((check) => (check.applies?.() ?? true) && !check.found()).map((check) => check.id);
+  }
+  function readStored() {
+    try {
+      const value = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null");
+      return value && Array.isArray(value.failed) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  function writeStored(value) {
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(value));
+    } catch {}
+  }
+  function affected(failed) {
+    const names = new Set(CHECKS.filter((check) => failed.includes(check.id)).flatMap((check) => check.plugins));
+    return allPlugins().filter((plugin) => names.has(plugin.name) && isEnabled(plugin)).map((plugin) => tr(plugin.title));
+  }
+  function shouldNotify(failed, previous, enabledAffected) {
+    if (!failed.length || !enabledAffected)
+      return false;
+    return !previous || [...previous.failed].sort().join() !== [...failed].sort().join();
+  }
+  var CSS3 = `
+:host { all: initial; }
+.note { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; width: 340px; box-sizing: border-box;
+  padding: 14px 16px; border-radius: 12px; font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  background: #fff; color: #37352f; box-shadow: 0 8px 28px rgba(15,15,15,.18), 0 0 0 1px rgba(15,15,15,.08); }
+:host([data-theme="dark"]) .note { background: #2a2a2a; color: #e6e6e5; box-shadow: 0 8px 28px rgba(0,0,0,.5), 0 0 0 1px rgba(255,255,255,.1); }
+.head { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 6px; }
+.head svg { width: 16px; height: 16px; flex: none; }
+.head.bad svg { color: #d9730d; }
+.head.ok svg { color: #448361; }
+.close { margin-left: auto; border: 0; background: none; color: inherit; opacity: .55; cursor: pointer; padding: 2px; display: flex; }
+.close:hover { opacity: 1; }
+.close svg { width: 14px; height: 14px; }
+ul { margin: 4px 0 6px; padding-left: 18px; }
+p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
+`;
+  var note = null;
+  function closeNote() {
+    note?.destroy();
+    note = null;
+  }
+  function showNote(failed, version, notice = "") {
+    closeNote();
+    note = createOverlay("notionai-pp-health", CSS3, "");
+    const box = document.createElement("div");
+    box.className = "note";
+    box.setAttribute("role", "status");
+    const head = document.createElement("div");
+    head.className = `head ${notice ? "" : failed.length ? "bad" : "ok"}`;
+    head.append(svgIcon(notice ? Icons.info : failed.length ? Icons.alert : Icons.check), notice || (failed.length ? t("NotionAI++ 自检：有元素找不到了", "NotionAI++ self-check: something is missing") : t("NotionAI++ 自检：一切正常", "NotionAI++ self-check: all good")));
+    const close = document.createElement("button");
+    close.className = "close";
+    close.title = t("关闭", "Close");
+    close.append(svgIcon(Icons.x));
+    close.addEventListener("click", closeNote);
+    head.append(close);
+    box.append(head);
+    if (notice) {} else if (failed.length) {
+      const list = document.createElement("ul");
+      for (const check of CHECKS.filter((check) => failed.includes(check.id))) {
+        const item = document.createElement("li");
+        item.textContent = tr(check.label);
+        list.append(item);
+      }
+      box.append(list);
+      const hit = affected(failed);
+      if (hit.length)
+        box.append(Object.assign(document.createElement("p"), { textContent: `${t("可能受影响：", "May be affected: ")}${hit.join(t("、", ", "))}` }));
+    } else {
+      box.append(Object.assign(document.createElement("p"), { textContent: t(`已检查 ${CHECKS.length} 项关键元素。`, `Checked ${CHECKS.length} key elements.`) }));
+    }
+    if (version)
+      box.append(Object.assign(document.createElement("p"), { textContent: `Notion ${version}` }));
+    note.root.append(box);
+  }
+  var timer2 = null;
+  var stopRoute2 = null;
+  var doneThisLoad = false;
+  var inChat = () => isAiRoute() && !!currentChatId();
+  function schedule3(attempt = 1) {
+    if (timer2 || doneThisLoad || !inChat())
+      return;
+    timer2 = setTimeout(() => {
+      timer2 = null;
+      if (!inChat())
+        return;
+      const failed = failedChecks();
+      if (failed.length && attempt < ATTEMPTS)
+        return schedule3(attempt + 1);
+      doneThisLoad = true;
+      const previous = readStored();
+      const version = notionVersion();
+      if (shouldNotify(failed, previous, affected(failed).length))
+        showNote(failed, version);
+      writeStored({ version, failed, at: Date.now() });
+    }, SETTLE_MS);
+  }
+  function runNow() {
+    if (!inChat()) {
+      return showNote([], "", t("请在一个有消息的 AI 对话里运行自检", "Open a Notion AI chat with messages, then run the check"));
+    }
+    const failed = failedChecks();
+    const version = notionVersion();
+    writeStored({ version, failed, at: Date.now() });
+    showNote(failed, version);
+  }
+  var settings6 = definePluginSettings({
+    runNow: {
+      type: "action",
+      label: { zh: "立即自检", en: "Check now" },
+      description: { zh: "在当前对话里检查一遍，并显示结果", en: "Check the current chat and show the result" },
+      button: { zh: "检查", en: "Check" },
+      run: () => runNow()
+    }
+  });
+  var healthCheck_default = definePlugin({
+    name: "healthCheck",
+    title: { zh: "改版自检", en: "Notion update check" },
+    description: {
+      zh: "Notion 更新后，自动检查各插件依赖的按钮和元素还在不在；找不到时右下角提示是哪些插件可能失效。",
+      en: "After Notion updates, checks that the buttons and elements the plugins rely on are still there, and notes which plugins may be affected when they are not."
+    },
+    icon: Icons.activity,
+    enabledByDefault: true,
+    settings: settings6,
+    start() {
+      schedule3();
+      stopRoute2 = onRouteChange(() => schedule3());
+    },
+    stop() {
+      stopRoute2?.();
+      stopRoute2 = null;
+      if (timer2)
+        clearTimeout(timer2);
+      timer2 = null;
+      closeNote();
+    }
+  });
+
+  // src/plugins/inputHistory/index.ts
+  var STORE_KEY2 = "notionai-pp:input-history:v1";
+  var COMPOSER2 = "[data-notion-chat-input-container]";
+  var EDITOR2 = `${COMPOSER2} [contenteditable='true']`;
+  var SEND = "[data-testid='agent-send-message-button']";
+  var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
+  var settings7 = definePluginSettings({
+    max: {
+      type: "number",
+      label: { zh: "最多保存条数", en: "Prompts to keep" },
+      default: 100,
+      min: 10,
+      max: 500
+    },
+    clear: {
+      type: "action",
+      label: { zh: "清空输入历史", en: "Clear prompt history" },
+      button: { zh: "清空", en: "Clear" },
+      run: () => save([])
+    }
+  });
+  function load() {
+    try {
+      const list = safeJson(pageWindow.localStorage.getItem(STORE_KEY2) ?? "");
+      return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  function save(list) {
+    try {
+      pageWindow.localStorage.setItem(STORE_KEY2, JSON.stringify(list));
+    } catch {}
+  }
+  function remember(list, text, max) {
+    const value = text.trim();
+    if (!value)
+      return list;
+    return [...list.filter((item) => item !== value), value].slice(-max);
+  }
+  var textOf = (editor) => (editor.innerText ?? "").replace(/\n$/, "");
+  function caretAt(editor, edge) {
+    const selection = document.getSelection();
+    if (!selection?.rangeCount || !selection.isCollapsed || !editor.contains(selection.anchorNode))
+      return false;
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    const caret = selection.getRangeAt(0);
+    if (edge === "start")
+      range.setEnd(caret.startContainer, caret.startOffset);
+    else
+      range.setStart(caret.endContainer, caret.endOffset);
+    return range.toString().length === 0;
+  }
+  function fill(editor, text) {
+    editor.focus();
+    const selection = document.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    if (text)
+      document.execCommand("insertText", false, text);
+    else
+      document.execCommand("delete");
+    const end = document.createRange();
+    end.selectNodeContents(editor);
+    end.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(end);
+  }
+  var browsing = -1;
+  var draft = "";
+  var browsingEditor = null;
+  function reset() {
+    browsing = -1;
+    draft = "";
+    browsingEditor = null;
+  }
+  function record(editor) {
+    if (!editor)
+      return;
+    save(remember(load(), textOf(editor), settings7.store.max));
+    reset();
+  }
+  function consume(event) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }
+  var popupOpen = () => [...document.querySelectorAll(POPUP)].some((node) => node.getClientRects().length > 0);
+  function onKeyDown(event) {
+    const editor = event.target?.closest?.(EDITOR2);
+    if (!editor || event.isComposing || event.altKey || event.ctrlKey || event.metaKey)
+      return;
+    if (event.key === "Enter" && !event.shiftKey) {
+      if (!popupOpen())
+        record(editor);
+      return;
+    }
+    if (event.shiftKey || popupOpen())
+      return;
+    if (browsingEditor && browsingEditor !== editor)
+      reset();
+    const list = load();
+    if (event.key === "ArrowUp") {
+      const empty = !textOf(editor).trim();
+      if (!list.length || !empty && !caretAt(editor, "start"))
+        return;
+      if (browsing === -1) {
+        draft = textOf(editor);
+        browsing = list.length;
+        browsingEditor = editor;
+      }
+      consume(event);
+      if (browsing === 0)
+        return;
+      browsing--;
+      fill(editor, list[browsing]);
+    } else if (event.key === "ArrowDown" && browsing !== -1) {
+      if (!caretAt(editor, "end"))
+        return;
+      consume(event);
+      browsing++;
+      if (browsing >= list.length) {
+        fill(editor, draft);
+        reset();
+      } else
+        fill(editor, list[browsing]);
+    } else if (event.key === "Escape" && browsing !== -1) {
+      consume(event);
+      fill(editor, draft);
+      reset();
+    }
+  }
+  function onClick2(event) {
+    const send = event.target?.closest?.(SEND);
+    if (!send || send.getAttribute("aria-disabled") === "true")
+      return;
+    record(send.closest(COMPOSER2)?.querySelector("[contenteditable='true']") ?? null);
+  }
+  var inputHistory_default = definePlugin({
+    name: "inputHistory",
+    title: { zh: "输入历史", en: "Prompt history" },
+    description: {
+      zh: "在 AI 输入框里按 ↑ / ↓ 调出以前发过的提问，像终端一样；Esc 恢复刚才的草稿。只保存在本浏览器。",
+      en: "Press ↑ / ↓ in the AI composer to recall prompts you sent before, like a shell; Esc restores your draft. Kept in this browser only."
+    },
+    icon: Icons.history,
+    tags: ["composer"],
+    enabledByDefault: true,
+    settings: settings7,
+    start() {
+      document.addEventListener("keydown", onKeyDown, true);
+      document.addEventListener("click", onClick2, true);
+    },
+    stop() {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("click", onClick2, true);
+      reset();
+    }
+  });
+
+  // src/utils/time.ts
+  function debounce(fn, wait, maxWait = Infinity) {
+    let timer;
+    let firstAt = 0;
+    const run = (...args) => {
+      clearTimeout(timer);
+      const now = Date.now();
+      if (!firstAt)
+        firstAt = now;
+      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
+      timer = setTimeout(() => {
+        firstAt = 0;
+        fn(...args);
+      }, delay);
+    };
+    run.cancel = () => {
+      clearTimeout(timer);
+      firstAt = 0;
+    };
+    return run;
+  }
+  function frameThrottle(fn) {
+    let pending = false;
+    return () => {
+      if (pending)
+        return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        fn();
+      });
+    };
   }
 
   // src/plugins/navigator/effects.ts
@@ -2815,13 +3089,13 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var RESCAN_MAX_MS = 1200;
   var ACTIVE_RATIO = 0.4;
   var SCROLL_OFFSET = 72;
-  var SETTLE_MS = 150;
+  var SETTLE_MS2 = 150;
   var RAIL_MARGIN = 20;
   var SIDE_PANELS = "[role='complementary'], aside";
-  var COMPOSER2 = "[data-notion-chat-input-container]";
+  var COMPOSER3 = "[data-notion-chat-input-container]";
   var SPAN_GAP = 12;
   var MIN_SPAN = 120;
-  var settings6 = definePluginSettings({
+  var settings8 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     keyboard: {
       type: "boolean",
@@ -2843,7 +3117,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       type: "action",
       label: { zh: "预览效果", en: "Preview effect" },
       button: { zh: "预览", en: "Preview" },
-      run: () => previewEffect(settings6.store.effect)
+      run: () => previewEffect(settings8.store.effect)
     }
   });
   var overlay2 = null;
@@ -2856,7 +3130,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
   function visibleMessages(all) {
-    return settings6.store.showAssistant ? all : all.filter((message) => message.role === "user");
+    return settings8.store.showAssistant ? all : all.filter((message) => message.role === "user");
   }
   function placeRail() {
     if (!overlay2)
@@ -2895,13 +3169,13 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     const pane = scrollParentOf(first);
     const isRoot = pane === document.scrollingElement || pane === document.documentElement;
     const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
-    const composer = document.querySelector(COMPOSER2)?.getBoundingClientRect();
+    const composer = document.querySelector(COMPOSER3)?.getBoundingClientRect();
     const top = Math.max(0, paneBox.top) + SPAN_GAP;
     const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
     return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
   }
   function streamingState(list, streaming = replyState() === "streaming") {
-    if (!streaming || !settings6.store.showAssistant)
+    if (!streaming || !settings8.store.showAssistant)
       return { id: "", pending: false };
     const last = list[list.length - 1];
     if (last?.role === "assistant")
@@ -2948,7 +3222,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
   }
   function onKeyDown2(event) {
-    if (!settings6.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
+    if (!settings8.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
       return;
     if (event.defaultPrevented || event.altKey || event.shiftKey)
       return;
@@ -3113,8 +3387,8 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       clearTimeout(timer);
       timer = window.setTimeout(() => {
         (isRoot ? window : scroller).removeEventListener("scroll", settle);
-        playEffect(target, settings6.store.effect);
-      }, SETTLE_MS);
+        playEffect(target, settings8.store.effect);
+      }, SETTLE_MS2);
     };
     (isRoot ? window : scroller).addEventListener("scroll", settle, { passive: true });
     scroller.scrollTo({ top, behavior: "smooth" });
@@ -3130,7 +3404,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings6,
+    settings: settings8,
     start() {
       overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
       overlay2.host.hidden = true;
@@ -3210,7 +3484,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var HOVER_OPEN_MS = 120;
   var HOVER_CLOSE_MS = 180;
   var SCROLL_OFFSET2 = 72;
-  var CSS3 = `
+  var CSS4 = `
 :host {
   all: initial;
   --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
@@ -3362,7 +3636,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function ensureOverlay() {
     if (overlay3)
       return overlay3;
-    overlay3 = createOverlay(HOST_ID, CSS3, `<div class="panel" role="dialog"></div>`);
+    overlay3 = createOverlay(HOST_ID, CSS4, `<div class="panel" role="dialog"></div>`);
     overlay3.host.hidden = true;
     overlay3.host.addEventListener("pointerenter", () => hoverSoon(true));
     overlay3.host.addEventListener("pointerleave", () => hoverSoon(false));
@@ -3496,11 +3770,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
 
   // src/plugins/messageStars/index.ts
-  var MARK = "data-npp-star";
+  var MARK2 = "data-npp-star";
   var STAR_COLOR2 = "#d9730d";
   var RESCAN_MS2 = 200;
   var cleanups4 = [];
-  var settings7 = definePluginSettings({
+  var settings9 = definePluginSettings({
     headerList: {
       type: "boolean",
       label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
@@ -3571,7 +3845,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function makeButton2(copy, id) {
     const wrapper = copy.parentElement?.cloneNode(false) ?? document.createElement("div");
     wrapper.removeAttribute("data-popup-origin");
-    wrapper.setAttribute(MARK, id);
+    wrapper.setAttribute(MARK2, id);
     const button = copy.cloneNode(false);
     button.removeAttribute("id");
     button.append(starIcon(copy.querySelector("svg")));
@@ -3608,14 +3882,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const stars = starsOf(chatId);
     const steps = topSteps();
     for (const copy of document.querySelectorAll("[role='button'][aria-label], button[aria-label]")) {
-      if (copy.closest(`[${MARK}]`))
+      if (copy.closest(`[${MARK2}]`))
         continue;
       const row = copy.parentElement?.parentElement;
       if (!row || !copyRole(copy))
         continue;
       const id = chatId ? messageIdFor(copy, steps) : null;
-      let ours = [...row.children].find((child) => child.hasAttribute(MARK)) ?? null;
-      if (ours && (!id || ours.getAttribute(MARK) !== id)) {
+      let ours = [...row.children].find((child) => child.hasAttribute(MARK2)) ?? null;
+      if (ours && (!id || ours.getAttribute(MARK2) !== id)) {
         ours.remove();
         ours = null;
       }
@@ -3632,7 +3906,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   }
   function removeAll() {
-    for (const node of document.querySelectorAll(`[${MARK}]`))
+    for (const node of document.querySelectorAll(`[${MARK2}]`))
       node.remove();
   }
   var messageStars_default = definePlugin({
@@ -3642,7 +3916,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
       en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back."
     },
-    settings: settings7,
+    settings: settings9,
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
@@ -3653,7 +3927,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       pageWindow.addEventListener("storage", onStorage);
       cleanups4 = [
         onDomChange((mutations) => {
-          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK))))
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK2))))
             return;
           rescan();
         }),
@@ -3662,7 +3936,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         () => pageWindow.removeEventListener("storage", onStorage)
       ];
       scan3();
-      if (settings7.store.headerList)
+      if (settings9.store.headerList)
         startList();
     },
     stop() {
@@ -3674,13 +3948,13 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     },
     onSettingsChange() {
       stopList();
-      if (settings7.store.headerList)
+      if (settings9.store.headerList)
         startList();
     }
   });
 
   // src/plugins/replyNotification/index.ts
-  var settings8 = definePluginSettings({
+  var settings10 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -3714,7 +3988,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   });
   var audio = null;
   var cleanups5 = [];
-  function chime(volume = settings8.store.volume) {
+  function chime(volume = settings10.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -3751,7 +4025,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings8.store.sound
+        silent: settings10.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -3760,20 +4034,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     } catch {}
   }
   function notify2({ error }) {
-    if (settings8.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings10.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings8.store.sound)
+    if (settings10.store.sound)
       chime();
-    if (settings8.store.desktop)
+    if (settings10.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings8.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings10.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings8.store.sound)
+    if (settings10.store.sound)
       chime();
-    if (settings8.store.desktop)
+    if (settings10.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -3786,7 +4060,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings8,
+    settings: settings10,
     start() {
       cleanups5 = [watchReplies(), on("replyEnd", notify2)];
     },
@@ -3797,7 +4071,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       audio = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings8.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings10.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
@@ -4085,7 +4359,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.6.1";
+    const version = "[20261007] v1.7.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4119,7 +4393,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.6.1";
+    const version = "[20261007] v1.7.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4166,11 +4440,134 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   });
 
+  // src/plugins/sidebarTweaks/index.ts
+  var SIDEBAR = "nav.notion-sidebar-container";
+  var CLOSE = "[role='button'][aria-label='Close sidebar'], [role='button']:has(> svg.sidebarLeft)";
+  var LOCK = "[role='button'][aria-label='Lock sidebar open'], [role='button']:has(> svg.menu)";
+  var INTERACTIVE2 = "a, button, input, textarea, select, label, [contenteditable=''], [contenteditable='true'], " + "[role='button'], [role='link'], [role='menuitem'], [role='treeitem'], [role='option'], [role='tab'], [role='checkbox'], [role='switch'], [draggable='true']";
+  var ACTIVE_CURSORS = new Set(["pointer", "text", "col-resize", "ew-resize", "row-resize", "grab", "grabbing", "move"]);
+  var SLOP = 6;
+  var settings11 = definePluginSettings({
+    clickToToggle: {
+      type: "boolean",
+      label: { zh: "点击侧栏空白处收起/固定", en: "Click empty sidebar space to toggle" },
+      description: { zh: "点侧栏里没有按钮的地方收起侧栏；收起后悬停弹出的侧栏，点空白处可重新固定", en: "Click a blank part of the sidebar to collapse it; click a blank part of the hover sidebar to pin it open again" },
+      default: true
+    },
+    defaultCollapsed: {
+      type: "boolean",
+      label: { zh: "打开页面时收起侧栏", en: "Start with the sidebar collapsed" },
+      default: false
+    }
+  });
+  function isActive(el, sidebar) {
+    for (let node = el;node && node !== sidebar.parentElement; node = node.parentElement) {
+      if (node.matches(INTERACTIVE2))
+        return true;
+      if (node !== sidebar && ACTIVE_CURSORS.has(getComputedStyle(node).cursor))
+        return true;
+    }
+    return false;
+  }
+  function sidebarButton(sidebar) {
+    return sidebar.querySelector(CLOSE) ?? document.querySelector(LOCK);
+  }
+  function onScrollbar(el, x) {
+    for (let node = el;node; node = node.parentElement) {
+      if (node instanceof HTMLElement && node.scrollHeight > node.clientHeight && node.offsetWidth > node.clientWidth) {
+        const rect = node.getBoundingClientRect();
+        if (x > rect.left + node.clientLeft + node.clientWidth)
+          return true;
+      }
+    }
+    return false;
+  }
+  function shouldToggle(event, sidebar) {
+    if (event.button !== 0 || event.detail > 1 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
+      return false;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || !sidebar.contains(target) || isActive(target, sidebar))
+      return false;
+    if (String(window.getSelection?.() ?? "").trim())
+      return false;
+    if (onScrollbar(target, event.clientX))
+      return false;
+    for (const dy of [-SLOP, SLOP]) {
+      const near = document.elementFromPoint?.(event.clientX, event.clientY + dy);
+      if (near && sidebar.contains(near) && isActive(near, sidebar))
+        return false;
+    }
+    return true;
+  }
+  function onClick3(event) {
+    if (!settings11.store.clickToToggle)
+      return;
+    const target = event.target instanceof Element ? event.target : null;
+    const sidebar = target?.closest(SIDEBAR);
+    if (!sidebar || !shouldToggle(event, sidebar))
+      return;
+    const button = sidebarButton(sidebar);
+    if (!button)
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    button.click();
+  }
+  var stopWait = null;
+  var collapsedOnce = false;
+  function collapseOnLoad() {
+    if (collapsedOnce || !settings11.store.defaultCollapsed)
+      return;
+    const attempt = () => {
+      const sidebar = document.querySelector(SIDEBAR);
+      const close = sidebar?.querySelector(CLOSE);
+      if (!sidebar)
+        return false;
+      collapsedOnce = true;
+      if (close && sidebar.getBoundingClientRect().width > 0)
+        close.click();
+      return true;
+    };
+    if (attempt())
+      return;
+    const stop = onDomChange(() => {
+      if (attempt())
+        done();
+    });
+    const timer = setTimeout(() => done(), 20000);
+    const done = () => {
+      stop();
+      clearTimeout(timer);
+      stopWait = null;
+    };
+    stopWait = done;
+  }
+  var sidebarTweaks_default = definePlugin({
+    name: "sidebarTweaks",
+    title: { zh: "侧栏增强", en: "Sidebar tweaks" },
+    description: {
+      zh: "点击侧栏空白处收起侧栏、点悬停侧栏的空白处重新固定；可设置打开页面时侧栏默认收起。",
+      en: "Click a blank part of the sidebar to collapse it, or of the hover sidebar to pin it again. Can start with the sidebar collapsed."
+    },
+    icon: Icons.sidebar,
+    tags: ["appearance"],
+    enabledByDefault: true,
+    settings: settings11,
+    start() {
+      document.addEventListener("click", onClick3, true);
+      collapseOnLoad();
+    },
+    stop() {
+      document.removeEventListener("click", onClick3, true);
+      stopWait?.();
+    }
+  });
+
   // src/plugins/tabStatus/index.ts
   var SIZE = 32;
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" };
-  var settings9 = definePluginSettings({
+  var settings12 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -4183,7 +4580,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var base = null;
   var ours = "";
   var angle = 0;
-  var timer2 = 0;
+  var timer3 = 0;
   var cleanups7 = [];
   var iconLink = () => document.querySelector("link[rel~='icon']");
   function remember2() {
@@ -4256,9 +4653,9 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   function setState(next) {
     state2 = next;
-    clearInterval(timer2);
+    clearInterval(timer3);
     if (next === "streaming") {
-      timer2 = setInterval(() => {
+      timer3 = setInterval(() => {
         angle = (angle + Math.PI / 4) % (Math.PI * 2);
         paint2();
       }, SPIN_MS);
@@ -4279,7 +4676,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings9,
+    settings: settings12,
     start() {
       remember2();
       const onVisible = () => seen();
@@ -4290,7 +4687,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error }) => {
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings9.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings12.store.showDone ? "done" : "idle");
         }),
         onDomChange(() => {
           const link = iconLink();
@@ -5085,7 +5482,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 
   // src/plugins/usage/statsDialog.ts
   var STATS_HOST_ID = "notionai-pp-usage-stats";
-  var CSS4 = `${CSS}
+  var CSS5 = `${CSS}
 .sheet > .stack { gap: .875rem; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .toggle-row b { font-size: .875rem; font-weight: 500; }
@@ -5190,7 +5587,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function openStats(ctx, { confirmClearNow = false } = {}) {
     closeStats();
     ctx.refresh();
-    overlay5 = createOverlay(STATS_HOST_ID, CSS4, "");
+    overlay5 = createOverlay(STATS_HOST_ID, CSS5, "");
     const { root } = overlay5;
     const body = el("div", { class: "stack" });
     const sheet = el("div", { class: "sheet sheet-sm", role: "dialog", "aria-modal": "true" }, iconButton2(Icons.x, t("关闭", "Close"), closeStats), el("div", { class: "sheet-head" }, el("h3", { class: "sheet-title", text: t("按日期查看用量", "Usage by date") }), el("p", { class: "sheet-desc", text: t("每天用掉的月度额度百分比，仅保存在本设备。", "Share of the monthly allowance used each day, stored on this device.") })), body);
@@ -5689,7 +6086,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings10 = definePluginSettings({
+  var settings13 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -5736,19 +6133,19 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings10.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings13.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings10.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings13.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings10.store.usageStats,
-    setEnabled: (value) => void (settings10.store.usageStats = value),
-    retain: () => settings10.store.retainDays,
-    hoverDelay: () => settings10.store.hoverStatsDelay,
-    showPlan: () => settings10.store.showPlan,
+    enabled: () => settings13.store.usageStats,
+    setEnabled: (value) => void (settings13.store.usageStats = value),
+    retain: () => settings13.store.retainDays,
+    hoverDelay: () => settings13.store.hoverStatsDelay,
+    showPlan: () => settings13.store.showPlan,
     refresh: record2
   };
   function mount() {
@@ -5767,7 +6164,7 @@ button { font: inherit; }
     tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings10,
+    settings: settings13,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -5794,11 +6191,11 @@ button { font: inherit; }
   });
 
   // src/plugins/widerChat/index.ts
-  var STYLE_ID4 = "notionai-pp-wider-chat";
-  var MARK2 = "data-npp-chat-column";
-  var COMPOSER3 = "[data-notion-chat-input-container]";
+  var STYLE_ID5 = "notionai-pp-wider-chat";
+  var MARK3 = "data-npp-chat-column";
+  var COMPOSER4 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings11 = definePluginSettings({
+  var settings14 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -5808,7 +6205,7 @@ button { font: inherit; }
       max: 2400
     }
   });
-  var stopDom4 = null;
+  var stopDom5 = null;
   function columnOf(step) {
     for (let node = step.parentElement;node && node !== document.body; node = node.parentElement) {
       const cap = node.style.maxWidth;
@@ -5817,27 +6214,27 @@ button { font: inherit; }
     }
     return null;
   }
-  function mark() {
+  function mark2() {
     const step = document.querySelector(`[${USER_STEP}]`);
     const column = step ? columnOf(step) : null;
-    if (column && !column.hasAttribute(MARK2)) {
-      for (const old of document.querySelectorAll(`[${MARK2}]`))
-        old.removeAttribute(MARK2);
-      column.setAttribute(MARK2, "");
+    if (column && !column.hasAttribute(MARK3)) {
+      for (const old of document.querySelectorAll(`[${MARK3}]`))
+        old.removeAttribute(MARK3);
+      column.setAttribute(MARK3, "");
     }
   }
-  function css2(width) {
-    return `[${MARK2}] { max-width: ${width}px !important; }
-${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
+  function css3(width) {
+    return `[${MARK3}] { max-width: ${width}px !important; }
+${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
   }
-  function apply3() {
-    let style = document.getElementById(STYLE_ID4);
+  function apply4() {
+    let style = document.getElementById(STYLE_ID5);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID4;
+      style.id = STYLE_ID5;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css2(settings11.store.width);
+    style.textContent = css3(settings14.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -5849,21 +6246,21 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings11,
+    settings: settings14,
     start() {
-      apply3();
-      mark();
-      stopDom4 = onDomChange(mark);
+      apply4();
+      mark2();
+      stopDom5 = onDomChange(mark2);
     },
     stop() {
-      stopDom4?.();
-      stopDom4 = null;
-      document.getElementById(STYLE_ID4)?.remove();
-      for (const node of document.querySelectorAll(`[${MARK2}]`))
-        node.removeAttribute(MARK2);
+      stopDom5?.();
+      stopDom5 = null;
+      document.getElementById(STYLE_ID5)?.remove();
+      for (const node of document.querySelectorAll(`[${MARK3}]`))
+        node.removeAttribute(MARK3);
     },
     onSettingsChange() {
-      apply3();
+      apply4();
     }
   });
 
@@ -5874,7 +6271,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.6.1";
+    win[FLAG] = "[20261007] v1.7.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5888,7 +6285,10 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       hideShare_default,
       autoCollapseThinking_default,
       focusHighlight_default,
-      greetingCustomizer_default
+      greetingCustomizer_default,
+      composerLook_default,
+      sidebarTweaks_default,
+      healthCheck_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -5897,7 +6297,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.6.1"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.7.0"} started`);
   }
   boot();
 })();
