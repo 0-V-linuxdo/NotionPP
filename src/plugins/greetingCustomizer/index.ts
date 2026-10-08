@@ -15,14 +15,12 @@ import { escapeCssContent, loadGreetings, loadIndex, pickIndex, saveIndex } from
 import { clearMarks, isHomePath, syncMark, TARGET_SELECTOR } from "./target";
 import { Icons } from "@utils/icons";
 
-declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
-
 /*
  * Replaces the greeting on the Notion AI home page (/ai) with the user's own
  * lines. The text is painted with CSS (::after on the marked greeting) so React
  * keeps owning the real node; the face and its accessory are left alone.
  * Rotation: on each entry to the home page, on a timer while it is open, or on
- * click. Double right-click on the greeting opens the manager.
+ * click. Double right-click on the greeting, or its settings card, opens the manager.
  */
 
 export const STYLE_ID = "notionai-pp-greeting-style";
@@ -71,7 +69,6 @@ let stopRoute: (() => void) | null = null;
 let timer: ReturnType<typeof setInterval> | null = null;
 let wasHome = false;
 let lastRightClick = 0;
-let menuRegistered = false;
 let running = false;
 
 function upsertStyle(css: string) {
@@ -195,12 +192,6 @@ export default definePlugin({
         document.addEventListener("contextmenu", onContextMenu, true);
         stopDom = onDomChange(check);
         stopRoute = onRouteChange(check);
-        if (!menuRegistered && typeof GM_registerMenuCommand === "function") {
-            menuRegistered = true;
-            try {
-                GM_registerMenuCommand(tr("menu"), () => openGreetingManager());
-            } catch {}
-        }
         check();
     },
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.8
+// @version      20261007.1.2.9
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1345,8 +1345,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     tooMany: [`最多只能保存 ${MAX_COUNT} 条问候语。`, `You can save up to ${MAX_COUNT} greetings.`],
     rotation: ["轮播", "Rotation"],
     done: ["完成", "Done"],
-    clickHint: ["点击切换问候语", "Click to switch the greeting"],
-    menu: ["\uD83D\uDCAC NotionAI++ 问候语", "\uD83D\uDCAC NotionAI++ greetings"]
+    clickHint: ["点击切换问候语", "Click to switch the greeting"]
   };
   function tr2(key, vars = {}) {
     const [zh, en] = STRINGS[key];
@@ -1953,7 +1952,6 @@ button { font: inherit; color: inherit; }
   var timer = null;
   var wasHome = false;
   var lastRightClick = 0;
-  var menuRegistered = false;
   var running = false;
   function upsertStyle(css) {
     let style = document.getElementById(STYLE_ID2);
@@ -2076,12 +2074,6 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       document.addEventListener("contextmenu", onContextMenu2, true);
       stopDom2 = onDomChange(check2);
       stopRoute = onRouteChange(check2);
-      if (!menuRegistered && typeof GM_registerMenuCommand === "function") {
-        menuRegistered = true;
-        try {
-          GM_registerMenuCommand(tr2("menu"), () => openGreetingManager());
-        } catch {}
-      }
       check2();
     },
     stop() {
@@ -2924,7 +2916,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.8";
+    const version = "[20261007] v1.2.9";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2957,7 +2949,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.8";
+    const version = "[20261007] v1.2.9";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4865,7 +4857,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.8";
+    win[FLAG] = "[20261007] v1.2.9";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4875,7 +4867,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.8"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.9"} started`);
   }
   boot();
 })();

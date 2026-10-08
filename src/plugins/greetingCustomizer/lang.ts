@@ -29,7 +29,6 @@ const STRINGS = {
     rotation: ["轮播", "Rotation"],
     done: ["完成", "Done"],
     clickHint: ["点击切换问候语", "Click to switch the greeting"],
-    menu: ["💬 NotionAI++ 问候语", "💬 NotionAI++ greetings"],
 } as const;
 
 export type StringKey = keyof typeof STRINGS;
