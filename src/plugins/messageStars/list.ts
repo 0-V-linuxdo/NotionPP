@@ -94,8 +94,10 @@ export function starEntries(ids: Set<string>, messages: ChatMessage[]): StarEntr
 export function controlRow(root: ParentNode = document): HTMLElement | null {
     // Share sits in the first group (with Start new chat) and is in the DOM even when hidden;
     // the side-panel toggle is missing when the chat has no details panel.
-    const share = root.querySelector(CHAT_SHARE);
-    const group = share?.parentElement?.parentElement;
+    // Share is wrapped in one or two popup-origin divs; the group holds the outermost.
+    let wrapper = root.querySelector(CHAT_SHARE)?.closest("[data-popup-origin]");
+    while (wrapper?.parentElement?.hasAttribute("data-popup-origin")) wrapper = wrapper.parentElement;
+    const group = wrapper?.parentElement;
     if (group?.parentElement) return group.parentElement;
     return root.querySelector(PANEL_TOGGLE)?.parentElement?.parentElement ?? null;
 }
@@ -107,9 +109,9 @@ export function controlRow(root: ParentNode = document): HTMLElement | null {
 export function placeButton(row: HTMLElement, wrapper: HTMLElement) {
     const first = row.firstElementChild as HTMLElement | null;
     // A plain group around several button wrappers, not a button wrapper itself.
-    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !first.querySelector(PANEL_TOGGLE) ? first : null;
+    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE) ? first : null;
     const parent = group ?? row;
-    const before = [...parent.children].find(child => child !== wrapper && child.querySelector("[role='button'], button")) ?? null;
+    const before = [...parent.children].find(child => child !== wrapper && child.hasAttribute("data-popup-origin")) ?? null;
     if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before) parent.insertBefore(wrapper, before);
 }
 

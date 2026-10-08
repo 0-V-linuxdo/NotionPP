@@ -174,7 +174,7 @@ describe("starred list", () => {
     test("button goes left of the whole top-right cluster", async () => {
         const { controlRow, placeButton } = await import("../src/plugins/messageStars/list");
         document.body.innerHTML = `<div id="row">
-            <div id="group"><div class="strip"></div><div data-popup-origin="true"><div role="button" aria-label="Start new chat"></div></div><div data-popup-origin="true"><div role="button" data-testid="share-chat-button" aria-label="Share"></div></div></div>
+            <div id="group"><div class="strip"></div><div data-popup-origin="true"><div role="button" aria-label="Start new chat"></div></div><div data-popup-origin="true"><div data-popup-origin="true"><div role="button" data-testid="share-chat-button" aria-label="Share"></div></div></div></div>
             <div data-popup-origin="true"><div role="button" aria-label="Pin chat"></div></div>
             <div data-popup-origin="true"><div role="button" data-testid="agent-chat-side-panel-toggle" aria-label="Minimize"></div></div>
         </div>`;
