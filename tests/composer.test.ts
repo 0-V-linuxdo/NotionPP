@@ -55,3 +55,23 @@ describe("composer locator", () => {
         expect(locateComposer()).toBeNull();
     });
 });
+
+describe("usage widget on AI pages", () => {
+    test("stays hidden until the composer exists", async () => {
+        const { UsageWidget } = await import("@plugins/usage/ui");
+        const service = {
+            state: { snapshot: null, billing: null, spaceId: null, loading: false, error: "", canRefresh: false },
+            onChange: () => () => {},
+            refreshNow() {},
+        };
+        const stats = { space: () => "", enabled: () => false, setEnabled() {}, retain: () => 90, refresh() {}, hoverDelay: () => 1 };
+        const widget = new UsageWidget(service as any, stats);
+        expect(location.pathname).toMatch(/^\/(ai|chat)/);
+        expect(widget.host.hidden).toBe(true);
+        widget.layout({ left: 300, top: 700, right: 1000, bottom: 800, width: 700, height: 100 });
+        expect(widget.host.hidden).toBe(false);
+        widget.layout(null);
+        expect(widget.host.hidden).toBe(true);
+        widget.destroy();
+    });
+});

@@ -6,9 +6,10 @@
 
 import { emit } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
+import { onRouteChange } from "@api/Router";
 import { boxOf, type Box, viewport } from "@utils/dom";
 import { safeJson } from "@utils/guards";
-import { pageWindow, t } from "@utils/page";
+import { isAiRoute, pageWindow, t } from "@utils/page";
 
 import { visibleBilling } from "./billing";
 import { ComposerTracker } from "./composer";
@@ -81,6 +82,8 @@ export class UsageWidget {
         this.applyMode();
         this.render();
         this.cleanups.push(service.onChange(() => this.render()));
+        this.cleanups.push(onRouteChange(() => this.layout()));
+        this.tracker.start();
         const tick = setInterval(() => this.render(), TICK_MS);
         const onResize = () => this.layout();
         const onStorage = (event: StorageEvent) => this.onStorage(event);
@@ -182,8 +185,6 @@ export class UsageWidget {
         const toggle = this.q(".toggle");
         toggle.setAttribute("aria-expanded", String(this.expanded));
         this.q(".chevron").textContent = this.expanded ? "▴" : "▾";
-        if (this.minimized) this.tracker.start();
-        else this.tracker.stop();
         this.layout();
     }
 
@@ -197,6 +198,10 @@ export class UsageWidget {
     layout(composer: Box | null = this.tracker.current) {
         if (this.dragging) return;
         const { host } = this.overlay;
+        // On AI pages the widget belongs to the composer: stay out of sight while Notion is still
+        // rendering its loading skeleton, so nothing appears in an empty page.
+        host.hidden = isAiRoute() && !composer;
+        if (host.hidden) return;
         const vp = viewport();
         if (this.minimized) {
             const orb = boxOf(this.q(".orb"));
