@@ -15,6 +15,8 @@ import { ComposerTracker } from "./composer";
 import { billingRow, billingSummary, formatAbsolute, formatPercent, formatReset, formatUpdated, windowLabel } from "./format";
 import { type Anchor, anchorFromBox, dockPoint, dragDistanceReached, opensUpward, parseAnchor, type Point, pointFromAnchor } from "./geometry";
 import type { UsageService } from "./service";
+import { readDay, statDelta, usedOn } from "./stats";
+import { openStats, type StatsContext } from "./statsDialog";
 import { USAGE_CSS, USAGE_HTML } from "./styles";
 import { activeMonthly, type Meter, meterViews, toneOf } from "./verdict";
 
@@ -54,6 +56,10 @@ function readAnchor(): Anchor | null {
     }
 }
 
+export interface WidgetStats extends StatsContext {
+    hoverDelay: () => number;
+}
+
 export class UsageWidget {
     private overlay: Overlay;
     private q: <T extends Element = HTMLElement>(selector: string) => T;
@@ -64,8 +70,10 @@ export class UsageWidget {
     private suppressClickUntil = 0;
     private tracker = new ComposerTracker(box => this.layout(box));
     private cleanups: (() => void)[] = [];
+    private tipToday = false;
+    private tipTimer = 0;
 
-    constructor(private readonly service: UsageService) {
+    constructor(private readonly service: UsageService, private readonly stats: WidgetStats) {
         this.overlay = createOverlay(HOST_ID, USAGE_CSS, USAGE_HTML);
         const { root } = this.overlay;
         this.q = <T extends Element = HTMLElement>(selector: string) => root.querySelector(selector) as T;
@@ -80,6 +88,7 @@ export class UsageWidget {
         pageWindow.addEventListener("storage", onStorage);
         this.cleanups.push(() => {
             clearInterval(tick);
+            clearTimeout(this.tipTimer);
             pageWindow.removeEventListener("resize", onResize);
             pageWindow.removeEventListener("storage", onStorage);
         });
@@ -109,6 +118,26 @@ export class UsageWidget {
             this.setMinimized(false);
             toggle.focus({ preventScroll: true });
         });
+        const orb = this.q(".orb");
+        const showToday = (value: boolean) => {
+            clearTimeout(this.tipTimer);
+            if (!value || !this.stats.enabled()) return void this.setTipToday(false);
+            const delay = this.stats.hoverDelay();
+            if (delay <= 0) this.setTipToday(true);
+            else this.tipTimer = setTimeout(() => this.setTipToday(true), delay * 1000) as unknown as number;
+        };
+        orb.addEventListener("pointerenter", () => showToday(true));
+        orb.addEventListener("pointerleave", () => showToday(false));
+        orb.addEventListener("focus", () => showToday(true));
+        orb.addEventListener("blur", () => showToday(false));
+        const today = this.q(".m-today");
+        today.addEventListener("click", () => openStats(this.stats));
+        today.addEventListener("keydown", event => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            openStats(this.stats);
+        });
+        this.q(".stats").addEventListener("click", () => openStats(this.stats));
         this.q(".refresh").addEventListener("click", () => this.service.refreshNow());
         this.q(".settings").addEventListener("click", () => emit("openSettings", undefined));
         this.q(".native").addEventListener("click", () => {
@@ -118,6 +147,19 @@ export class UsageWidget {
         });
         this.installDrag(this.q(".summary"), ".minimize");
         this.installDrag(this.q(".header"), "button");
+    }
+
+    private setTipToday(value: boolean) {
+        if (value) this.stats.refresh();
+        this.tipToday = value;
+        this.render();
+    }
+
+    /** Today's share of the monthly allowance, or null when stats are off or nothing is known. */
+    private todayText() {
+        if (!this.stats.enabled()) return null;
+        const day = readDay(this.stats.space());
+        return day ? statDelta(usedOn(day) ?? 0) : null;
     }
 
     private setExpanded(value: boolean) {
@@ -290,6 +332,7 @@ export class UsageWidget {
         for (const [selector, zh, en] of [
             [".minimize", "最小化至输入框底部", "Minimize to the composer"],
             [".settings", "NotionAI++ 设置", "NotionAI++ settings"],
+            [".stats", "按日期查看用量", "Usage by date"],
             [".native", "打开原生用量页", "Open native Usage page"],
         ] as const) {
             const button = this.q(selector);
@@ -306,6 +349,15 @@ export class UsageWidget {
         const monthlyText = formatPercent(views.monthly.percent);
         this.q(".tip-title").textContent = t("AI 用量", "AI usage");
         this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
+        const todayText = this.todayText();
+        const tipToday = this.q(".tip-today");
+        tipToday.hidden = !this.tipToday || todayText === null;
+        tipToday.textContent = t(`今天 ${todayText} 月度额度`, `Today ${todayText} of monthly allowance`);
+        const todayRow = this.q(".m-today");
+        todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
+        todayRow.querySelector(".label")!.textContent = t("今日用量", "Used today");
+        todayRow.querySelector(".value")!.textContent = t(`${todayText} 月度额度`, `${todayText} of monthly`);
+        todayRow.querySelector(".sub")!.textContent = t("点击按日期查看用量 →", "Click for usage by date →");
         this.q(".orb").setAttribute("aria-label", !snapshot
             ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore")
             : snapshot.status === "not_applicable"

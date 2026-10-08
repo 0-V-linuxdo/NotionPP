@@ -88,6 +88,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 .fill[data-tone="warning"] { background: #dfa83a; }
 .fill[data-tone="danger"] { background: #ed6566; }
 .sub { color: var(--faint); font-size: 11px; }
+.m-today { cursor: pointer; }
+.m-today .value { color: var(--text); font-weight: 650; }
+.m-today:hover .sub { color: var(--text); }
+.tip .tip-today { margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--tip-border); color: var(--tip); }
 .footer {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 14px;
   border-top: 1px solid var(--row); color: var(--faint); font-size: 10px;
@@ -122,6 +126,7 @@ const icon = (paths: string) => `<svg class="i" viewBox="0 0 24 24" aria-hidden=
 
 export const ICONS = {
     refresh: icon('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
+    stats: icon('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
     minimize: icon('<path d="M6 12h12"/>'),
     external: icon('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
@@ -130,7 +135,7 @@ export const ICONS = {
 export const USAGE_HTML = `
 <div class="shell">
   <button class="orb" type="button" hidden><span class="ring r-rolling"></span><span class="ring r-monthly"></span></button>
-  <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span></span>
+  <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span><span class="tip-today" hidden></span></span>
   <div class="summary">
     <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">▾</span></button>
     <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
@@ -139,6 +144,7 @@ export const USAGE_HTML = `
     <div class="header">
       <div class="title"><span class="title-text"></span><span class="badge" hidden>preview</span></div>
       <div class="actions">
+        <button class="icon-btn stats" type="button">${ICONS.stats}</button>
         <button class="icon-btn settings" type="button">${ICONS.settings}</button>
         <button class="icon-btn refresh" type="button">${ICONS.refresh}</button>
       </div>
@@ -147,6 +153,7 @@ export const USAGE_HTML = `
     <div class="metrics">
       <div class="metric m-rolling"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
       <div class="metric m-monthly"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
+      <div class="metric m-today" role="button" tabindex="0" hidden><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
       <div class="metric billing"><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
     </div>
     <div class="footer"><span class="updated"></span><button class="icon-btn native" type="button">${ICONS.external}</button></div>

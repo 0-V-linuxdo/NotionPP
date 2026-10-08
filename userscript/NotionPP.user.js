@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.0.4
+// @version      20261007.1.1.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2722,7 +2722,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
   function aboutTab() {
-    const version = "[20261007] v1.0.4";
+    const version = "[20261007] v1.1.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2754,7 +2754,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.0.4";
+    const version = "[20261007] v1.1.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3388,6 +3388,396 @@ button { font: inherit; color: inherit; }
     }
   }
 
+  // src/plugins/usage/stats.ts
+  var STATS_PREFIX = "notionai-pp:usage-stats:v1:";
+  var RESET_DROP = 5;
+  var RESET_TOLERANCE_MS = 60000;
+  var RETAIN = { min: 7, max: 180, default: 90 };
+  var HOVER_DELAY = { min: 0, max: 5, default: 1 };
+  var CHART_DAYS = 7;
+  var CHART_FLOOR = 20;
+  var DATE_RE2 = /^\d{4}-\d{2}-\d{2}$/;
+  var memory = new Map;
+  function read2(key) {
+    try {
+      return pageWindow.localStorage.getItem(key);
+    } catch {
+      return memory.get(key) ?? null;
+    }
+  }
+  function write(key, value) {
+    try {
+      if (value === null)
+        pageWindow.localStorage.removeItem(key);
+      else
+        pageWindow.localStorage.setItem(key, value);
+    } catch {
+      if (value === null)
+        memory.delete(key);
+      else
+        memory.set(key, value);
+    }
+  }
+  var percentOf = (value) => {
+    const n = finiteNumber(value);
+    return n === null ? null : clamp(n, 0, 100);
+  };
+  function dateKey(at) {
+    const d = new Date(at);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function shiftDate(date, days) {
+    const [y, m, d] = date.split("-").map(Number);
+    return y && m && d ? dateKey(new Date(y, m - 1, d + days).getTime()) : date;
+  }
+  var emptyDay = (date, now) => ({
+    date,
+    first: null,
+    last: null,
+    resetAt: null,
+    carried: 0,
+    closedFirst: null,
+    closedLast: null,
+    updatedAt: now
+  });
+  function parseDay(date, raw) {
+    if (!DATE_RE2.test(date) || !isRecord(raw))
+      return null;
+    return {
+      date,
+      first: percentOf(raw.first),
+      last: percentOf(raw.last),
+      resetAt: finiteNumber(raw.resetAt),
+      carried: Math.max(0, finiteNumber(raw.carried) ?? 0),
+      closedFirst: percentOf(raw.closedFirst),
+      closedLast: percentOf(raw.closedLast),
+      updatedAt: finiteNumber(raw.updatedAt) ?? 0
+    };
+  }
+  function loadDays(space) {
+    const days = new Map;
+    if (!space)
+      return days;
+    const raw = safeJson(read2(STATS_PREFIX + space) ?? "");
+    if (!isRecord(raw) || !isRecord(raw.days))
+      return days;
+    for (const [date, value] of Object.entries(raw.days)) {
+      const day = parseDay(date, value);
+      if (day)
+        days.set(date, day);
+    }
+    return days;
+  }
+  function prune(days, retain, now) {
+    const keep = clamp(Math.floor(retain), RETAIN.min, RETAIN.max);
+    const cutoff = shiftDate(dateKey(now), 1 - keep);
+    for (const date of [...days.keys()])
+      if (date < cutoff)
+        days.delete(date);
+    return days;
+  }
+  function saveDay(space, day, retain, now) {
+    const days = loadDays(space);
+    days.set(day.date, day);
+    prune(days, retain, now);
+    write(STATS_PREFIX + space, JSON.stringify({ days: Object.fromEntries(days) }));
+    return days.get(day.date) ?? day;
+  }
+  function closeSegment(day, percent) {
+    if (day.first !== null && day.last !== null) {
+      day.carried += Math.max(0, day.last - day.first);
+      day.closedFirst = day.first;
+      day.closedLast = day.last;
+    }
+    day.first = percent;
+    day.last = percent;
+  }
+  function applySnapshot(day, percent, resetAt, now) {
+    const next = { ...day, updatedAt: now };
+    if (resetAt !== null && next.resetAt !== null && Math.abs(resetAt - next.resetAt) >= RESET_TOLERANCE_MS) {
+      closeSegment(next, percent);
+      next.resetAt = resetAt;
+      return next;
+    }
+    if (resetAt !== null)
+      next.resetAt = resetAt;
+    if (percent === null)
+      return next;
+    if (next.last !== null && percent < next.last - RESET_DROP) {
+      closeSegment(next, percent);
+      return next;
+    }
+    if (next.first === null)
+      next.first = percent;
+    next.last = percent;
+    return next;
+  }
+  function usedOn(day) {
+    if (day.first === null || day.last === null)
+      return day.carried > 0 ? day.carried : null;
+    return day.carried + Math.max(0, day.last - day.first);
+  }
+  function recordSnapshot(space, percent, resetAt, retain, now = Date.now()) {
+    if (!space)
+      return null;
+    const date = dateKey(now);
+    const current = loadDays(space).get(date) ?? emptyDay(date, now);
+    return saveDay(space, applySnapshot(current, percent, resetAt, now), retain, now);
+  }
+  function writeDay(space, day, retain, now = Date.now()) {
+    return space && DATE_RE2.test(day.date) ? saveDay(space, { ...day, updatedAt: now }, retain, now) : null;
+  }
+  var readDay = (space, now = Date.now()) => loadDays(space).get(dateKey(now)) ?? null;
+  var clearDays = (space) => void (space && write(STATS_PREFIX + space, null));
+  function looksWiped(day, previous) {
+    if (day.carried > 0 || day.closedLast !== null || day.first === null || day.last === null)
+      return false;
+    if (day.first > RESET_DROP)
+      return false;
+    return previous?.last != null && previous.last > day.first + RESET_DROP;
+  }
+  function repairWiped(day, dayStart, beforeReset, now = Date.now()) {
+    const start = clamp(dayStart, 0, 100);
+    const before = clamp(beforeReset, 0, 100);
+    return { ...day, carried: Math.max(0, before - start), closedFirst: start, closedLast: before, updatedAt: now };
+  }
+  function chartDays(days, now = Date.now()) {
+    const today = dateKey(now);
+    let start = shiftDate(today, 1 - CHART_DAYS);
+    for (const date of days.keys())
+      if (date < start)
+        start = date;
+    const out = [];
+    for (let date = start;date <= today; date = shiftDate(date, 1))
+      out.push(days.get(date) ?? emptyDay(date, now));
+    return out;
+  }
+  function chartScale(days) {
+    const max = Math.max(0, ...days.map((day) => usedOn(day) ?? 0));
+    return Math.max(CHART_FLOOR, Math.ceil(max / 10) * 10);
+  }
+  function statPercent(value) {
+    if (value === null || !Number.isFinite(value))
+      return "—";
+    const rounded = Math.round(value * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)}%`;
+  }
+  var statDelta = (value) => value === null ? "—" : value > 0 ? `+${statPercent(value)}` : statPercent(value);
+  function dayLabel(date, today = dateKey(Date.now())) {
+    if (date === today)
+      return t("今天", "Today");
+    const [y, m, d] = date.split("-").map(Number);
+    if (!y || !m || !d)
+      return date;
+    return new Date(y, m - 1, d).toLocaleDateString(uiLanguage() === "zh" ? "zh-CN" : "en", { weekday: "short", month: "short", day: "numeric" });
+  }
+  var dayNumber = (date) => String(Number(date.split("-")[2]) || date);
+
+  // src/plugins/usage/statsDialog.ts
+  var STATS_HOST_ID = "notionai-pp-usage-stats";
+  var CSS3 = `${CSS2}
+.sheet > .stack { gap: .875rem; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.toggle-row b { font-size: .875rem; font-weight: 500; }
+.muted { margin: 0; color: var(--fg-secondary); font-size: .8125rem; }
+.chart { display: flex; align-items: stretch; gap: .35rem; height: 9.25rem; overflow-x: auto; outline: none; }
+.chart:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; border-radius: .5rem; }
+.bar { flex: 1 0 2.5rem; min-width: 2.5rem; height: 100%; padding: .25rem .15rem .2rem; display: flex; flex-direction: column;
+  align-items: center; justify-content: flex-end; gap: .3rem; border: 0; border-radius: .5rem; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.bar:hover, .bar.on { background: var(--surface-l2); }
+.track { display: flex; flex: 1; align-items: flex-end; justify-content: center; width: 100%; min-height: 0; }
+.fill { width: 1.1rem; min-height: 2px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--fg-primary) 45%, transparent); }
+.bar.on .fill { background: var(--fg-primary); }
+.bar.empty .fill { background: var(--border-l1); }
+.bar-value, .bar-label { font-size: .6875rem; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bar-value { min-height: .6875rem; font-weight: 550; opacity: .85; }
+.bar.empty .bar-value { opacity: 0; }
+.bar-label { opacity: .7; }
+.bar.on .bar-value, .bar.on .bar-label { opacity: 1; font-weight: 550; }
+.detail { display: flex; flex-direction: column; gap: .4rem; padding-top: .6rem; border-top: 1px solid var(--border-l1); }
+.detail-title { font-size: .875rem; font-weight: 600; }
+.formula { display: flex; align-items: flex-end; gap: .6rem; font-variant-numeric: tabular-nums; }
+.term { display: flex; flex-direction: column; gap: .1rem; }
+.term small { color: var(--fg-secondary); font-size: .6875rem; }
+.term b { font-size: .9375rem; font-weight: 600; }
+.op { padding-bottom: .1rem; color: var(--fg-secondary); }
+.caption { color: var(--fg-secondary); font-size: .75rem; font-variant-numeric: tabular-nums; }
+.repair { display: flex; flex-direction: column; gap: .4rem; padding: .6rem; border-radius: .6rem; background: var(--surface-l2); }
+.repair-row { display: flex; align-items: center; gap: .5rem; }
+.repair .input { width: 6rem; }
+.foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+`;
+  var overlay4 = null;
+  function closeStats() {
+    overlay4?.destroy();
+    overlay4 = null;
+  }
+  function iconButton2(markup, label, onclick) {
+    const button = el("button", { type: "button", class: "icon-btn close", title: label, "aria-label": label });
+    button.append(svgIcon(markup));
+    button.addEventListener("click", onclick);
+    return button;
+  }
+  function textButton(variant, label, onclick) {
+    const button = el("button", { type: "button", class: `btn btn-${variant}`, text: label });
+    button.addEventListener("click", onclick);
+    return button;
+  }
+  function formula(day, isToday) {
+    const term = (label, value) => el("span", { class: "term" }, el("small", { text: label }), el("b", { text: value }));
+    const op = (sign) => el("span", { class: "op", text: sign });
+    const used = statPercent(usedOn(day));
+    if (day.carried <= 0) {
+      return el("div", { class: "formula" }, term(isToday ? t("当前", "Current") : t("最后", "Last"), statPercent(day.last)), op("−"), term(t("开始", "Start"), statPercent(day.first)), op("="), term(t("已用", "Used"), used));
+    }
+    const after = day.first === null || day.last === null ? null : Math.max(0, day.last - day.first);
+    const box = el("div", { class: "stack" }, el("div", { class: "formula" }, term(t("重置前", "Before"), statPercent(day.carried)), op("+"), term(t("重置后", "After"), statPercent(after)), op("="), term(t("已用", "Used"), used)));
+    if (day.closedFirst !== null && day.closedLast !== null) {
+      let caption = `${statPercent(day.closedFirst)} → ${statPercent(day.closedLast)}`;
+      if (day.first !== null && day.last !== null)
+        caption += `  +  ${statPercent(day.first)} → ${statPercent(day.last)}`;
+      box.append(el("div", { class: "caption", text: caption }));
+    }
+    return box;
+  }
+  function repairBox(ctx, day, previous, rerender) {
+    if (!looksWiped(day, previous))
+      return null;
+    const hint = previous?.last ?? null;
+    const input = el("input", {
+      type: "number",
+      min: "0",
+      max: "100",
+      step: "0.1",
+      class: "input",
+      value: hint === null ? "" : String(hint),
+      "aria-label": t("重置前的月度用量百分比", "Monthly percent before the reset")
+    });
+    const apply = textButton("secondary", t("修复", "Repair"), () => {
+      const before = finiteNumber(input.value);
+      if (before === null)
+        return;
+      writeDay(ctx.space(), repairWiped(day, hint ?? 0, before), ctx.retain());
+      rerender();
+    });
+    input.addEventListener("input", () => void (apply.disabled = finiteNumber(input.value) === null));
+    return el("div", { class: "repair" }, el("p", { class: "muted", text: t("月度额度在这一天开始前已重置，记录只剩 0% 左右。填入重置前的月度用量即可补回当天的用量。", "The monthly allowance reset before this day was first seen, so only ~0% was recorded. Enter the monthly usage just before the reset.") }), el("div", { class: "repair-row" }, input, apply));
+  }
+  function confirmClear(ctx, root, done) {
+    const layer = el("div", { class: "layer layer-confirm" });
+    const close = () => layer.remove();
+    const sheet = el("div", { class: "sheet sheet-sm", role: "dialog", "aria-modal": "true" }, iconButton2(Icons.x, t("关闭", "Close"), close), el("div", { class: "sheet-head" }, el("h3", { class: "sheet-title", text: t("清空用量历史", "Clear usage history") }), el("p", { class: "sheet-desc", text: t("删除本设备上记录的所有每日用量？此操作无法撤销。", "Delete all daily usage recorded on this device? This cannot be undone.") })), el("div", { class: "footer" }, textButton("secondary", t("取消", "Cancel"), close), textButton("danger", t("清空", "Clear"), () => {
+      clearDays(ctx.space());
+      close();
+      done();
+    })));
+    layer.append(sheet);
+    layer.addEventListener("mousedown", (event) => event.target === layer && close());
+    root.append(layer);
+    sheet.tabIndex = -1;
+    sheet.focus();
+  }
+  function openStats(ctx, { confirmClearNow = false } = {}) {
+    closeStats();
+    ctx.refresh();
+    overlay4 = createOverlay(STATS_HOST_ID, CSS3, "");
+    const { root } = overlay4;
+    const body = el("div", { class: "stack" });
+    const sheet = el("div", { class: "sheet sheet-sm", role: "dialog", "aria-modal": "true" }, iconButton2(Icons.x, t("关闭", "Close"), closeStats), el("div", { class: "sheet-head" }, el("h3", { class: "sheet-title", text: t("按日期查看用量", "Usage by date") }), el("p", { class: "sheet-desc", text: t("每天用掉的月度额度百分比，仅保存在本设备。", "Share of the monthly allowance used each day, stored on this device.") })), body);
+    const backdrop = el("div", { class: "layer layer-root" }, sheet);
+    backdrop.addEventListener("mousedown", (event) => event.target === backdrop && closeStats());
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape")
+        return;
+      const confirm = root.querySelector(".layer-confirm");
+      if (confirm)
+        confirm.remove();
+      else
+        closeStats();
+    });
+    root.append(backdrop);
+    let selected = dateKey(Date.now());
+    const render = () => {
+      const space = ctx.space();
+      const enabled = ctx.enabled();
+      const now = Date.now();
+      const today = dateKey(now);
+      const days = enabled ? loadDays(space) : new Map;
+      const toggle = el("button", { type: "button", role: "switch", class: "switch", "aria-checked": String(enabled), "aria-label": t("记录每日用量", "Daily usage stats") });
+      toggle.addEventListener("click", () => {
+        ctx.setEnabled(!enabled);
+        if (!enabled)
+          ctx.refresh();
+        render();
+      });
+      const parts = [el("div", { class: "toggle-row" }, el("b", { text: t("记录每日用量", "Daily usage stats") }), toggle)];
+      if (!space) {
+        parts.push(el("p", { class: "muted", text: t("等待 Notion 初始化当前工作区。", "Waiting for Notion to initialize this workspace.") }));
+      } else if (!enabled) {
+        parts.push(el("p", { class: "muted", text: t("开启后按天记录月度额度的使用量；悬停最小化的圆环会在延迟后显示今天的用量。", "Turn on to keep a per-day log of the monthly allowance. Hovering the minimized rings shows today after a delay.") }));
+      } else if (!days.size) {
+        parts.push(el("p", { class: "muted", text: t("还没有记录。统计从开启记录的那一刻开始。", "No days recorded yet. Stats start from the moment tracking is on.") }));
+      } else {
+        const bars = chartDays(days, now);
+        const scale = chartScale(bars);
+        const active = bars.find((day) => day.date === selected) ?? bars[bars.length - 1];
+        const chart = el("div", { class: "chart", tabindex: "0", role: "listbox", "aria-label": t("每日用量", "Daily usage") });
+        for (const day of bars) {
+          const used = usedOn(day);
+          const on = day.date === active.date;
+          const bar = el("button", {
+            type: "button",
+            tabindex: "-1",
+            role: "option",
+            "aria-selected": String(on),
+            class: ["bar", on && "on", used === null && "empty"].filter(Boolean).join(" "),
+            "aria-label": `${dayLabel(day.date, today)}, ${statDelta(used)}`
+          });
+          const fill = el("span", { class: "fill" });
+          fill.style.height = `${used === null ? 0 : Math.min(100, used / scale * 100)}%`;
+          bar.append(el("span", { class: "bar-value", text: used === null ? " " : statPercent(used) }), el("span", { class: "track" }, fill), el("span", { class: "bar-label", text: day.date === today ? t("今天", "Today") : dayNumber(day.date) }));
+          bar.addEventListener("click", () => {
+            selected = day.date;
+            render();
+            root.querySelector(".chart")?.focus({ preventScroll: true });
+          });
+          chart.append(bar);
+        }
+        chart.addEventListener("keydown", (event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight")
+            return;
+          event.preventDefault();
+          const index = bars.findIndex((day) => day.date === active.date);
+          const next = bars[Math.min(bars.length - 1, Math.max(0, index + (event.key === "ArrowRight" ? 1 : -1)))];
+          selected = next.date;
+          render();
+          root.querySelector(".chart")?.focus({ preventScroll: true });
+        });
+        const previous = days.get(shiftDate(active.date, -1)) ?? null;
+        const detail = el("div", { class: "detail" }, el("div", { class: "detail-title", text: dayLabel(active.date, today) }), formula(active, active.date === today));
+        const repair = repairBox(ctx, active, previous, render);
+        if (repair)
+          detail.append(repair);
+        parts.push(chart, detail);
+        queueMicrotask(() => {
+          const on = chart.querySelector(".bar.on");
+          if (on && chart.scrollWidth > chart.clientWidth)
+            chart.scrollLeft = on.offsetLeft - chart.clientWidth + on.offsetWidth + 8;
+        });
+      }
+      const stored = space ? loadDays(space).size : 0;
+      const clear = textButton("secondary", t("清空历史", "Clear history"), () => confirmClear(ctx, root, render));
+      clear.disabled = !stored;
+      parts.push(el("div", { class: "foot" }, el("p", { class: "muted", text: t(`已记录 ${stored} 天，保留 ${ctx.retain()} 天`, `${stored} recorded day${stored === 1 ? "" : "s"}, keeping ${ctx.retain()}`) }), clear));
+      body.replaceChildren(...parts);
+    };
+    render();
+    sheet.tabIndex = -1;
+    sheet.focus();
+    if (confirmClearNow && ctx.space() && loadDays(ctx.space()).size)
+      confirmClear(ctx, root, render);
+  }
+
   // src/plugins/usage/format.ts
   var formatPercent = (value) => value === null ? "—" : `${Math.round(value)}%`;
   var locale = () => uiLanguage() === "zh" ? "zh-CN" : "en";
@@ -3666,6 +4056,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 .fill[data-tone="warning"] { background: #dfa83a; }
 .fill[data-tone="danger"] { background: #ed6566; }
 .sub { color: var(--faint); font-size: 11px; }
+.m-today { cursor: pointer; }
+.m-today .value { color: var(--text); font-weight: 650; }
+.m-today:hover .sub { color: var(--text); }
+.tip .tip-today { margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--tip-border); color: var(--tip); }
 .footer {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 14px;
   border-top: 1px solid var(--row); color: var(--faint); font-size: 10px;
@@ -3698,6 +4092,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var icon2 = (paths) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
   var ICONS = {
     refresh: icon2('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
+    stats: icon2('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
     minimize: icon2('<path d="M6 12h12"/>'),
     external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
@@ -3705,7 +4100,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var USAGE_HTML = `
 <div class="shell">
   <button class="orb" type="button" hidden><span class="ring r-rolling"></span><span class="ring r-monthly"></span></button>
-  <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span></span>
+  <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span><span class="tip-today" hidden></span></span>
   <div class="summary">
     <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">▾</span></button>
     <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
@@ -3714,6 +4109,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     <div class="header">
       <div class="title"><span class="title-text"></span><span class="badge" hidden>preview</span></div>
       <div class="actions">
+        <button class="icon-btn stats" type="button">${ICONS.stats}</button>
         <button class="icon-btn settings" type="button">${ICONS.settings}</button>
         <button class="icon-btn refresh" type="button">${ICONS.refresh}</button>
       </div>
@@ -3722,6 +4118,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     <div class="metrics">
       <div class="metric m-rolling"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
       <div class="metric m-monthly"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
+      <div class="metric m-today" role="button" tabindex="0" hidden><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
       <div class="metric billing"><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
     </div>
     <div class="footer"><span class="updated"></span><button class="icon-btn native" type="button">${ICONS.external}</button></div>
@@ -3764,6 +4161,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 
   class UsageWidget {
     service;
+    stats;
     overlay;
     q;
     expanded = readFlag(KEYS.expanded);
@@ -3773,8 +4171,11 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     suppressClickUntil = 0;
     tracker = new ComposerTracker((box) => this.layout(box));
     cleanups = [];
-    constructor(service) {
+    tipToday = false;
+    tipTimer = 0;
+    constructor(service, stats) {
       this.service = service;
+      this.stats = stats;
       this.overlay = createOverlay(HOST_ID, USAGE_CSS, USAGE_HTML);
       const { root } = this.overlay;
       this.q = (selector) => root.querySelector(selector);
@@ -3789,6 +4190,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       pageWindow.addEventListener("storage", onStorage);
       this.cleanups.push(() => {
         clearInterval(tick);
+        clearTimeout(this.tipTimer);
         pageWindow.removeEventListener("resize", onResize);
         pageWindow.removeEventListener("storage", onStorage);
       });
@@ -3817,6 +4219,30 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         this.setMinimized(false);
         toggle.focus({ preventScroll: true });
       });
+      const orb = this.q(".orb");
+      const showToday = (value) => {
+        clearTimeout(this.tipTimer);
+        if (!value || !this.stats.enabled())
+          return void this.setTipToday(false);
+        const delay = this.stats.hoverDelay();
+        if (delay <= 0)
+          this.setTipToday(true);
+        else
+          this.tipTimer = setTimeout(() => this.setTipToday(true), delay * 1000);
+      };
+      orb.addEventListener("pointerenter", () => showToday(true));
+      orb.addEventListener("pointerleave", () => showToday(false));
+      orb.addEventListener("focus", () => showToday(true));
+      orb.addEventListener("blur", () => showToday(false));
+      const today = this.q(".m-today");
+      today.addEventListener("click", () => openStats(this.stats));
+      today.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ")
+          return;
+        event.preventDefault();
+        openStats(this.stats);
+      });
+      this.q(".stats").addEventListener("click", () => openStats(this.stats));
       this.q(".refresh").addEventListener("click", () => this.service.refreshNow());
       this.q(".settings").addEventListener("click", () => emit("openSettings", undefined));
       this.q(".native").addEventListener("click", () => {
@@ -3826,6 +4252,18 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       });
       this.installDrag(this.q(".summary"), ".minimize");
       this.installDrag(this.q(".header"), "button");
+    }
+    setTipToday(value) {
+      if (value)
+        this.stats.refresh();
+      this.tipToday = value;
+      this.render();
+    }
+    todayText() {
+      if (!this.stats.enabled())
+        return null;
+      const day = readDay(this.stats.space());
+      return day ? statDelta(usedOn(day) ?? 0) : null;
     }
     setExpanded(value) {
       this.expanded = value;
@@ -3996,6 +4434,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       for (const [selector, zh, en] of [
         [".minimize", "最小化至输入框底部", "Minimize to the composer"],
         [".settings", "NotionAI++ 设置", "NotionAI++ settings"],
+        [".stats", "按日期查看用量", "Usage by date"],
         [".native", "打开原生用量页", "Open native Usage page"]
       ]) {
         const button = this.q(selector);
@@ -4011,6 +4450,15 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const monthlyText = formatPercent(views.monthly.percent);
       this.q(".tip-title").textContent = t("AI 用量", "AI usage");
       this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
+      const todayText = this.todayText();
+      const tipToday = this.q(".tip-today");
+      tipToday.hidden = !this.tipToday || todayText === null;
+      tipToday.textContent = t(`今天 ${todayText} 月度额度`, `Today ${todayText} of monthly allowance`);
+      const todayRow = this.q(".m-today");
+      todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
+      todayRow.querySelector(".label").textContent = t("今日用量", "Used today");
+      todayRow.querySelector(".value").textContent = t(`${todayText} 月度额度`, `${todayText} of monthly`);
+      todayRow.querySelector(".sub").textContent = t("点击按日期查看用量 →", "Click for usage by date →");
       this.q(".orb").setAttribute("aria-label", !snapshot ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore") : snapshot.status === "not_applicable" ? t("AI 用量：6 小时与月度均不适用，点击恢复", "AI usage: 6h and Monthly are not applicable, click to restore") : snapshot.status === "rate_limited" ? t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，已达上限，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, limit reached, click to restore`) : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
       const notice = this.q(".notice");
       const dot = this.q(".dot");
@@ -4071,23 +4519,78 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   }
 
   // src/plugins/usage/index.ts
+  var settings5 = definePluginSettings({
+    usageStats: {
+      type: "boolean",
+      label: "记录每日用量 / Daily usage stats",
+      description: "按天记录月度额度的使用量；悬停最小化圆环显示今天，点卡片里的统计按钮查看历史 / Log monthly-allowance use per day; hover the minimized rings for today, open history from the card",
+      default: true
+    },
+    hoverStatsDelay: {
+      type: "number",
+      label: "悬停显示今日用量的延迟（秒） / Hover delay for today (seconds)",
+      default: HOVER_DELAY.default,
+      min: HOVER_DELAY.min,
+      max: HOVER_DELAY.max
+    },
+    retainDays: {
+      type: "number",
+      label: "保留历史天数 / Days of history to keep",
+      default: RETAIN.default,
+      min: RETAIN.min,
+      max: RETAIN.max
+    },
+    openStats: {
+      type: "action",
+      label: "按日期查看用量 / Usage by date",
+      button: "打开 / Open",
+      run: () => openStats(stats)
+    },
+    clearStats: {
+      type: "action",
+      label: "清空用量历史 / Clear usage history",
+      description: "删除本设备上记录的每日用量 / Delete the daily usage recorded on this device",
+      button: "清空… / Clear…",
+      run: () => openStats(stats, { confirmClearNow: true })
+    }
+  });
   var service = null;
   var widget = null;
+  var stopRecording = null;
+  function record() {
+    const snapshot = service?.snapshot;
+    const space = service?.spaceId;
+    if (!settings5.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+      return;
+    const monthly = activeMonthly(snapshot);
+    if (monthly)
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings5.store.retainDays);
+  }
+  var stats = {
+    space: () => service?.spaceId ?? "",
+    enabled: () => settings5.store.usageStats,
+    setEnabled: (value) => void (settings5.store.usageStats = value),
+    retain: () => settings5.store.retainDays,
+    hoverDelay: () => settings5.store.hoverStatsDelay,
+    refresh: record
+  };
   function mount() {
     if (!service || widget || !document.body)
       return;
-    widget = new UsageWidget(service);
+    widget = new UsageWidget(service, stats);
   }
   var usage_default = definePlugin({
     name: "usageMeter",
     title: "AI 用量 / AI usage",
-    description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态；最小化后双圆环贴在 AI 输入框底部中央。",
+    description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
     icon: Icons.gauge,
     tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
+    settings: settings5,
     start() {
       service = new UsageService;
+      stopRecording = service.onChange(record);
       service.start();
       if (document.body)
         mount();
@@ -4096,10 +4599,17 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     },
     stop() {
       document.removeEventListener("DOMContentLoaded", mount);
+      stopRecording?.();
+      closeStats();
       widget?.destroy();
       service?.stop();
+      stopRecording = null;
       widget = null;
       service = null;
+    },
+    onSettingsChange() {
+      record();
+      widget?.render();
     }
   });
 
@@ -4110,7 +4620,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.0.4";
+    win[FLAG] = "[20261007] v1.1.0";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4120,7 +4630,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.0.4"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.1.0"} started`);
   }
   boot();
 })();
