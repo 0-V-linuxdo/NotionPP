@@ -184,7 +184,6 @@ export class UsageWidget {
         this.q(".card").hidden = this.minimized || !this.expanded;
         const toggle = this.q(".toggle");
         toggle.setAttribute("aria-expanded", String(this.expanded));
-        this.q(".chevron").textContent = this.expanded ? "▴" : "▾";
         this.layout();
     }
 

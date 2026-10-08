@@ -8,7 +8,8 @@ import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
 import { allPlugins, definePlugin, isEnabled, type Plugin, type PluginTag, setEnabled } from "@api/PluginManager";
 import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
-import { Icons, svgIcon } from "@utils/icons";
+import { Icons } from "@utils/icons";
+import { button, h, icon, iconButton, optionRow, row, section, selectControl, switchControl } from "@utils/kit";
 import { t, type Text, tr } from "@utils/page";
 
 import { CSS } from "./styles";
@@ -21,46 +22,8 @@ export const SETTINGS_HOST_ID = "notionai-pp-settings";
 const SELF = "settings";
 const REPO_URL = "https://github.com/0-V-linuxdo/NotionPP";
 
-type Child = Node | string | null | undefined | false;
-
-function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...children: Child[]): HTMLElementTagNameMap[K] {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-        if (value == null || value === false) continue;
-        if (key === "class") node.className = String(value);
-        else if (key.startsWith("on") && typeof value === "function") node.addEventListener(key.slice(2), value as EventListener);
-        else if (key in node && !key.includes("-")) (node as any)[key] = value;
-        else node.setAttribute(key, value === true ? "" : String(value));
-    }
-    for (const child of children) if (child != null && child !== false) node.append(child);
-    return node;
-}
-
-const option = (value: string, text: string, selected = false) => h("option", { value, selected }, text);
-
 /** Both translations, so search finds a plugin in either language. */
 const both = (text: Text) => (typeof text === "string" ? text : `${text.zh} ${text.en}`);
-
-const icon = (markup: string, filled = false) => svgIcon(markup, filled);
-
-function button(variant: "primary" | "secondary" | "tertiary" | "danger", label: Child, onclick: () => void, extra = "") {
-    return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
-}
-
-function iconButton(markup: string, label: string, onclick: () => void, { active = false, filled = false } = {}) {
-    return h("button", { type: "button", class: active ? "icon-btn active" : "icon-btn", title: label, "aria-label": label, onclick }, icon(markup, filled));
-}
-
-function switchControl(checked: boolean, label: string, onChange: (value: boolean) => void, disabled = false) {
-    const el = h("button", { type: "button", role: "switch", class: "switch", "aria-label": label, disabled });
-    el.setAttribute("aria-checked", String(checked));
-    el.addEventListener("click", () => {
-        const next = el.getAttribute("aria-checked") !== "true";
-        el.setAttribute("aria-checked", String(next));
-        onChange(next);
-    });
-    return el;
-}
 
 /* ---------- starred / pinned lists ---------- */
 
@@ -96,7 +59,7 @@ const cleanups: (() => void)[] = [];
 const settingKeys = (plugin: Plugin) => Object.entries(plugin.settings?.def ?? {}) as [string, OptionDef][];
 const hasSettings = (plugin: Plugin) => settingKeys(plugin).length > 0;
 
-function pushLayer(kind: "nested" | "confirm" | "menu", content: HTMLElement, onClose?: () => void) {
+function pushLayer(kind: "nested" | "confirm", content: HTMLElement, onClose?: () => void) {
     const el = h("div", { class: `layer layer-${kind}` }, content);
     const entry = {
         el,
@@ -140,107 +103,9 @@ function confirmDialog(title: string, description: string, confirmText: string, 
 
 /* ---------- setting fields ---------- */
 
-/** One Notion-style settings row: title and description on the left, the control on the right. */
-function row(title: string, description: string | undefined, control: HTMLElement) {
-    return h("div", { class: "row" },
-        h("div", { class: "row-body" },
-            h("div", { class: "s-title" }, title),
-            description && h("div", { class: "s-desc" }, description)),
-        h("div", { class: "row-control" }, control));
-}
-
-function section(title: string, ...children: Child[]) {
-    return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
-}
-
-/**
- * Notion's settings dropdown: a borderless button showing only the chosen value, opening a
- * menu with every option in full. A native <select> is as wide as its longest option, which
- * a settings row cannot fit.
- */
-function selectControl(label: string, options: { value: string; label: string }[], value: string, onChange: (value: string) => void) {
-    let current = value;
-    const text = h("span", { class: "dropdown-value" });
-    const trigger = h("button", { type: "button", class: "dropdown", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label },
-        text, icon(Icons.chevronDown));
-    const sync = () => {
-        const chosen = options.find(o => o.value === current) ?? options[0];
-        text.textContent = chosen?.label ?? "";
-        trigger.title = chosen?.label ?? "";
-    };
-    sync();
-    trigger.addEventListener("click", () => {
-        let layer: ReturnType<typeof pushLayer>;
-        const pick = (next: string) => {
-            layer.close();
-            trigger.focus();
-            if (next === current) return;
-            current = next;
-            sync();
-            onChange(next);
-        };
-        const items = options.map(o => h("button", {
-            type: "button", role: "option", class: "menu-item", "aria-selected": String(o.value === current), "data-value": o.value,
-            onclick: () => pick(o.value),
-        }, h("span", { class: "menu-label" }, o.label), o.value === current && icon(Icons.check)));
-        const menu = h("div", { class: "menu", role: "listbox", "aria-label": label }, ...items);
-        menu.addEventListener("keydown", event => {
-            const { key } = event as KeyboardEvent;
-            if (key !== "ArrowDown" && key !== "ArrowUp") return;
-            event.preventDefault();
-            const index = items.indexOf(menu.querySelector<HTMLButtonElement>(".menu-item:focus") ?? items[0]);
-            items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
-        });
-        layer = pushLayer("menu", menu, () => trigger.setAttribute("aria-expanded", "false"));
-        trigger.setAttribute("aria-expanded", "true");
-        placeMenu(menu, trigger.getBoundingClientRect());
-        (items.find(item => item.getAttribute("aria-selected") === "true") ?? items[0])?.focus();
-    });
-    return trigger;
-}
-
-const MENU_GAP = 4;
-
-/** Right-aligns the menu under its button, or above it when there is no room below. */
-function placeMenu(menu: HTMLElement, anchor: DOMRect) {
-    const width = Math.max(anchor.width, menu.offsetWidth);
-    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
-    const below = anchor.bottom + MENU_GAP;
-    const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
-    Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
-}
-
 function settingField(plugin: Plugin, key: string, def: OptionDef): HTMLElement {
     const store = plugin.settings!.store as Record<string, unknown>;
-    const set = (value: string | number | boolean) => setValue(plugin.name, key, value);
-    const title = tr(def.label);
-    const description = def.description && tr(def.description);
-    switch (def.type) {
-        case "boolean":
-            return row(title, description, switchControl(Boolean(store[key]), title, set));
-        case "select":
-            return row(title, description, selectControl(title, def.options.map(o => ({ value: o.value, label: tr(o.label) })), String(store[key]), set));
-        case "color": {
-            const value = h("span", { class: "color-value" }, String(store[key]));
-            const input = h("input", { type: "color", value: String(store[key]), "aria-label": title });
-            input.addEventListener("input", () => {
-                value.textContent = input.value.toLowerCase();
-                set(input.value.toLowerCase());
-            });
-            return row(title, description, h("div", { class: "color" }, value, input));
-        }
-        case "number": {
-            const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": title });
-            input.addEventListener("change", () => {
-                const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
-                input.value = String(value);
-                set(value);
-            });
-            return row(title, description, input);
-        }
-        case "action":
-            return row(title, description, button("secondary", tr(def.button), () => def.run()));
-    }
+    return optionRow(def, store[key], value => setValue(plugin.name, key, value));
 }
 
 function openPluginDialog(plugin: Plugin) {
@@ -284,7 +149,7 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
     const pinned = readList("pinned").includes(plugin.name);
     const crashed = enabled && !plugin.started && !plugin.required;
     const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
-    const controls = h("div", { class: "card-controls" },
+    const actions = h("div", { class: "card-controls" },
         iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
             toggleInList("starred", plugin.name);
             refresh();
@@ -294,22 +159,23 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
             refresh();
         }, { active: pinned, filled: pinned }),
         hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)),
-        switchControl(enabled, tr(plugin.title), value => {
-            setEnabled(plugin, value);
-            refresh();
-        }, plugin.required),
     );
+    const toggle = switchControl(enabled, tr(plugin.title), value => {
+        setEnabled(plugin, value);
+        refresh();
+    }, plugin.required);
+    // The switch is the only control beside the title, so the title and description show in full.
     return h("div", { class: cls, "data-plugin": plugin.name },
         h("div", { class: "card-body" },
             h("div", { class: "card-head" },
                 h("div", { class: "card-name" },
                     h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
-                    h("span", { class: "card-title", title: tr(plugin.title) }, tr(plugin.title)),
+                    h("span", { class: "card-title" }, tr(plugin.title)),
                     crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)),
                     plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
-                controls),
-            h("div", { class: "card-desc", title: tr(plugin.description) }, tr(plugin.description))),
-        h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
+                toggle),
+            h("div", { class: "card-desc" }, tr(plugin.description))),
+        h("div", { class: "card-footer" }, h("span", { class: "card-id" }, plugin.name), actions));
 }
 
 function pluginsTab() {
@@ -322,8 +188,14 @@ function pluginsTab() {
         .filter(c => c === "favorites" || c === "all" || all.some(p => p.tags?.includes(c as PluginTag)));
     const tabs = h("div", { class: "tabs", role: "tablist" });
     const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
-    const filter = h("select", { class: "select", "aria-label": t("筛选", "Filter") });
-    for (const [value, text] of [["all", t("全部", "All")], ["enabled", t("已启用", "Enabled")], ["disabled", t("已禁用", "Disabled")]]) filter.append(option(value, text));
+    const filter = selectControl(t("筛选", "Filter"), [
+        { value: "all", label: t("全部", "All") },
+        { value: "enabled", label: t("已启用", "Enabled") },
+        { value: "disabled", label: t("已禁用", "Disabled") },
+    ], state.filter, value => {
+        state.filter = value as Filter;
+        render();
+    }, "field");
     const list = h("div", { class: "list" });
 
     const matches = (p: Plugin) => {
@@ -366,7 +238,6 @@ function pluginsTab() {
     };
 
     search.addEventListener("input", () => { state.search = search.value; render(); });
-    filter.addEventListener("change", () => { state.filter = filter.value as Filter; render(); });
     render();
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
 }

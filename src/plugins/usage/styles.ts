@@ -43,7 +43,7 @@ button { font: inherit; }
 .summary:hover { background: var(--pill-hover); }
 .toggle {
   display: inline-flex; align-items: center; gap: 10px; min-height: 34px; padding: 7px 4px 7px 12px;
-  border: 0; color: inherit; background: transparent; cursor: inherit;
+  border: 0; border-radius: 999px; color: inherit; background: transparent; cursor: inherit;
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #808080; box-shadow: 0 0 0 3px rgba(128,128,128,.13); }
 .dot[data-status="ok"] { background: #35b46f; box-shadow: 0 0 0 3px rgba(53,180,111,.15); }
@@ -54,7 +54,9 @@ button { font: inherit; }
 .part[data-sep="billing"]::before {
   content: ""; display: inline-block; width: 1px; height: 14px; margin: 0 10px; vertical-align: -2px; background: var(--divider);
 }
-.chevron { color: var(--muted); font-size: 11px; }
+.chevron { display: inline-flex; color: var(--muted); transition: transform .15s; }
+.chevron svg.i { width: 13px; height: 13px; }
+.toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
   border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer;
@@ -127,6 +129,7 @@ const icon = (paths: string) => `<svg class="i" viewBox="0 0 24 24" aria-hidden=
 export const ICONS = {
     refresh: icon('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
     stats: icon('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
+    chevron: icon('<path d="m6 9 6 6 6-6"/>'),
     minimize: icon('<path d="M6 12h12"/>'),
     external: icon('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
@@ -137,7 +140,7 @@ export const USAGE_HTML = `
   <button class="orb" type="button" hidden><span class="ring r-rolling"></span><span class="ring r-monthly"></span></button>
   <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span><span class="tip-today" hidden></span></span>
   <div class="summary">
-    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">▾</span></button>
+    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">${ICONS.chevron}</span></button>
     <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
   </div>
   <section class="card" hidden>

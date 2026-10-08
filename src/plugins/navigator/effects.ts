@@ -4,16 +4,18 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { currentTheme } from "@api/Theme";
 import { reducedMotion } from "@utils/dom";
+import { t } from "@utils/page";
 
 export type Effect = "none" | "border" | "pulse" | "fade" | "jiggle";
 
-export const EFFECTS: { value: Effect; zh: string; en: string; hint: string }[] = [
-    { value: "none", zh: "无效果（纯平滑滚动）", en: "None (scroll only)", hint: "仅滚动 / scroll only" },
-    { value: "border", zh: "高亮边框", en: "Highlight border", hint: "彩色边框，持续 2 秒 / 2 s" },
-    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow", hint: "边框脉冲闪烁，持续 2 秒 / 2 s" },
-    { value: "fade", zh: "淡入淡出", en: "Fade", hint: "背景淡入淡出，持续 1.5 秒 / 1.5 s" },
-    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle", hint: "水平微抖动 / jiggle" },
+export const EFFECTS: { value: Effect; zh: string; en: string }[] = [
+    { value: "none", zh: "无（只滚动）", en: "None (scroll only)" },
+    { value: "border", zh: "高亮边框", en: "Highlight border" },
+    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
+    { value: "fade", zh: "淡入淡出", en: "Fade" },
+    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle" },
 ];
 
 const running = new WeakMap<Element, Animation>();
@@ -75,10 +77,12 @@ export function previewEffect(effect: Effect) {
         display: "flex", justifyContent: "center", pointerEvents: "none",
     });
     const card = document.createElement("div");
-    card.textContent = info ? `${info.zh} / ${info.en}` : effect;
+    card.textContent = info ? t(info.zh, info.en) : effect;
+    const dark = currentTheme() === "dark";
     Object.assign(card.style, {
-        padding: "14px 22px", borderRadius: "10px", background: "#fff", color: "#37352f",
-        font: "500 14px/1.4 ui-sans-serif, system-ui, sans-serif", boxShadow: "0 8px 30px rgba(0,0,0,.18)",
+        padding: "12px 20px", borderRadius: "10px", background: dark ? "#202020" : "#fff", color: dark ? "#f0efed" : "#37352f",
+        font: "500 14px/20px ui-sans-serif, -apple-system, system-ui, sans-serif",
+        boxShadow: dark ? "0 0 0 1px #383836, 0 12px 32px rgba(0,0,0,.5)" : "0 0 0 1px rgba(15,15,15,.05), 0 12px 32px rgba(15,15,15,.18)",
     });
     holder.append(card);
     document.body.append(holder);

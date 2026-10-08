@@ -120,9 +120,9 @@ describe("GreetingCustomizer", () => {
         const root = host.shadowRoot!;
         const textarea = root.querySelector("textarea")!;
         textarea.value = "  New line\nsecond  ";
-        root.querySelector<HTMLButtonElement>("button.primary")!.click();
+        root.querySelector<HTMLButtonElement>(".editor .btn-primary")!.click();
         expect(loadGreetings().at(-1)).toBe("New line\nsecond");
-        expect(root.querySelectorAll("li").length).toBe(loadGreetings().length);
+        expect(root.querySelectorAll(".greetings li").length).toBe(loadGreetings().length);
     });
 
     test("stop removes the paint and the mark", () => {

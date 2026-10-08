@@ -7,7 +7,7 @@
 import { onDomChange } from "@api/DomWatch";
 import { definePlugin } from "@api/PluginManager";
 import { onRouteChange } from "@api/Router";
-import { definePluginSettings } from "@api/Settings";
+import { definePluginSettings, type OptionValue } from "@api/Settings";
 
 import { tr } from "./lang";
 import { closeManager, openManager } from "./manager";
@@ -167,9 +167,11 @@ function onContextMenu(event: MouseEvent) {
 }
 
 export function openGreetingManager() {
+    const store = settings.store as Record<string, unknown>;
     openManager({
-        get: () => ({ mode: settings.store.mode, order: settings.store.order, intervalSec: settings.store.intervalSec }),
-        set: (key, value) => void ((settings.store as Record<string, unknown>)[key] = value),
+        defs: { mode: settings.def.mode, order: settings.def.order, intervalSec: settings.def.intervalSec },
+        get: key => store[key] as OptionValue,
+        set: (key, value) => void (store[key] = value),
     }, loadIndex);
 }
 

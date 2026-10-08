@@ -5,60 +5,44 @@
  */
 
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { el } from "@utils/dom";
+import type { OptionDef, OptionValue } from "@api/Settings";
+import { CSS as SETTINGS_CSS } from "@plugins/settings/styles";
+import { Icons } from "@utils/icons";
+import { button, h, iconButton, optionRow, section } from "@utils/kit";
 
 import { tr } from "./lang";
 import { loadGreetings, MAX_COUNT, MAX_LEN, normalizeGreeting, saveGreetings, validateGreeting } from "./store";
 
 export const MANAGER_HOST_ID = "notionai-pp-greetings";
 
+type RotationKey = "mode" | "order" | "intervalSec";
+
 export interface RotationControls {
-    get(): { mode: string; order: string; intervalSec: number };
-    set(key: "mode" | "order" | "intervalSec", value: string | number): void;
+    /** The plugin's own option definitions, so these rows read exactly like its settings dialog. */
+    defs: Record<RotationKey, OptionDef>;
+    get(key: RotationKey): OptionValue;
+    set(key: RotationKey, value: OptionValue): void;
 }
 
-const CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.05); --accent: #2383e2; --danger: #eb5757;
-  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-:host([data-theme="dark"]) { --bg: #252525; --text: #ebebea; --muted: #9b9b9b; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.06); }
-* { box-sizing: border-box; }
-.backdrop { position: absolute; inset: 0; background: rgba(15,15,15,.45); display: grid; place-items: center; padding: 16px; }
-.dialog { width: min(860px, 100%); max-height: min(84vh, 860px); display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-h2 { margin: 0; font-size: 16px; }
-.close { width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 18px; cursor: pointer; }
-.close:hover { background: var(--hover); color: var(--text); }
-.body { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; padding: 14px 18px; overflow: auto; }
-@media (max-width: 760px) { .body { grid-template-columns: 1fr; } }
-.card { display: flex; flex-direction: column; gap: 8px; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-.label { font-size: 12px; color: var(--muted); }
-textarea { width: 100%; min-height: 88px; resize: vertical; font: inherit; font-size: 13px; color: var(--text); background: transparent;
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; outline: none; }
-textarea:focus, select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35,131,226,.18); outline: none; }
-.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.row.split { justify-content: space-between; }
-.counter { margin-left: auto; font-size: 12px; color: var(--muted); }
-.error { color: var(--danger); font-size: 12.5px; }
-.hint { color: var(--muted); font-size: 12.5px; }
-button.btn { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
-button.btn:hover { background: var(--hover); }
-button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
-button.primary:hover { background: #0b6fcc; }
-ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
-li[data-current] { border-color: var(--accent); }
-li[data-editing] { background: var(--hover); }
-.text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
-.icon { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 13px; }
-.icon:hover { background: var(--hover); }
-label.field { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
-select, input[type=number] { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-input[type=number] { width: 80px; }
-input:disabled { opacity: .5; }
-footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--border); }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
+/** Laid out like the plugin settings dialog, with the same Notion-style controls. */
+const CSS = `${SETTINGS_CSS}
+.layer-root { background: var(--overlay); }
+.textarea { width: 100%; min-height: 84px; resize: vertical; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-l2);
+  background: var(--surface-field); color: var(--fg-primary); font: inherit; font-size: 14px; line-height: 20px; }
+.textarea::placeholder { color: var(--fg-tertiary); }
+.textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.editor { display: flex; flex-direction: column; gap: 8px; }
+.editor-actions { display: flex; align-items: center; gap: 8px; }
+.counter { margin-right: auto; font-size: 12px; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; }
+.error { font-size: 13px; line-height: 18px; color: var(--fg-danger); }
+.greetings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.greetings li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 4px 8px 0; border-bottom: 1px solid var(--border-l1); }
+.greetings li:last-child { border-bottom: 0; }
+.greetings li[data-editing] { background: var(--surface-hover); border-radius: 6px; padding-left: 8px; }
+.greeting-text { flex: 1; min-width: 0; padding-top: 4px; font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tag { flex-shrink: 0; margin-top: 4px; padding: 0 6px; border-radius: 4px; font-size: 12px; line-height: 20px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.greetings .icon-btn { flex-shrink: 0; }
 `;
 
 let overlay: Overlay | null = null;
@@ -72,35 +56,29 @@ export const isManagerOpen = () => !!overlay;
 
 export function openManager(rotation: RotationControls, currentIndex: () => number) {
     closeManager();
-    overlay = createOverlay(MANAGER_HOST_ID, CSS, `<div class="backdrop"><div class="dialog" role="dialog" aria-modal="true"></div></div>`);
+    overlay = createOverlay(MANAGER_HOST_ID, CSS, "");
     const { root } = overlay;
-    const dialog = root.querySelector(".dialog")!;
-    root.querySelector(".backdrop")!.addEventListener("click", event => event.target === event.currentTarget && closeManager());
     root.addEventListener("keydown", event => (event as KeyboardEvent).key === "Escape" && closeManager());
 
     let greetings = loadGreetings();
     let editing = -1;
 
-    const close = el("button", { class: "close", type: "button", "aria-label": tr("close"), title: tr("close"), text: "×" });
-    close.addEventListener("click", closeManager);
-    const header = el("header", {}, el("h2", { text: tr("title") }), close);
+    const textarea = h("textarea", { class: "textarea", placeholder: tr("placeholder"), maxLength: MAX_LEN, "aria-label": tr("newSection") });
+    const error = h("div", { class: "error", role: "alert" });
+    const counter = h("span", { class: "counter" });
+    const submit = button("primary", tr("add"), () => submitGreeting());
+    const cancel = button("secondary", tr("cancelEdit"), () => {
+        stopEditing();
+        setError(null);
+        render();
+    });
+    const editorTitle = h("h4", { class: "section-title" });
+    const editor = h("section", { class: "section" }, editorTitle,
+        h("div", { class: "editor" }, textarea, error, h("div", { class: "editor-actions" }, counter, cancel, submit)));
+    const listTitle = h("h4", { class: "section-title" });
+    const list = h("ul", { class: "greetings" });
 
-    // Left: editor + list.
-    const textarea = el("textarea", { placeholder: tr("placeholder"), maxlength: String(MAX_LEN) });
-    textarea.setAttribute("aria-label", tr("placeholder"));
-    const error = el("div", { class: "error", role: "alert" });
-    const submit = el("button", { class: "btn primary", type: "button", text: tr("add") });
-    const cancel = el("button", { class: "btn", type: "button", text: tr("cancelEdit") });
-    const counter = el("span", { class: "counter" });
-    const saved = el("div", { class: "hint" });
-    const list = el("ul");
-    const left = el("div", { class: "card" },
-        el("div", { class: "label", text: tr("newLabel") }),
-        textarea, error,
-        el("div", { class: "row" }, submit, cancel, counter),
-        saved, list);
-
-    const setError = (key: Parameters<typeof tr>[0] | null) => {
+    const setError = (key: "empty" | "tooLong" | "tooMany" | null) => {
         error.textContent = key ? tr(key) : "";
         error.hidden = !key;
     };
@@ -108,8 +86,12 @@ export function openManager(rotation: RotationControls, currentIndex: () => numb
     const stopEditing = () => {
         editing = -1;
         textarea.value = "";
-        submit.textContent = tr("add");
-        cancel.hidden = true;
+        syncEditor();
+    };
+    const syncEditor = () => {
+        editorTitle.textContent = tr(editing >= 0 ? "editSection" : "newSection");
+        submit.textContent = tr(editing >= 0 ? "saveEdit" : "add");
+        cancel.hidden = editing < 0;
         syncCounter();
     };
 
@@ -119,36 +101,33 @@ export function openManager(rotation: RotationControls, currentIndex: () => numb
     }
 
     function render() {
-        saved.textContent = tr("saved", { count: greetings.length, max: MAX_COUNT });
+        listTitle.textContent = tr("listSection", { count: greetings.length, max: MAX_COUNT });
         const current = currentIndex();
         list.replaceChildren(...greetings.map((greeting, index) => {
-            const edit = el("button", { class: "icon", type: "button", title: tr("edit"), "aria-label": tr("edit"), text: "✍️" });
-            const remove = el("button", { class: "icon", type: "button", title: tr("delete"), "aria-label": tr("delete"), text: "🗑️" });
-            edit.addEventListener("click", () => {
-                editing = index;
-                textarea.value = greetings[index];
-                submit.textContent = tr("saveEdit");
-                cancel.hidden = false;
-                setError(null);
-                syncCounter();
-                render();
-                textarea.focus();
-            });
-            remove.addEventListener("click", () => {
-                greetings.splice(index, 1);
-                if (editing === index) stopEditing();
-                else if (editing > index) editing--;
-                persist();
-                render();
-            });
-            const item = el("li", {}, el("div", { class: "text", text: greeting }), edit, remove);
-            item.toggleAttribute("data-current", index === current);
+            const item = h("li", {},
+                h("div", { class: "greeting-text" }, greeting),
+                index === current && h("span", { class: "tag" }, tr("current")),
+                iconButton(Icons.pencil, tr("edit"), () => {
+                    editing = index;
+                    textarea.value = greetings[index];
+                    setError(null);
+                    syncEditor();
+                    render();
+                    textarea.focus();
+                }),
+                iconButton(Icons.trash, tr("delete"), () => {
+                    greetings.splice(index, 1);
+                    if (editing === index) stopEditing();
+                    else if (editing > index) editing--;
+                    persist();
+                    render();
+                }));
             item.toggleAttribute("data-editing", index === editing);
             return item;
         }));
     }
 
-    submit.addEventListener("click", () => {
+    function submitGreeting() {
         const problem = validateGreeting(textarea.value);
         if (problem) return setError(problem);
         if (editing < 0 && greetings.length >= MAX_COUNT) return setError("tooMany");
@@ -159,51 +138,44 @@ export function openManager(rotation: RotationControls, currentIndex: () => numb
         stopEditing();
         persist();
         render();
-    });
-    cancel.addEventListener("click", () => {
-        stopEditing();
-        setError(null);
-        render();
-    });
+    }
+
     textarea.addEventListener("input", syncCounter);
     textarea.addEventListener("keydown", event => {
-        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submit.click();
+        if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) submitGreeting();
     });
 
-    // Right: rotation settings, shared with the NotionAI++ settings dialog.
-    const values = rotation.get();
-    const select = (key: "mode" | "order", options: [string, Parameters<typeof tr>[0]][]) => {
-        const node = el("select");
-        for (const [value, label] of options) node.append(el("option", { value, text: tr(label) }));
-        node.value = values[key];
-        node.addEventListener("change", () => {
-            rotation.set(key, node.value);
-            syncInterval();
-        });
-        return node;
+    // Rotation rows share the plugin's option definitions and storage with its settings dialog.
+    const rotationList = h("div", { class: "settings-list" });
+    const renderRotation = () => {
+        const keys: RotationKey[] = ["mode", "order", "intervalSec"];
+        rotationList.replaceChildren(...keys.map(key => optionRow(rotation.defs[key], rotation.get(key), value => {
+            rotation.set(key, value);
+            if (key === "mode") renderRotation();
+        })));
+        const interval = rotationList.querySelector<HTMLInputElement>("input[type=number]");
+        if (interval) interval.disabled = rotation.get("mode") !== "interval";
     };
-    const mode = select("mode", [["refresh", "modeRefresh"], ["interval", "modeInterval"], ["manual", "modeManual"]]);
-    const order = select("order", [["sequential", "orderSequential"], ["random", "orderRandom"]]);
-    const interval = el("input", { type: "number", min: "1", max: "3600", step: "1", value: String(values.intervalSec) });
-    interval.addEventListener("change", () => {
-        const value = Math.min(3600, Math.max(1, Math.round(Number(interval.value) || values.intervalSec)));
-        interval.value = String(value);
-        rotation.set("intervalSec", value);
-    });
-    const syncInterval = () => void (interval.disabled = mode.value !== "interval");
-    const field = (label: Parameters<typeof tr>[0], control: HTMLElement) => el("label", { class: "field" }, el("span", { text: tr(label) }), control);
-    const right = el("div", { class: "card" },
-        el("div", { class: "label", text: tr("rotation") }),
-        field("mode", mode), field("order", order), field("interval", interval),
-        el("div", { class: "hint", text: tr("tip") }));
+    renderRotation();
 
-    const done = el("button", { class: "btn primary", type: "button", text: tr("done") });
-    done.addEventListener("click", closeManager);
+    const close = iconButton(Icons.x, tr("close"), closeManager);
+    close.classList.add("close");
+    const sheet = h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": tr("title") },
+        close,
+        h("div", { class: "sheet-head" },
+            h("h3", { class: "sheet-title" }, tr("title")),
+            h("p", { class: "sheet-desc" }, tr("subtitle"))),
+        h("div", { class: "sheet-body" },
+            editor,
+            h("section", { class: "section" }, listTitle, list),
+            section(tr("rotation"), rotationList),
+            h("div", { class: "footer" }, button("primary", tr("done"), closeManager))));
+    const layer = h("div", { class: "layer layer-root" }, sheet);
+    layer.addEventListener("mousedown", event => event.target === layer && closeManager());
+    root.append(layer);
 
-    dialog.append(header, el("div", { class: "body" }, left, right), el("footer", {}, done));
     stopEditing();
     setError(null);
-    syncInterval();
     render();
     textarea.focus();
 }

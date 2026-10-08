@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.1
+// @version      20261007.1.2.2
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -551,6 +551,8 @@
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
     info: `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`,
     alert: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
+    pencil: `<path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/>`,
+    trash: `<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`,
     check: `<path d="M20 6 9 17l-5-5"/>`,
     chevronDown: `<path d="m6 9 6 6 6-6"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
@@ -1324,84 +1326,394 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   var escapeCssContent = (text) => text.replace(/\\/g, "\\\\").replace(/"/g, "\\\"").replace(/\n/g, "\\a ");
 
   // src/plugins/greetingCustomizer/lang.ts
-  var zh = /^zh\b/i.test((navigator.languages?.[0] ?? navigator.language) || "");
   var STRINGS = {
-    title: ["问候语自定义 · 管理面板", "Greeting Customizer · Manager"],
+    title: ["管理问候语", "Manage greetings"],
+    subtitle: ["首页问候语会在这些文案之间轮播。在首页双击右键问候语也能打开这里。", "The home greeting rotates through these lines. Double right-click the greeting on home to open this too."],
     close: ["关闭", "Close"],
-    newLabel: [`新问候语（支持换行，单条 ≤ ${MAX_LEN} 字符；最多 ${MAX_COUNT} 条）`, `New greeting (line breaks ok, max ${MAX_LEN} chars; up to ${MAX_COUNT} items)`],
-    placeholder: ["输入问候语…（可用换行）", "Type a greeting... (line breaks allowed)"],
+    newSection: ["添加问候语", "Add a greeting"],
+    editSection: ["修改问候语", "Edit greeting"],
+    placeholder: [`输入问候语，可换行，最多 ${MAX_LEN} 字`, `Type a greeting. Line breaks are fine, up to ${MAX_LEN} characters`],
     add: ["添加", "Add"],
-    cancelEdit: ["取消修改", "Cancel edit"],
-    saveEdit: ["保存修改", "Save changes"],
-    saved: ["已保存：{count}/{max} 条", "Saved: {count}/{max}"],
+    cancelEdit: ["取消", "Cancel"],
+    saveEdit: ["保存", "Save"],
+    listSection: ["问候语（{count}/{max}）", "Greetings ({count}/{max})"],
+    current: ["当前", "Current"],
     edit: ["修改", "Edit"],
     delete: ["删除", "Delete"],
-    empty: ["问候语不能为空（不能全是空格）。", "Greeting cannot be empty (whitespace only)."],
-    tooLong: [`单条问候语不能超过 ${MAX_LEN} 字符。`, `A greeting cannot exceed ${MAX_LEN} characters.`],
+    empty: ["问候语不能为空。", "A greeting can't be empty."],
+    tooLong: [`单条问候语不能超过 ${MAX_LEN} 字。`, `A greeting can't be longer than ${MAX_LEN} characters.`],
     tooMany: [`最多只能保存 ${MAX_COUNT} 条问候语。`, `You can save up to ${MAX_COUNT} greetings.`],
-    rotation: ["轮播设置（自动保存）", "Rotation (saved automatically)"],
-    mode: ["轮播方式", "Mode"],
-    modeRefresh: ["刷新/进入首页时切换", "Rotate on refresh / entering home"],
-    modeInterval: ["按时间间隔自动切换", "Rotate on a timer"],
-    modeManual: ["手动点击标题切换", "Click the greeting to rotate"],
-    order: ["轮播顺序", "Order"],
-    orderSequential: ["顺序循环", "Sequential"],
-    orderRandom: ["随机选择", "Random"],
-    interval: ["间隔（秒）", "Interval (seconds)"],
-    tip: ["提示：手动模式下，点击首页问候语即可切换；定时模式离开首页会自动停止计时。双击右键问候语可随时打开本面板。", "Tip: in manual mode, click the home greeting to rotate. The timer stops when you leave the home page. Double right-click the greeting to open this panel."],
+    rotation: ["轮播", "Rotation"],
     done: ["完成", "Done"],
-    clickHint: ["点击切换问候语", "Click to rotate greeting"],
-    menu: ["\uD83D\uDCAC NotionAI++ 问候语设置", "\uD83D\uDCAC NotionAI++ greetings"]
+    clickHint: ["点击切换问候语", "Click to switch the greeting"],
+    menu: ["\uD83D\uDCAC NotionAI++ 问候语", "\uD83D\uDCAC NotionAI++ greetings"]
   };
   function tr2(key, vars = {}) {
-    const text = STRINGS[key][zh ? 0 : 1];
-    return text.replace(/\{(\w+)\}/g, (match, name) => (name in vars) ? String(vars[name]) : match);
+    const [zh, en] = STRINGS[key];
+    return t(zh, en).replace(/\{(\w+)\}/g, (match, name) => (name in vars) ? String(vars[name]) : match);
+  }
+
+  // src/plugins/settings/styles.ts
+  var CSS = `
+:host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
+  --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #fbfbfa; --surface-hover: rgba(55,53,47,.06);
+  --surface-field: rgba(242,241,238,.6);
+  --border-l1: rgba(55,53,47,.09); --border-l2: rgba(55,53,47,.16);
+  --fg-primary: #37352f; --fg-secondary: #787774; --fg-tertiary: #a5a29a; --fg-invert: #ffffff;
+  --accent: #2383e2; --accent-hover: #0077d4; --switch-off: rgba(135,131,120,.3);
+  --fg-danger: #eb5757; --fg-warning: #d9730d; --overlay: rgba(15,15,15,.6);
+  --shadow: 0 0 0 1px rgba(15,15,15,.05), 0 24px 48px rgba(15,15,15,.2);
+  color-scheme: light;
+  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--fg-primary); }
+:host([data-theme="dark"]) {
+  --surface-base: #191919; --surface-l1: #202020; --surface-l2: #252525; --surface-hover: rgba(255,255,255,.055);
+  --surface-field: rgba(255,255,255,.055);
+  --border-l1: rgba(255,255,243,.082); --border-l2: rgba(255,255,235,.1);
+  --fg-primary: #f0efed; --fg-secondary: #ada9a3; --fg-tertiary: #7d7a75; --fg-invert: #191919;
+  --accent: #2783de; --accent-hover: #3b8fe2; --switch-off: rgba(202,204,206,.3);
+  --fg-danger: #ff7369; --overlay: rgba(0,0,0,.6);
+  --shadow: 0 0 0 1px #383836, 0 24px 48px rgba(25,25,25,.64);
+  color-scheme: dark; }
+* { box-sizing: border-box; }
+svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--fg-primary) 55%, transparent); outline-offset: 1px; }
+
+.layer { position: fixed; inset: 0; display: grid; place-items: center; padding: 1rem; }
+.layer-root { background: var(--overlay); }
+.layer-nested { background: transparent; }
+.layer-confirm { background: color-mix(in srgb, var(--overlay) 60%, transparent); }
+
+/* Buttons */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; height: 28px; padding: 0 10px;
+  border-radius: 6px; border: 1px solid transparent; font-size: 14px; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap;
+  transition: background-color .12s, border-color .12s, color .12s; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-secondary { background: transparent; border-color: var(--border-l2); }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-tertiary { background: transparent; }
+.btn-tertiary:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-danger { background: transparent; color: var(--fg-danger); border-color: color-mix(in srgb, var(--fg-danger) 50%, transparent); }
+.btn-danger:hover { background: color-mix(in srgb, var(--fg-danger) 10%, transparent); }
+.btn-square { width: 28px; padding: 0; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg-tertiary); cursor: pointer; }
+.icon-btn:hover { background: var(--surface-hover); color: var(--fg-primary); }
+.icon-btn.active { color: var(--fg-primary); }
+.icon-btn svg { width: .9375rem; height: .9375rem; }
+
+/* Switch (Notion: 30×18 track, 14px thumb, blue when on) */
+.switch { position: relative; flex-shrink: 0; width: 30px; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 44px;
+  background: var(--switch-off); cursor: pointer; transition: background-color .2s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(15,15,15,.2); transition: transform .2s ease-out; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(12px); }
+.switch:disabled { cursor: default; opacity: .6; }
+
+/* Inputs */
+.input { height: 32px; border-radius: 6px; border: 1px solid var(--border-l2); background: var(--surface-field);
+  color: var(--fg-primary); font: inherit; font-size: 14px; padding: 0 10px; }
+.input::placeholder { color: var(--fg-tertiary); }
+.input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* Main dialog: nav + content */
+.dialog { position: relative; display: flex; width: min(56rem, calc(100vw - 2rem)); height: min(40rem, calc(100vh - 2rem));
+  border-radius: 12px; border: 0; background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
+.nav { position: relative; flex: 0 0 13rem; display: flex; flex-direction: column; gap: .125rem; padding: 1rem .75rem;
+  background: var(--surface-l2); border-right: 1px solid var(--border-l1); }
+.nav-group { padding: .25rem .5rem .375rem; font-size: .75rem; font-weight: 500; color: var(--fg-tertiary); }
+.nav-item { display: flex; align-items: center; gap: .5rem; height: 28px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg-secondary); font-size: 14px; font-weight: 500; text-align: left; cursor: pointer; }
+.nav-item:hover { background: var(--surface-hover); color: var(--fg-primary); }
+.nav-item[aria-current="page"] { background: var(--surface-hover); color: var(--fg-primary); font-weight: 500; }
+.version { position: absolute; left: 0; right: 0; bottom: 0; padding: .75rem; font-size: .625rem; line-height: 1rem;
+  color: var(--fg-secondary); opacity: .45; user-select: text; }
+.version a { color: inherit; text-decoration: none; } .version a:hover { text-decoration: underline; }
+.content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 1.25rem; }
+.content-head { display: flex; align-items: center; gap: .375rem; padding: 0 3.5rem 0 1.25rem; margin-bottom: 1rem; }
+.content-head h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
+.hint { display: inline-flex; color: var(--fg-tertiary); cursor: help; }
+.hint svg { width: .875rem; height: .875rem; }
+.close { position: absolute; top: 1rem; right: 1rem; z-index: 2; color: var(--fg-secondary); }
+.tab-root { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1rem; padding: 0 1.25rem; }
+
+/* Plugins tab */
+.tabs { display: flex; flex-wrap: wrap; gap: .125rem; border-bottom: 1px solid var(--border-l1); }
+.tab { position: relative; height: 2rem; padding: 0 .75rem; border: 0; border-radius: .5rem .5rem 0 0; background: transparent;
+  color: var(--fg-secondary); font-size: .8125rem; font-weight: 500; cursor: pointer; }
+.tab:hover { color: var(--fg-primary); }
+.tab.active { color: var(--fg-primary); }
+.tab.active::after { content: ""; position: absolute; inset-inline: .5rem; bottom: -1px; height: 2px; border-radius: 1px; background: var(--fg-primary); }
+.search-bar { display: flex; align-items: center; gap: .75rem; }
+.search-bar .input { flex: 1; min-width: 0; }
+.search-bar .dropdown-field { flex-shrink: 0; min-width: 7.5rem; }
+.list { flex: 1; min-height: 0; overflow-y: auto; margin-inline: -1.25rem; padding: .25rem 1.25rem 2rem; display: flex; flex-direction: column; gap: 1rem;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent); }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.separator { height: 1px; flex-shrink: 0; background: var(--border-l1); }
+.empty { padding: 2rem 0; text-align: center; color: var(--fg-secondary); }
+@media (max-width: 40rem) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .dialog { flex-direction: column; }
+  .nav { flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; padding: .5rem .75rem; border-right: 0; border-bottom: 1px solid var(--border-l1); }
+  .nav-group, .version { display: none; }
+}
+
+/* Plugin card (Void++ BaseCard) */
+.card { contain: content; display: flex; flex-direction: column; min-width: 0; min-height: 7.5rem; border-radius: .5rem;
+  border: 1px solid var(--border-l1); background: var(--surface-l1); overflow: hidden; }
+.card.required { opacity: .4; }
+.card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
+.card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; }
+.card-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem;
+  border-radius: .5rem; color: var(--fg-primary); background: color-mix(in srgb, var(--fg-primary) 10%, transparent); }
+.card-icon svg { width: .875rem; height: .875rem; }
+.card-title { min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
+.badge.danger { color: var(--fg-danger); }
+.card-controls { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
+
+.card-desc { margin-top: .25rem; font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
+.card-footer { display: flex; align-items: center; justify-content: space-between; gap: .375rem; padding: .25rem .5rem .25rem .75rem;
+  border-top: 1px solid var(--border-l1); font-size: 12px; color: var(--fg-tertiary); min-width: 0; }
+.card-id { min-width: 0; overflow-wrap: anywhere; }
+
+/* Nested dialogs (Void++ VoidPPDialogShell, Notion metrics) */
+.sheet { position: relative; display: flex; flex-direction: column; gap: 20px; width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem); padding: 28px 32px 24px; border-radius: 12px; border: 0;
+  background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
+.sheet-sm { width: min(28rem, calc(100vw - 2rem)); gap: 16px; padding: 24px; }
+.sheet-head { padding-right: 2rem; }
+.sheet-title { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; }
+.sheet-desc { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: var(--fg-secondary); }
+.sheet-body { display: flex; flex-direction: column; gap: 28px; min-height: 0; overflow-y: auto; margin: 0 -32px -24px; padding: 0 32px 24px; }
+.sheet > .close { top: 18px; right: 18px; }
+.field { display: flex; flex-direction: column; gap: .25rem; min-height: 0; }
+.field-label { font-size: 14px; font-weight: 500; }
+.field-text { margin: 0; font-size: 14px; color: var(--fg-secondary); }
+.footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
+
+/* Sections and rows (Notion Settings: section title over a hairline, 24px between rows) */
+.section { display: flex; flex-direction: column; }
+.section-title { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-l1);
+  font-size: 16px; line-height: 24px; font-weight: 500; color: var(--fg-primary); }
+.settings-list { display: flex; flex-direction: column; gap: 24px; }
+.settings-list[data-off] { opacity: .55; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 28px; }
+.row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.row-control { flex: 0 1 auto; min-width: 0; max-width: 50%; display: flex; justify-content: flex-end; }
+.stack { display: flex; flex-direction: column; gap: .5rem; }
+.s-title { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--fg-primary); }
+.s-desc { font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
+.color { display: flex; align-items: center; gap: 8px; }
+.color input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-l2); border-radius: 6px; background: transparent; cursor: pointer; }
+.color input::-webkit-color-swatch-wrapper { padding: 0; } .color input::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.color input::-moz-color-swatch { border: 0; border-radius: 4px; }
+.color-value { font-size: 14px; color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
+.number { width: 5rem; text-align: right; }
+
+/* Dropdown (Notion: borderless value + chevron, options in a popup menu) */
+.dropdown { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 28px; padding: 0 6px 0 8px; border: 0;
+  border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; font-weight: 500; cursor: pointer; }
+.dropdown:hover, .dropdown[aria-expanded="true"] { background: var(--surface-hover); }
+.dropdown-field { justify-content: space-between; height: 32px; padding: 0 8px 0 10px; border: 1px solid var(--border-l2);
+  background: var(--surface-field); font-weight: 400; }
+.dropdown-field:hover, .dropdown-field[aria-expanded="true"] { background: var(--surface-field); border-color: color-mix(in srgb, var(--fg-primary) 30%, transparent); }
+.dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+.layer-menu { display: block; padding: 0; background: transparent; }
+.menu { position: fixed; display: flex; flex-direction: column; gap: 1px; max-width: min(20rem, calc(100vw - 16px));
+  max-height: min(20rem, calc(100vh - 16px)); overflow-y: auto; padding: 4px; border-radius: 10px; background: var(--surface-l1);
+  box-shadow: var(--shadow); }
+.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; padding: 4px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-hover); outline: none; }
+.menu-label { white-space: normal; }
+.menu-item svg { width: 14px; height: 14px; color: var(--fg-primary); }
+.row .input { height: 28px; }
+.dialog:focus, .sheet:focus { outline: none; }
+.prefs { gap: 0; padding-top: .25rem; }
+@media (max-width: 32rem) {
+  .sheet { padding: 20px 20px 16px; }
+  .sheet-body { margin: 0 -20px -16px; padding: 0 20px 16px; }
+  .row { flex-wrap: wrap; gap: 8px 16px; }
+  .row-control { max-width: 100%; }
+}
+
+/* About tab */
+.about { display: flex; flex-direction: column; gap: .75rem; overflow-y: auto; padding-bottom: 1.5rem; }
+.about p { margin: 0; color: var(--fg-secondary); font-size: .875rem; line-height: 1.6; }
+.about a { color: var(--fg-primary); }
+`;
+
+  // src/utils/kit.ts
+  function h(tag, props = {}, ...children) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (value == null || value === false)
+        continue;
+      if (key === "class")
+        node.className = String(value);
+      else if (key.startsWith("on") && typeof value === "function")
+        node.addEventListener(key.slice(2), value);
+      else if (key in node && !key.includes("-"))
+        node[key] = value;
+      else
+        node.setAttribute(key, value === true ? "" : String(value));
+    }
+    for (const child of children)
+      if (child != null && child !== false)
+        node.append(child);
+    return node;
+  }
+  var icon = (markup, filled = false) => svgIcon(markup, filled);
+  function button(variant, label, onclick, extra = "") {
+    return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
+  }
+  function iconButton(markup, label, onclick, { active = false, filled = false } = {}) {
+    return h("button", { type: "button", class: active ? "icon-btn active" : "icon-btn", title: label, "aria-label": label, onclick }, icon(markup, filled));
+  }
+  function switchControl(checked, label, onChange, disabled = false) {
+    const el = h("button", { type: "button", role: "switch", class: "switch", "aria-label": label, disabled });
+    el.setAttribute("aria-checked", String(checked));
+    el.addEventListener("click", () => {
+      const next = el.getAttribute("aria-checked") !== "true";
+      el.setAttribute("aria-checked", String(next));
+      onChange(next);
+    });
+    return el;
+  }
+  function row(title, description, control) {
+    return h("div", { class: "row" }, h("div", { class: "row-body" }, h("div", { class: "s-title" }, title), description && h("div", { class: "s-desc" }, description)), h("div", { class: "row-control" }, control));
+  }
+  function section(title, ...children) {
+    return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
+  }
+  function selectControl(label, options, value, onChange, variant = "plain") {
+    let current = value;
+    const text = h("span", { class: "dropdown-value" });
+    const trigger = h("button", { type: "button", class: variant === "field" ? "dropdown dropdown-field" : "dropdown", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label }, text, icon(Icons.chevronDown));
+    const sync = () => {
+      const chosen = options.find((o) => o.value === current) ?? options[0];
+      text.textContent = chosen?.label ?? "";
+      trigger.title = chosen?.label ?? "";
+    };
+    sync();
+    trigger.addEventListener("click", () => {
+      const pick = (next) => {
+        close();
+        trigger.focus();
+        if (next === current)
+          return;
+        current = next;
+        sync();
+        onChange(next);
+      };
+      const items = options.map((o) => h("button", {
+        type: "button",
+        role: "option",
+        class: "menu-item",
+        "aria-selected": String(o.value === current),
+        "data-value": o.value,
+        onclick: () => pick(o.value)
+      }, h("span", { class: "menu-label" }, o.label), o.value === current && icon(Icons.check)));
+      const menu = h("div", { class: "menu", role: "listbox", "aria-label": label }, ...items);
+      const layer = h("div", { class: "layer layer-menu" }, menu);
+      const close = () => {
+        layer.remove();
+        trigger.setAttribute("aria-expanded", "false");
+      };
+      layer.addEventListener("mousedown", (event) => event.target === layer && close());
+      menu.addEventListener("keydown", (event) => {
+        const { key } = event;
+        if (key === "Escape" || key === "Tab") {
+          event.preventDefault();
+          event.stopPropagation();
+          close();
+          trigger.focus();
+          return;
+        }
+        if (key !== "ArrowDown" && key !== "ArrowUp")
+          return;
+        event.preventDefault();
+        const index = items.indexOf(menu.querySelector(".menu-item:focus") ?? items[0]);
+        items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+      });
+      trigger.getRootNode().append?.(layer);
+      if (!layer.isConnected)
+        document.body.append(layer);
+      trigger.setAttribute("aria-expanded", "true");
+      placeMenu(menu, trigger.getBoundingClientRect());
+      (items.find((item) => item.getAttribute("aria-selected") === "true") ?? items[0])?.focus();
+    });
+    return trigger;
+  }
+  var MENU_GAP = 4;
+  function placeMenu(menu, anchor) {
+    const width = Math.max(anchor.width, menu.offsetWidth);
+    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+    const below = anchor.bottom + MENU_GAP;
+    const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
+    Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
+  }
+  function optionRow(def, value, set) {
+    const title = tr(def.label);
+    const description = def.description && tr(def.description);
+    switch (def.type) {
+      case "boolean":
+        return row(title, description, switchControl(Boolean(value), title, set));
+      case "select":
+        return row(title, description, selectControl(title, def.options.map((o) => ({ value: o.value, label: tr(o.label) })), String(value), set));
+      case "color": {
+        const text = h("span", { class: "color-value" }, String(value));
+        const input = h("input", { type: "color", value: String(value), "aria-label": title });
+        input.addEventListener("input", () => {
+          text.textContent = input.value.toLowerCase();
+          set(input.value.toLowerCase());
+        });
+        return row(title, description, h("div", { class: "color" }, text, input));
+      }
+      case "number": {
+        const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(value), "aria-label": title });
+        input.addEventListener("change", () => {
+          const next = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
+          input.value = String(next);
+          set(next);
+        });
+        return row(title, description, input);
+      }
+      case "action":
+        return row(title, description, button("secondary", tr(def.button), () => def.run()));
+    }
   }
 
   // src/plugins/greetingCustomizer/manager.ts
   var MANAGER_HOST_ID = "notionai-pp-greetings";
-  var CSS = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.05); --accent: #2383e2; --danger: #eb5757;
-  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-:host([data-theme="dark"]) { --bg: #252525; --text: #ebebea; --muted: #9b9b9b; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.06); }
-* { box-sizing: border-box; }
-.backdrop { position: absolute; inset: 0; background: rgba(15,15,15,.45); display: grid; place-items: center; padding: 16px; }
-.dialog { width: min(860px, 100%); max-height: min(84vh, 860px); display: flex; flex-direction: column; overflow: hidden;
-  border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: 0 24px 60px rgba(0,0,0,.35); }
-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
-h2 { margin: 0; font-size: 16px; }
-.close { width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; font-size: 18px; cursor: pointer; }
-.close:hover { background: var(--hover); color: var(--text); }
-.body { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; padding: 14px 18px; overflow: auto; }
-@media (max-width: 760px) { .body { grid-template-columns: 1fr; } }
-.card { display: flex; flex-direction: column; gap: 8px; min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-.label { font-size: 12px; color: var(--muted); }
-textarea { width: 100%; min-height: 88px; resize: vertical; font: inherit; font-size: 13px; color: var(--text); background: transparent;
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; outline: none; }
-textarea:focus, select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(35,131,226,.18); outline: none; }
-.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.row.split { justify-content: space-between; }
-.counter { margin-left: auto; font-size: 12px; color: var(--muted); }
-.error { color: var(--danger); font-size: 12.5px; }
-.hint { color: var(--muted); font-size: 12.5px; }
-button.btn { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; cursor: pointer; }
-button.btn:hover { background: var(--hover); }
-button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
-button.primary:hover { background: #0b6fcc; }
-ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
-li[data-current] { border-color: var(--accent); }
-li[data-editing] { background: var(--hover); }
-.text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
-.icon { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 13px; }
-.icon:hover { background: var(--hover); }
-label.field { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
-select, input[type=number] { font: inherit; font-size: 13px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
-input[type=number] { width: 80px; }
-input:disabled { opacity: .5; }
-footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--border); }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
+  var CSS2 = `${CSS}
+.layer-root { background: var(--overlay); }
+.textarea { width: 100%; min-height: 84px; resize: vertical; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-l2);
+  background: var(--surface-field); color: var(--fg-primary); font: inherit; font-size: 14px; line-height: 20px; }
+.textarea::placeholder { color: var(--fg-tertiary); }
+.textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.editor { display: flex; flex-direction: column; gap: 8px; }
+.editor-actions { display: flex; align-items: center; gap: 8px; }
+.counter { margin-right: auto; font-size: 12px; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; }
+.error { font-size: 13px; line-height: 18px; color: var(--fg-danger); }
+.greetings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.greetings li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 4px 8px 0; border-bottom: 1px solid var(--border-l1); }
+.greetings li:last-child { border-bottom: 0; }
+.greetings li[data-editing] { background: var(--surface-hover); border-radius: 6px; padding-left: 8px; }
+.greeting-text { flex: 1; min-width: 0; padding-top: 4px; font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tag { flex-shrink: 0; margin-top: 4px; padding: 0 6px; border-radius: 4px; font-size: 12px; line-height: 20px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.greetings .icon-btn { flex-shrink: 0; }
 `;
   var overlay = null;
   function closeManager() {
@@ -1410,25 +1722,24 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
   }
   function openManager(rotation, currentIndex) {
     closeManager();
-    overlay = createOverlay(MANAGER_HOST_ID, CSS, `<div class="backdrop"><div class="dialog" role="dialog" aria-modal="true"></div></div>`);
+    overlay = createOverlay(MANAGER_HOST_ID, CSS2, "");
     const { root } = overlay;
-    const dialog = root.querySelector(".dialog");
-    root.querySelector(".backdrop").addEventListener("click", (event) => event.target === event.currentTarget && closeManager());
     root.addEventListener("keydown", (event) => event.key === "Escape" && closeManager());
     let greetings = loadGreetings();
     let editing = -1;
-    const close = el("button", { class: "close", type: "button", "aria-label": tr2("close"), title: tr2("close"), text: "×" });
-    close.addEventListener("click", closeManager);
-    const header = el("header", {}, el("h2", { text: tr2("title") }), close);
-    const textarea = el("textarea", { placeholder: tr2("placeholder"), maxlength: String(MAX_LEN) });
-    textarea.setAttribute("aria-label", tr2("placeholder"));
-    const error = el("div", { class: "error", role: "alert" });
-    const submit = el("button", { class: "btn primary", type: "button", text: tr2("add") });
-    const cancel = el("button", { class: "btn", type: "button", text: tr2("cancelEdit") });
-    const counter = el("span", { class: "counter" });
-    const saved = el("div", { class: "hint" });
-    const list = el("ul");
-    const left = el("div", { class: "card" }, el("div", { class: "label", text: tr2("newLabel") }), textarea, error, el("div", { class: "row" }, submit, cancel, counter), saved, list);
+    const textarea = h("textarea", { class: "textarea", placeholder: tr2("placeholder"), maxLength: MAX_LEN, "aria-label": tr2("newSection") });
+    const error = h("div", { class: "error", role: "alert" });
+    const counter = h("span", { class: "counter" });
+    const submit = button("primary", tr2("add"), () => submitGreeting());
+    const cancel = button("secondary", tr2("cancelEdit"), () => {
+      stopEditing();
+      setError(null);
+      render();
+    });
+    const editorTitle = h("h4", { class: "section-title" });
+    const editor = h("section", { class: "section" }, editorTitle, h("div", { class: "editor" }, textarea, error, h("div", { class: "editor-actions" }, counter, cancel, submit)));
+    const listTitle = h("h4", { class: "section-title" });
+    const list = h("ul", { class: "greetings" });
     const setError = (key) => {
       error.textContent = key ? tr2(key) : "";
       error.hidden = !key;
@@ -1437,8 +1748,12 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
     const stopEditing = () => {
       editing = -1;
       textarea.value = "";
-      submit.textContent = tr2("add");
-      cancel.hidden = true;
+      syncEditor();
+    };
+    const syncEditor = () => {
+      editorTitle.textContent = tr2(editing >= 0 ? "editSection" : "newSection");
+      submit.textContent = tr2(editing >= 0 ? "saveEdit" : "add");
+      cancel.hidden = editing < 0;
       syncCounter();
     };
     function persist() {
@@ -1446,22 +1761,17 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
       greetings = loadGreetings();
     }
     function render() {
-      saved.textContent = tr2("saved", { count: greetings.length, max: MAX_COUNT });
+      listTitle.textContent = tr2("listSection", { count: greetings.length, max: MAX_COUNT });
       const current = currentIndex();
       list.replaceChildren(...greetings.map((greeting, index) => {
-        const edit = el("button", { class: "icon", type: "button", title: tr2("edit"), "aria-label": tr2("edit"), text: "✍️" });
-        const remove = el("button", { class: "icon", type: "button", title: tr2("delete"), "aria-label": tr2("delete"), text: "\uD83D\uDDD1️" });
-        edit.addEventListener("click", () => {
+        const item = h("li", {}, h("div", { class: "greeting-text" }, greeting), index === current && h("span", { class: "tag" }, tr2("current")), iconButton(Icons.pencil, tr2("edit"), () => {
           editing = index;
           textarea.value = greetings[index];
-          submit.textContent = tr2("saveEdit");
-          cancel.hidden = false;
           setError(null);
-          syncCounter();
+          syncEditor();
           render();
           textarea.focus();
-        });
-        remove.addEventListener("click", () => {
+        }), iconButton(Icons.trash, tr2("delete"), () => {
           greetings.splice(index, 1);
           if (editing === index)
             stopEditing();
@@ -1469,14 +1779,12 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
             editing--;
           persist();
           render();
-        });
-        const item = el("li", {}, el("div", { class: "text", text: greeting }), edit, remove);
-        item.toggleAttribute("data-current", index === current);
+        }));
         item.toggleAttribute("data-editing", index === editing);
         return item;
       }));
     }
-    submit.addEventListener("click", () => {
+    function submitGreeting() {
       const problem = validateGreeting(textarea.value);
       if (problem)
         return setError(problem);
@@ -1491,46 +1799,33 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
       stopEditing();
       persist();
       render();
-    });
-    cancel.addEventListener("click", () => {
-      stopEditing();
-      setError(null);
-      render();
-    });
+    }
     textarea.addEventListener("input", syncCounter);
     textarea.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
-        submit.click();
+        submitGreeting();
     });
-    const values = rotation.get();
-    const select = (key, options) => {
-      const node = el("select");
-      for (const [value, label] of options)
-        node.append(el("option", { value, text: tr2(label) }));
-      node.value = values[key];
-      node.addEventListener("change", () => {
-        rotation.set(key, node.value);
-        syncInterval();
-      });
-      return node;
+    const rotationList = h("div", { class: "settings-list" });
+    const renderRotation = () => {
+      const keys = ["mode", "order", "intervalSec"];
+      rotationList.replaceChildren(...keys.map((key) => optionRow(rotation.defs[key], rotation.get(key), (value) => {
+        rotation.set(key, value);
+        if (key === "mode")
+          renderRotation();
+      })));
+      const interval = rotationList.querySelector("input[type=number]");
+      if (interval)
+        interval.disabled = rotation.get("mode") !== "interval";
     };
-    const mode = select("mode", [["refresh", "modeRefresh"], ["interval", "modeInterval"], ["manual", "modeManual"]]);
-    const order = select("order", [["sequential", "orderSequential"], ["random", "orderRandom"]]);
-    const interval = el("input", { type: "number", min: "1", max: "3600", step: "1", value: String(values.intervalSec) });
-    interval.addEventListener("change", () => {
-      const value = Math.min(3600, Math.max(1, Math.round(Number(interval.value) || values.intervalSec)));
-      interval.value = String(value);
-      rotation.set("intervalSec", value);
-    });
-    const syncInterval = () => void (interval.disabled = mode.value !== "interval");
-    const field = (label, control) => el("label", { class: "field" }, el("span", { text: tr2(label) }), control);
-    const right = el("div", { class: "card" }, el("div", { class: "label", text: tr2("rotation") }), field("mode", mode), field("order", order), field("interval", interval), el("div", { class: "hint", text: tr2("tip") }));
-    const done = el("button", { class: "btn primary", type: "button", text: tr2("done") });
-    done.addEventListener("click", closeManager);
-    dialog.append(header, el("div", { class: "body" }, left, right), el("footer", {}, done));
+    renderRotation();
+    const close = iconButton(Icons.x, tr2("close"), closeManager);
+    close.classList.add("close");
+    const sheet = h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": tr2("title") }, close, h("div", { class: "sheet-head" }, h("h3", { class: "sheet-title" }, tr2("title")), h("p", { class: "sheet-desc" }, tr2("subtitle"))), h("div", { class: "sheet-body" }, editor, h("section", { class: "section" }, listTitle, list), section(tr2("rotation"), rotationList), h("div", { class: "footer" }, button("primary", tr2("done"), closeManager))));
+    const layer = h("div", { class: "layer layer-root" }, sheet);
+    layer.addEventListener("mousedown", (event) => event.target === layer && closeManager());
+    root.append(layer);
     stopEditing();
     setError(null);
-    syncInterval();
     render();
     textarea.focus();
   }
@@ -1752,9 +2047,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   }
   function openGreetingManager() {
+    const store = settings3.store;
     openManager({
-      get: () => ({ mode: settings3.store.mode, order: settings3.store.order, intervalSec: settings3.store.intervalSec }),
-      set: (key, value) => void (settings3.store[key] = value)
+      defs: { mode: settings3.def.mode, order: settings3.def.order, intervalSec: settings3.def.intervalSec },
+      get: (key) => store[key],
+      set: (key, value) => void (store[key] = value)
     }, loadIndex);
   }
   var greetingCustomizer_default = definePlugin({
@@ -1840,11 +2137,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 
   // src/plugins/navigator/effects.ts
   var EFFECTS = [
-    { value: "none", zh: "无效果（纯平滑滚动）", en: "None (scroll only)", hint: "仅滚动 / scroll only" },
-    { value: "border", zh: "高亮边框", en: "Highlight border", hint: "彩色边框，持续 2 秒 / 2 s" },
-    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow", hint: "边框脉冲闪烁，持续 2 秒 / 2 s" },
-    { value: "fade", zh: "淡入淡出", en: "Fade", hint: "背景淡入淡出，持续 1.5 秒 / 1.5 s" },
-    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle", hint: "水平微抖动 / jiggle" }
+    { value: "none", zh: "无（只滚动）", en: "None (scroll only)" },
+    { value: "border", zh: "高亮边框", en: "Highlight border" },
+    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
+    { value: "fade", zh: "淡入淡出", en: "Fade" },
+    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle" }
   ];
   var running2 = new WeakMap;
   var KEYFRAMES = {
@@ -1906,14 +2203,15 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       pointerEvents: "none"
     });
     const card = document.createElement("div");
-    card.textContent = info ? `${info.zh} / ${info.en}` : effect;
+    card.textContent = info ? t(info.zh, info.en) : effect;
+    const dark = currentTheme() === "dark";
     Object.assign(card.style, {
-      padding: "14px 22px",
+      padding: "12px 20px",
       borderRadius: "10px",
-      background: "#fff",
-      color: "#37352f",
-      font: "500 14px/1.4 ui-sans-serif, system-ui, sans-serif",
-      boxShadow: "0 8px 30px rgba(0,0,0,.18)"
+      background: dark ? "#202020" : "#fff",
+      color: dark ? "#f0efed" : "#37352f",
+      font: "500 14px/20px ui-sans-serif, -apple-system, system-ui, sans-serif",
+      boxShadow: dark ? "0 0 0 1px #383836, 0 12px 32px rgba(0,0,0,.5)" : "0 0 0 1px rgba(15,15,15,.05), 0 12px 32px rgba(15,15,15,.18)"
     });
     holder.append(card);
     document.body.append(holder);
@@ -2405,239 +2703,11 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       handler(payload);
   }
 
-  // src/plugins/settings/styles.ts
-  var CSS2 = `
-:host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #fbfbfa; --surface-hover: rgba(55,53,47,.06);
-  --surface-field: rgba(242,241,238,.6);
-  --border-l1: rgba(55,53,47,.09); --border-l2: rgba(55,53,47,.16);
-  --fg-primary: #37352f; --fg-secondary: #787774; --fg-tertiary: #a5a29a; --fg-invert: #ffffff;
-  --accent: #2383e2; --accent-hover: #0077d4; --switch-off: rgba(135,131,120,.3);
-  --fg-danger: #eb5757; --fg-warning: #d9730d; --overlay: rgba(15,15,15,.6);
-  --shadow: 0 0 0 1px rgba(15,15,15,.05), 0 24px 48px rgba(15,15,15,.2);
-  color-scheme: light;
-  font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  color: var(--fg-primary); }
-:host([data-theme="dark"]) {
-  --surface-base: #191919; --surface-l1: #202020; --surface-l2: #252525; --surface-hover: rgba(255,255,255,.055);
-  --surface-field: rgba(255,255,255,.055);
-  --border-l1: rgba(255,255,243,.082); --border-l2: rgba(255,255,235,.1);
-  --fg-primary: #f0efed; --fg-secondary: #ada9a3; --fg-tertiary: #7d7a75; --fg-invert: #191919;
-  --accent: #2783de; --accent-hover: #3b8fe2; --switch-off: rgba(202,204,206,.3);
-  --fg-danger: #ff7369; --overlay: rgba(0,0,0,.6);
-  --shadow: 0 0 0 1px #383836, 0 24px 48px rgba(25,25,25,.64);
-  color-scheme: dark; }
-* { box-sizing: border-box; }
-svg { width: 1rem; height: 1rem; flex-shrink: 0; }
-button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid color-mix(in srgb, var(--fg-primary) 55%, transparent); outline-offset: 1px; }
-
-.layer { position: fixed; inset: 0; display: grid; place-items: center; padding: 1rem; }
-.layer-root { background: var(--overlay); }
-.layer-nested { background: transparent; }
-.layer-confirm { background: color-mix(in srgb, var(--overlay) 60%, transparent); }
-
-/* Buttons */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; height: 28px; padding: 0 10px;
-  border-radius: 6px; border: 1px solid transparent; font-size: 14px; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap;
-  transition: background-color .12s, border-color .12s, color .12s; }
-.btn:disabled { opacity: .5; cursor: default; }
-.btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-.btn-secondary { background: transparent; border-color: var(--border-l2); }
-.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
-.btn-tertiary { background: transparent; }
-.btn-tertiary:hover:not(:disabled) { background: var(--surface-hover); }
-.btn-danger { background: transparent; color: var(--fg-danger); border-color: color-mix(in srgb, var(--fg-danger) 50%, transparent); }
-.btn-danger:hover { background: color-mix(in srgb, var(--fg-danger) 10%, transparent); }
-.btn-square { width: 28px; padding: 0; }
-.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; padding: 0;
-  border: 0; border-radius: 6px; background: transparent; color: var(--fg-tertiary); cursor: pointer; }
-.icon-btn:hover { background: var(--surface-hover); color: var(--fg-primary); }
-.icon-btn.active { color: var(--fg-primary); }
-.icon-btn svg { width: .9375rem; height: .9375rem; }
-
-/* Switch (Notion: 30×18 track, 14px thumb, blue when on) */
-.switch { position: relative; flex-shrink: 0; width: 30px; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 44px;
-  background: var(--switch-off); cursor: pointer; transition: background-color .2s; }
-.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 2px rgba(15,15,15,.2); transition: transform .2s ease-out; }
-.switch[aria-checked="true"] { background: var(--accent); }
-.switch[aria-checked="true"]::after { transform: translateX(12px); }
-.switch:disabled { cursor: default; opacity: .6; }
-
-/* Inputs */
-.input, .select { height: 32px; border-radius: 6px; border: 1px solid var(--border-l2); background: var(--surface-field);
-  color: var(--fg-primary); font: inherit; font-size: 14px; padding: 0 10px; }
-.input::placeholder { color: var(--fg-tertiary); }
-.input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.select { appearance: none; padding-right: 2rem; cursor: pointer;
-  background-image: linear-gradient(45deg, transparent 50%, var(--fg-secondary) 50%), linear-gradient(135deg, var(--fg-secondary) 50%, transparent 50%);
-  background-position: calc(100% - 1rem) 52%, calc(100% - .7rem) 52%; background-size: .3rem .3rem; background-repeat: no-repeat; }
-.select option { background: var(--surface-l1); color: var(--fg-primary); }
-
-/* Main dialog: nav + content */
-.dialog { position: relative; display: flex; width: min(56rem, calc(100vw - 2rem)); height: min(40rem, calc(100vh - 2rem));
-  border-radius: 12px; border: 0; background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
-.nav { position: relative; flex: 0 0 13rem; display: flex; flex-direction: column; gap: .125rem; padding: 1rem .75rem;
-  background: var(--surface-l2); border-right: 1px solid var(--border-l1); }
-.nav-group { padding: .25rem .5rem .375rem; font-size: .75rem; font-weight: 500; color: var(--fg-tertiary); }
-.nav-item { display: flex; align-items: center; gap: .5rem; height: 28px; padding: 0 6px; border: 0; border-radius: 6px;
-  background: transparent; color: var(--fg-secondary); font-size: 14px; font-weight: 500; text-align: left; cursor: pointer; }
-.nav-item:hover { background: var(--surface-hover); color: var(--fg-primary); }
-.nav-item[aria-current="page"] { background: var(--surface-hover); color: var(--fg-primary); font-weight: 500; }
-.version { position: absolute; left: 0; right: 0; bottom: 0; padding: .75rem; font-size: .625rem; line-height: 1rem;
-  color: var(--fg-secondary); opacity: .45; user-select: text; }
-.version a { color: inherit; text-decoration: none; } .version a:hover { text-decoration: underline; }
-.content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 1.25rem; }
-.content-head { display: flex; align-items: center; gap: .375rem; padding: 0 3.5rem 0 1.25rem; margin-bottom: 1rem; }
-.content-head h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
-.hint { display: inline-flex; color: var(--fg-tertiary); cursor: help; }
-.hint svg { width: .875rem; height: .875rem; }
-.close { position: absolute; top: 1rem; right: 1rem; z-index: 2; color: var(--fg-secondary); }
-.tab-root { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 1rem; padding: 0 1.25rem; }
-
-/* Plugins tab */
-.tabs { display: flex; flex-wrap: wrap; gap: .125rem; border-bottom: 1px solid var(--border-l1); }
-.tab { position: relative; height: 2rem; padding: 0 .75rem; border: 0; border-radius: .5rem .5rem 0 0; background: transparent;
-  color: var(--fg-secondary); font-size: .8125rem; font-weight: 500; cursor: pointer; }
-.tab:hover { color: var(--fg-primary); }
-.tab.active { color: var(--fg-primary); }
-.tab.active::after { content: ""; position: absolute; inset-inline: .5rem; bottom: -1px; height: 2px; border-radius: 1px; background: var(--fg-primary); }
-.search-bar { display: flex; align-items: center; gap: .75rem; }
-.search-bar .input { flex: 1; min-width: 0; }
-.search-bar .select { width: 7.5rem; }
-.list { flex: 1; min-height: 0; overflow-y: auto; margin-inline: -1.25rem; padding: .25rem 1.25rem 2rem; display: flex; flex-direction: column; gap: 1rem;
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent);
-  mask-image: linear-gradient(to bottom, transparent, #000 .75rem, #000 calc(100% - 1.5rem), transparent); }
-.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
-.separator { height: 1px; flex-shrink: 0; background: var(--border-l1); }
-.empty { padding: 2rem 0; text-align: center; color: var(--fg-secondary); }
-@media (max-width: 40rem) { .grid { grid-template-columns: minmax(0, 1fr); } .nav { display: none; } }
-
-/* Plugin card (Void++ BaseCard) */
-.card { contain: content; display: flex; flex-direction: column; min-width: 0; min-height: 7.5rem; border-radius: .5rem;
-  border: 1px solid var(--border-l1); background: var(--surface-l1); overflow: hidden; }
-.card.required { opacity: .4; }
-.card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
-.card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
-.card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }
-.card-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem;
-  border-radius: .5rem; color: var(--fg-primary); background: color-mix(in srgb, var(--fg-primary) 10%, transparent); }
-.card-icon svg { width: .875rem; height: .875rem; }
-.card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; font-weight: 500; }
-.badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
-.badge.danger { color: var(--fg-danger); }
-.card-controls { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
-.card-controls .switch { margin-left: .25rem; }
-.card-desc { margin-top: .25rem; font-size: .8125rem; line-height: 1.5; color: var(--fg-secondary); display: -webkit-box;
-  -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.card-footer { display: flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-top: 1px solid var(--border-l1);
-  font-size: .7rem; color: var(--fg-tertiary); min-width: 0; }
-.card-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Nested dialogs (Void++ VoidPPDialogShell, Notion metrics) */
-.sheet { position: relative; display: flex; flex-direction: column; gap: 20px; width: min(36rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem); padding: 28px 32px 24px; border-radius: 12px; border: 0;
-  background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
-.sheet-sm { width: min(28rem, calc(100vw - 2rem)); gap: 16px; padding: 24px; }
-.sheet-head { padding-right: 2rem; }
-.sheet-title { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; }
-.sheet-desc { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: var(--fg-secondary); }
-.sheet-body { display: flex; flex-direction: column; gap: 28px; min-height: 0; overflow-y: auto; margin: 0 -32px -24px; padding: 0 32px 24px; }
-.sheet > .close { top: 18px; right: 18px; }
-.field { display: flex; flex-direction: column; gap: .25rem; min-height: 0; }
-.field-label { font-size: 14px; font-weight: 500; }
-.field-text { margin: 0; font-size: 14px; color: var(--fg-secondary); }
-.footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
-
-/* Sections and rows (Notion Settings: section title over a hairline, 24px between rows) */
-.section { display: flex; flex-direction: column; }
-.section-title { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-l1);
-  font-size: 16px; line-height: 24px; font-weight: 500; color: var(--fg-primary); }
-.settings-list { display: flex; flex-direction: column; gap: 24px; }
-.settings-list[data-off] { opacity: .55; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 28px; }
-.row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.row-control { flex: 0 1 auto; min-width: 0; max-width: 50%; display: flex; justify-content: flex-end; }
-.stack { display: flex; flex-direction: column; gap: .5rem; }
-.s-title { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--fg-primary); }
-.s-desc { font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
-.color { display: flex; align-items: center; gap: 8px; }
-.color input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-l2); border-radius: 6px; background: transparent; cursor: pointer; }
-.color input::-webkit-color-swatch-wrapper { padding: 0; } .color input::-webkit-color-swatch { border: 0; border-radius: 4px; }
-.color input::-moz-color-swatch { border: 0; border-radius: 4px; }
-.color-value { font-size: 14px; color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
-.number { width: 5rem; text-align: right; }
-
-/* Dropdown (Notion: borderless value + chevron, options in a popup menu) */
-.dropdown { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 28px; padding: 0 6px 0 8px; border: 0;
-  border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; font-weight: 500; cursor: pointer; }
-.dropdown:hover, .dropdown[aria-expanded="true"] { background: var(--surface-hover); }
-.dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dropdown svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
-.layer-menu { display: block; padding: 0; background: transparent; }
-.menu { position: fixed; display: flex; flex-direction: column; gap: 1px; max-width: min(20rem, calc(100vw - 16px));
-  max-height: min(20rem, calc(100vh - 16px)); overflow-y: auto; padding: 4px; border-radius: 10px; background: var(--surface-l1);
-  box-shadow: var(--shadow); }
-.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; padding: 4px 8px;
-  border: 0; border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; }
-.menu-item:hover, .menu-item:focus-visible { background: var(--surface-hover); outline: none; }
-.menu-label { white-space: normal; }
-.menu-item svg { width: 14px; height: 14px; color: var(--fg-primary); }
-.row .input { height: 28px; }
-.dialog:focus, .sheet:focus { outline: none; }
-.prefs { gap: 0; padding-top: .25rem; }
-
-/* About tab */
-.about { display: flex; flex-direction: column; gap: .75rem; overflow-y: auto; padding-bottom: 1.5rem; }
-.about p { margin: 0; color: var(--fg-secondary); font-size: .875rem; line-height: 1.6; }
-.about a { color: var(--fg-primary); }
-`;
-
   // src/plugins/settings/index.ts
   var SETTINGS_HOST_ID = "notionai-pp-settings";
   var SELF = "settings";
   var REPO_URL = "https://github.com/0-V-linuxdo/NotionPP";
-  function h(tag, props = {}, ...children) {
-    const node = document.createElement(tag);
-    for (const [key, value] of Object.entries(props)) {
-      if (value == null || value === false)
-        continue;
-      if (key === "class")
-        node.className = String(value);
-      else if (key.startsWith("on") && typeof value === "function")
-        node.addEventListener(key.slice(2), value);
-      else if (key in node && !key.includes("-"))
-        node[key] = value;
-      else
-        node.setAttribute(key, value === true ? "" : String(value));
-    }
-    for (const child of children)
-      if (child != null && child !== false)
-        node.append(child);
-    return node;
-  }
-  var option = (value, text, selected = false) => h("option", { value, selected }, text);
   var both = (text) => typeof text === "string" ? text : `${text.zh} ${text.en}`;
-  var icon = (markup, filled = false) => svgIcon(markup, filled);
-  function button(variant, label, onclick, extra = "") {
-    return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
-  }
-  function iconButton(markup, label, onclick, { active = false, filled = false } = {}) {
-    return h("button", { type: "button", class: active ? "icon-btn active" : "icon-btn", title: label, "aria-label": label, onclick }, icon(markup, filled));
-  }
-  function switchControl(checked, label, onChange, disabled = false) {
-    const el = h("button", { type: "button", role: "switch", class: "switch", "aria-label": label, disabled });
-    el.setAttribute("aria-checked", String(checked));
-    el.addEventListener("click", () => {
-      const next = el.getAttribute("aria-checked") !== "true";
-      el.setAttribute("aria-checked", String(next));
-      onChange(next);
-    });
-    return el;
-  }
   function readList(key) {
     const raw = getValue(SELF, key);
     return typeof raw === "string" && raw ? raw.split(",") : [];
@@ -2696,96 +2766,9 @@ button { font: inherit; color: inherit; }
     node.tabIndex = -1;
     node.focus();
   }
-  function row(title, description, control) {
-    return h("div", { class: "row" }, h("div", { class: "row-body" }, h("div", { class: "s-title" }, title), description && h("div", { class: "s-desc" }, description)), h("div", { class: "row-control" }, control));
-  }
-  function section(title, ...children) {
-    return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
-  }
-  function selectControl(label, options, value, onChange) {
-    let current = value;
-    const text = h("span", { class: "dropdown-value" });
-    const trigger = h("button", { type: "button", class: "dropdown", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label }, text, icon(Icons.chevronDown));
-    const sync = () => {
-      const chosen = options.find((o) => o.value === current) ?? options[0];
-      text.textContent = chosen?.label ?? "";
-      trigger.title = chosen?.label ?? "";
-    };
-    sync();
-    trigger.addEventListener("click", () => {
-      let layer;
-      const pick = (next) => {
-        layer.close();
-        trigger.focus();
-        if (next === current)
-          return;
-        current = next;
-        sync();
-        onChange(next);
-      };
-      const items = options.map((o) => h("button", {
-        type: "button",
-        role: "option",
-        class: "menu-item",
-        "aria-selected": String(o.value === current),
-        "data-value": o.value,
-        onclick: () => pick(o.value)
-      }, h("span", { class: "menu-label" }, o.label), o.value === current && icon(Icons.check)));
-      const menu = h("div", { class: "menu", role: "listbox", "aria-label": label }, ...items);
-      menu.addEventListener("keydown", (event) => {
-        const { key } = event;
-        if (key !== "ArrowDown" && key !== "ArrowUp")
-          return;
-        event.preventDefault();
-        const index = items.indexOf(menu.querySelector(".menu-item:focus") ?? items[0]);
-        items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
-      });
-      layer = pushLayer("menu", menu, () => trigger.setAttribute("aria-expanded", "false"));
-      trigger.setAttribute("aria-expanded", "true");
-      placeMenu(menu, trigger.getBoundingClientRect());
-      (items.find((item) => item.getAttribute("aria-selected") === "true") ?? items[0])?.focus();
-    });
-    return trigger;
-  }
-  var MENU_GAP = 4;
-  function placeMenu(menu, anchor) {
-    const width = Math.max(anchor.width, menu.offsetWidth);
-    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
-    const below = anchor.bottom + MENU_GAP;
-    const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
-    Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
-  }
   function settingField(plugin, key, def) {
     const store = plugin.settings.store;
-    const set = (value) => setValue(plugin.name, key, value);
-    const title = tr(def.label);
-    const description = def.description && tr(def.description);
-    switch (def.type) {
-      case "boolean":
-        return row(title, description, switchControl(Boolean(store[key]), title, set));
-      case "select":
-        return row(title, description, selectControl(title, def.options.map((o) => ({ value: o.value, label: tr(o.label) })), String(store[key]), set));
-      case "color": {
-        const value = h("span", { class: "color-value" }, String(store[key]));
-        const input = h("input", { type: "color", value: String(store[key]), "aria-label": title });
-        input.addEventListener("input", () => {
-          value.textContent = input.value.toLowerCase();
-          set(input.value.toLowerCase());
-        });
-        return row(title, description, h("div", { class: "color" }, value, input));
-      }
-      case "number": {
-        const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": title });
-        input.addEventListener("change", () => {
-          const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
-          input.value = String(value);
-          set(value);
-        });
-        return row(title, description, input);
-      }
-      case "action":
-        return row(title, description, button("secondary", tr(def.button), () => def.run()));
-    }
+    return optionRow(def, store[key], (value) => setValue(plugin.name, key, value));
   }
   function openPluginDialog(plugin) {
     let layer;
@@ -2816,17 +2799,18 @@ button { font: inherit; color: inherit; }
     const pinned = readList("pinned").includes(plugin.name);
     const crashed = enabled && !plugin.started && !plugin.required;
     const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
-    const controls = h("div", { class: "card-controls" }, iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
+    const actions = h("div", { class: "card-controls" }, iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
       toggleInList("starred", plugin.name);
       refresh();
     }, { active: starred, filled: starred }), !plugin.required && iconButton(Icons.pin, pinned ? t("取消置顶", "Unpin from top") : t("置顶", "Pin to top"), () => {
       toggleInList("pinned", plugin.name);
       refresh();
-    }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)), switchControl(enabled, tr(plugin.title), (value) => {
+    }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)));
+    const toggle = switchControl(enabled, tr(plugin.title), (value) => {
       setEnabled(plugin, value);
       refresh();
-    }, plugin.required));
-    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title: tr(plugin.title) }, tr(plugin.title)), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), controls), h("div", { class: "card-desc", title: tr(plugin.description) }, tr(plugin.description))), h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
+    }, plugin.required);
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title" }, tr(plugin.title)), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), toggle), h("div", { class: "card-desc" }, tr(plugin.description))), h("div", { class: "card-footer" }, h("span", { class: "card-id" }, plugin.name), actions));
   }
   function pluginsTab() {
     const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
@@ -2836,9 +2820,14 @@ button { font: inherit; color: inherit; }
     const categories = Object.keys(CATEGORY_LABELS).filter((c) => c === "favorites" || c === "all" || all.some((p) => p.tags?.includes(c)));
     const tabs = h("div", { class: "tabs", role: "tablist" });
     const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
-    const filter = h("select", { class: "select", "aria-label": t("筛选", "Filter") });
-    for (const [value, text] of [["all", t("全部", "All")], ["enabled", t("已启用", "Enabled")], ["disabled", t("已禁用", "Disabled")]])
-      filter.append(option(value, text));
+    const filter = selectControl(t("筛选", "Filter"), [
+      { value: "all", label: t("全部", "All") },
+      { value: "enabled", label: t("已启用", "Enabled") },
+      { value: "disabled", label: t("已禁用", "Disabled") }
+    ], state.filter, (value) => {
+      state.filter = value;
+      render();
+    }, "field");
     const list = h("div", { class: "list" });
     const matches = (p) => {
       if (state.filter !== "all" && isEnabled(p) !== (state.filter === "enabled"))
@@ -2890,10 +2879,6 @@ button { font: inherit; color: inherit; }
       state.search = search.value;
       render();
     });
-    filter.addEventListener("change", () => {
-      state.filter = filter.value;
-      render();
-    });
     render();
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
@@ -2911,7 +2896,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.1";
+    const version = "[20261007] v1.2.2";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2927,7 +2912,7 @@ button { font: inherit; color: inherit; }
   }
   function openSettings(tab = "plugins") {
     close();
-    overlay3 = createOverlay(SETTINGS_HOST_ID, CSS2, "");
+    overlay3 = createOverlay(SETTINGS_HOST_ID, CSS, "");
     const { root } = overlay3;
     const content = h("div", { class: "content" });
     const navItems = new Map;
@@ -2944,7 +2929,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.1";
+    const version = "[20261007] v1.2.2";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3765,7 +3750,7 @@ button { font: inherit; color: inherit; }
 
   // src/plugins/usage/statsDialog.ts
   var STATS_HOST_ID = "notionai-pp-usage-stats";
-  var CSS3 = `${CSS2}
+  var CSS3 = `${CSS}
 .sheet > .stack { gap: .875rem; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .toggle-row b { font-size: .875rem; font-weight: 500; }
@@ -4201,7 +4186,7 @@ button { font: inherit; }
 .summary:hover { background: var(--pill-hover); }
 .toggle {
   display: inline-flex; align-items: center; gap: 10px; min-height: 34px; padding: 7px 4px 7px 12px;
-  border: 0; color: inherit; background: transparent; cursor: inherit;
+  border: 0; border-radius: 999px; color: inherit; background: transparent; cursor: inherit;
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #808080; box-shadow: 0 0 0 3px rgba(128,128,128,.13); }
 .dot[data-status="ok"] { background: #35b46f; box-shadow: 0 0 0 3px rgba(53,180,111,.15); }
@@ -4212,7 +4197,9 @@ button { font: inherit; }
 .part[data-sep="billing"]::before {
   content: ""; display: inline-block; width: 1px; height: 14px; margin: 0 10px; vertical-align: -2px; background: var(--divider);
 }
-.chevron { color: var(--muted); font-size: 11px; }
+.chevron { display: inline-flex; color: var(--muted); transition: transform .15s; }
+.chevron svg.i { width: 13px; height: 13px; }
+.toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
   border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer;
@@ -4283,6 +4270,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var ICONS = {
     refresh: icon2('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
     stats: icon2('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
+    chevron: icon2('<path d="m6 9 6 6 6-6"/>'),
     minimize: icon2('<path d="M6 12h12"/>'),
     external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
@@ -4292,7 +4280,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   <button class="orb" type="button" hidden><span class="ring r-rolling"></span><span class="ring r-monthly"></span></button>
   <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span><span class="tip-today" hidden></span></span>
   <div class="summary">
-    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">▾</span></button>
+    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">${ICONS.chevron}</span></button>
     <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
   </div>
   <section class="card" hidden>
@@ -4474,7 +4462,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       this.q(".card").hidden = this.minimized || !this.expanded;
       const toggle = this.q(".toggle");
       toggle.setAttribute("aria-expanded", String(this.expanded));
-      this.q(".chevron").textContent = this.expanded ? "▴" : "▾";
       this.layout();
     }
     place(point) {
@@ -4814,7 +4801,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.1";
+    win[FLAG] = "[20261007] v1.2.2";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4824,7 +4811,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.1"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.2"} started`);
   }
   boot();
 })();

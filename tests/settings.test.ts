@@ -41,12 +41,13 @@ describe("settings dialog", () => {
         openSettings();
         card("chatNavigator").querySelector<HTMLButtonElement>(".switch")!.click();
         expect(getValue("chatNavigator", "enabled")).toBe(false);
-        const filter = root().querySelector<HTMLSelectElement>(".search-bar select")!;
-        filter.value = "disabled";
-        filter.dispatchEvent(new Event("change"));
+        const filter = (value: string) => {
+            root().querySelector<HTMLButtonElement>(".search-bar .dropdown")!.click();
+            root().querySelector<HTMLButtonElement>(`.layer-menu .menu-item[data-value="${value}"]`)!.click();
+        };
+        filter("disabled");
         expect([...root().querySelectorAll(".card")].map(c => c.getAttribute("data-plugin"))).toEqual(["chatNavigator"]);
-        filter.value = "all";
-        filter.dispatchEvent(new Event("change"));
+        filter("all");
         const search = root().querySelector<HTMLInputElement>(".search-bar input")!;
         search.value = "高亮";
         search.dispatchEvent(new Event("input"));
