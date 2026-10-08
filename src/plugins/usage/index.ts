@@ -80,8 +80,8 @@ export default definePlugin({
     name: "usageMeter",
     title: { zh: "AI 用量", en: "AI usage" },
     description: {
-        zh: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
-        en: "Shows Notion AI's 6-hour and monthly usage, plan and trial status, and logs monthly use per day. Minimized, two rings sit at the bottom center of the AI composer.",
+        zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比、重置时间和套餐，点击按日期查看用量。",
+        en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages, reset times and plan; click for usage by date.",
     },
     icon: Icons.gauge,
     tags: ["composer"],

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.10
+// @version      20261007.1.2.11
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2716,10 +2716,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     handlers.get(event).add(handler);
     return () => void handlers.get(event)?.delete(handler);
   }
-  function emit(event, payload) {
-    for (const handler of [...handlers.get(event) ?? []])
-      handler(payload);
-  }
 
   // src/plugins/settings/index.ts
   var SETTINGS_HOST_ID = "notionai-pp-settings";
@@ -2916,7 +2912,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.10";
+    const version = "[20261007] v1.2.11";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2949,7 +2945,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.10";
+    const version = "[20261007] v1.2.11";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3999,28 +3995,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       second: "2-digit"
     }).format(new Date(time));
   }
-  function formatReset(resetAt, now = Date.now(), used) {
-    if (resetAt === null) {
-      return used === 0 ? t("暂无用量，开始使用后显示倒计时", "No usage yet; the countdown appears once you use AI") : t("重置时间未知", "Reset time unavailable");
-    }
-    const diff = resetAt - now;
-    if (diff <= 0)
-      return t("即将重置", "Resetting soon");
-    const minutes = Math.max(1, Math.ceil(diff / 60000));
-    if (minutes > 1440) {
-      const hours = Math.floor(minutes / 60);
-      const d = Math.floor(hours / 24);
-      const h = hours % 24;
-      return h ? t(`${d} 天 ${h} 小时后重置`, `Resets in ${d}d ${h}h`) : t(`${d} 天后重置`, `Resets in ${d}d`);
-    }
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    if (h && m)
-      return t(`${h} 小时 ${m} 分钟后重置`, `Resets in ${h}h ${m}m`);
-    if (h)
-      return t(`${h} 小时后重置`, `Resets in ${h}h`);
-    return t(`${m} 分钟后重置`, `Resets in ${m}m`);
-  }
   function formatCountdown(resetAt, now = Date.now(), used) {
     if (resetAt === null)
       return used === 0 ? t("未开始计时", "not started") : "—";
@@ -4040,25 +4014,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     if (hours)
       return t(`${hours} 小时后重置`, `resets in ${hours}h`);
     return t(`${m} 分钟后重置`, `resets in ${m}m`);
-  }
-  function formatUpdated(time, now = Date.now()) {
-    if (time === null)
-      return t("尚未更新", "Not updated yet");
-    const s = Math.max(0, Math.floor((now - time) / 1000));
-    if (s < 10)
-      return t("刚刚更新", "Updated just now");
-    if (s < 60)
-      return t(`${s} 秒前更新`, `Updated ${s}s ago`);
-    if (s < 3600)
-      return t(`${Math.floor(s / 60)} 分钟前更新`, `Updated ${Math.floor(s / 60)}m ago`);
-    return t(`${Math.floor(s / 3600)} 小时前更新`, `Updated ${Math.floor(s / 3600)}h ago`);
-  }
-  function windowLabel(window2) {
-    if (window2 === "6h")
-      return t("当前窗口（6 小时）", "Current window (6h)");
-    if (window2 === "24h")
-      return t("当前窗口（24 小时）", "Current window (24h)");
-    return t("当前窗口", "Current window");
   }
   function planName(plan) {
     switch (plan) {
@@ -4124,18 +4079,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     const maxTop = Math.max(inset, viewport.height - size.height - inset);
     return { left: clamp(point.left, inset, maxLeft), top: clamp(point.top, inset, maxTop) };
   }
-  function anchorFromBox(box, viewport) {
-    const left = Math.max(0, box.left);
-    const right = Math.max(0, viewport.width - box.right);
-    const top = Math.max(0, box.top);
-    const bottom = Math.max(0, viewport.height - box.bottom);
-    return {
-      xEdge: left <= right ? "left" : "right",
-      xOffset: Math.round(Math.min(left, right)),
-      yEdge: top <= bottom ? "top" : "bottom",
-      yOffset: Math.round(Math.min(top, bottom))
-    };
-  }
   function pointFromAnchor(anchor, viewport, size) {
     return clampPoint({
       left: anchor.xEdge === "left" ? anchor.xOffset : viewport.width - anchor.xOffset - size.width,
@@ -4167,33 +4110,18 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       top: clamp(composer.bottom - orb.height - bottomInset, minTop, maxTop)
     }, viewport, orb);
   }
-  var dragDistanceReached = (dx, dy, threshold = 4) => dx * dx + dy * dy >= threshold * threshold;
 
   // src/plugins/usage/styles.ts
   var USAGE_CSS = `
 :host {
   all: initial;
-  --text: #f7f7f5; --muted: #a8a8a8; --faint: #929292; --border: rgba(255,255,255,.14);
-  --divider: rgba(255,255,255,.24); --pill: rgba(30,30,30,.94); --pill-hover: rgba(42,42,42,.97);
-  --card: rgba(28,28,28,.97); --btn: rgba(255,255,255,.08); --btn-hover: rgba(255,255,255,.14);
-  --row: rgba(255,255,255,.08); --bar: rgba(255,255,255,.10); --value: #c7c7c7; --billing: #d9c4ff;
-  --info: #c6dfff; --info-bg: rgba(58,132,217,.14); --error: #ffc5c5; --error-bg: rgba(221,70,70,.14);
-  --tip: #f7f7f5; --tip-bg: #2f2f2f; --tip-border: rgba(255,255,255,.12); --track: rgba(255,255,255,.18);
   --ring: #ada9a3; --orb-hover: rgba(255,255,255,.055); --warn: #d8a32f; --danger: #e56458;
-  --shadow: 0 14px 42px rgba(0,0,0,.36);
   position: fixed; top: 16px; left: auto; right: 16px; z-index: 2147483646;
   display: block; width: max-content; max-width: calc(100vw - 16px);
-  color: var(--text); font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   pointer-events: none;
 }
-:host([data-theme="light"]) {
-  --text: #252525; --muted: #686868; --faint: #787774; --border: rgba(15,15,15,.13); --divider: rgba(15,15,15,.2);
-  --pill: rgba(255,255,255,.96); --pill-hover: rgba(247,247,245,.98); --card: rgba(255,255,255,.98);
-  --btn: rgba(15,15,15,.06); --btn-hover: rgba(15,15,15,.11); --row: rgba(15,15,15,.09); --bar: rgba(15,15,15,.1);
-  --value: #555; --billing: #6940a5; --info: #24588f; --info-bg: rgba(46,119,190,.11); --error: #a62d2f;
-  --error-bg: rgba(190,46,48,.1); --tip: #252525; --tip-bg: #fff; --tip-border: rgba(15,15,15,.12);
-  --track: rgba(15,15,15,.16); --ring: #7d7a75; --orb-hover: rgba(55,53,47,.06); --shadow: 0 14px 38px rgba(15,15,15,.18);
-}
+:host([data-theme="light"]) { --ring: #7d7a75; --orb-hover: rgba(55,53,47,.06); }
 :host([hidden]) { display: none; }
 * { box-sizing: border-box; }
 button { font: inherit; }
@@ -4201,48 +4129,6 @@ button { font: inherit; }
 .shell { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
 :host([data-side="left"]) .shell { align-items: flex-start; }
 :host([data-docked]) .shell { align-items: center; }
-.icon-btn {
-  display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
-  border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer;
-}
-.icon-btn:hover:not(:disabled) { color: var(--text); background: var(--btn-hover); }
-.icon-btn:disabled { opacity: .45; cursor: default; }
-.icon-btn.round { border-radius: 50%; width: 24px; height: 24px; }
-svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.spin svg.i { animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
-.card {
-  pointer-events: auto; width: min(336px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow: auto;
-  border: 1px solid var(--border); border-radius: 14px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(18px);
-}
-.header { display: flex; align-items: center; justify-content: space-between; padding: 11px 10px 9px 14px; cursor: grab; touch-action: none; user-select: none; }
-.title { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
-.badge { padding: 1px 6px; border-radius: 6px; color: var(--muted); background: var(--btn); font-size: 10px; font-weight: 600; }
-.actions { display: flex; gap: 4px; }
-.notice { margin: 0 14px 10px; padding: 8px 9px; border-radius: 8px; color: var(--info); background: var(--info-bg); font-size: 11px; }
-.notice[data-kind="error"] { color: var(--error); background: var(--error-bg); }
-.metrics { padding: 0 14px 3px; }
-.metric { padding: 8px 0 11px; }
-.metric + .metric { border-top: 1px solid var(--row); }
-.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.label { font-weight: 620; }
-.value { color: var(--value); font-variant-numeric: tabular-nums; }
-.billing .value { color: var(--billing); font-weight: 650; }
-.bar { height: 5px; margin: 7px 0 5px; overflow: hidden; border-radius: 99px; background: var(--bar); }
-.fill { display: block; height: 100%; width: 0; border-radius: inherit; background: #3d9bff; transition: width .25s ease; }
-.fill[data-tone="warning"] { background: #dfa83a; }
-.fill[data-tone="danger"] { background: #ed6566; }
-.sub { color: var(--faint); font-size: 11px; }
-.m-today { cursor: pointer; }
-.m-today .value { color: var(--text); font-weight: 650; }
-.m-today:hover .sub { color: var(--text); }
-.footer {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 14px;
-  border-top: 1px solid var(--row); color: var(--faint); font-size: 10px;
-}
-/* Minimized: two Void++-style SVG progress rings (round caps, monochrome until a limit is near)
-   in one Notion icon button, with a Notion tooltip (same colors in both themes). */
 .orb {
   pointer-events: auto; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 5px;
   border: 0; border-radius: 6px; color: var(--ring); background: transparent; cursor: pointer; user-select: none;
@@ -4263,79 +4149,44 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
+:host(:not([data-docked])) .tip { left: auto; right: 0; transform: none; }
+:host(:not([data-docked])[data-side="left"]) .tip { left: 0; right: auto; }
 .tip-rows { display: grid; grid-template-columns: auto auto auto; row-gap: 2px; margin: 0; }
 .tip-rows dt { color: #ada9a3; }
 .tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
 .tip-rows dd.when { padding-left: 12px; text-align: left; font-weight: 400; color: #ada9a3; }
-.tip-rows .today { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
+.tip-rows .sep { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
+.tip-note { grid-column: 1 / -1; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); white-space: normal; max-width: 280px; }
+.tip-note[data-kind="error"] { color: #ff9b94; }
+.tip-hint { margin-top: 4px; color: #7d7a75; }
 .tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
-.dragging, .dragging * { cursor: grabbing !important; }
-@media (prefers-reduced-motion: reduce) { .fill, .tip { transition: none; } .spin svg.i { animation: none; opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .tip, .ring-fill { transition: none; } }
 `;
-  var icon2 = (paths) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${paths}</svg>`;
-  var ICONS = {
-    refresh: icon2('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
-    stats: icon2('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
-    minimize: icon2('<path d="M6 12h12"/>'),
-    external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
-    settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
-  };
   var RING_RADIUS = 7;
   var RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
   var RING = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle class="ring-track" cx="9" cy="9" r="${RING_RADIUS}"/><circle class="ring-fill" cx="9" cy="9" r="${RING_RADIUS}" transform="rotate(-90 9 9)" stroke-dasharray="${RING_CIRCUMFERENCE}" stroke-dashoffset="${RING_CIRCUMFERENCE}"/></svg>`;
   var USAGE_HTML = `
 <div class="shell">
-  <button class="orb" type="button" hidden>${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
-  <span class="tip" role="tooltip" hidden><dl class="tip-rows">
+  <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
+  <span class="tip" role="tooltip"><dl class="tip-rows">
     <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd><dd class="when tip-w-rolling"></dd>
     <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd><dd class="when tip-w-monthly"></dd>
-    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd><dd class="today when tip-w-today" hidden></dd>
-  </dl></span>
-  <section class="card" hidden>
-    <div class="header">
-      <div class="title"><span class="title-text"></span><span class="badge" hidden>preview</span></div>
-      <div class="actions">
-        <button class="icon-btn stats" type="button">${ICONS.stats}</button>
-        <button class="icon-btn settings" type="button">${ICONS.settings}</button>
-        <button class="icon-btn refresh" type="button">${ICONS.refresh}</button>
-        <button class="icon-btn minimize" type="button">${ICONS.minimize}</button>
-      </div>
-    </div>
-    <div class="notice" hidden></div>
-    <div class="metrics">
-      <div class="metric m-rolling"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
-      <div class="metric m-monthly"><div class="head"><span class="label"></span><span class="value"></span></div><div class="bar"><span class="fill"></span></div><div class="sub"></div></div>
-      <div class="metric m-today" role="button" tabindex="0" hidden><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
-      <div class="metric billing"><div class="head"><span class="label"></span><span class="value"></span></div><div class="sub"></div></div>
-    </div>
-    <div class="footer"><span class="updated"></span><button class="icon-btn native" type="button">${ICONS.external}</button></div>
-  </section>
+    <dt class="sep tip-l-today" hidden></dt><dd class="sep tip-v-today" hidden></dd><dd class="sep when tip-w-today" hidden></dd>
+    <dt class="sep tip-l-plan" hidden></dt><dd class="sep tip-v-plan" hidden></dd><dd class="sep when tip-w-plan" hidden></dd>
+    <dd class="tip-note" hidden></dd>
+  </dl><div class="tip-hint"></div></span>
 </div>`;
 
   // src/plugins/usage/ui.ts
   var HOST_ID = "notionai-pp-usage";
   var KEYS = {
     anchor: "notionai-pp:usage:anchor:v1",
-    minimized: "notionai-pp:usage:minimized:v1",
     legacyAnchor: "notion-ai-usage:position:v2"
   };
   var DEFAULT_ANCHOR = { xEdge: "right", xOffset: 16, yEdge: "top", yOffset: 16 };
-  var TIP_SPACE = 64;
-  var CLICK_GUARD_MS = 500;
+  var TIP_SPACE = 140;
   var TICK_MS = 15000;
-  function readFlag(key) {
-    try {
-      return pageWindow.localStorage.getItem(key) === "1";
-    } catch {
-      return false;
-    }
-  }
-  function writeFlag(key, value) {
-    try {
-      pageWindow.localStorage.setItem(key, value ? "1" : "0");
-    } catch {}
-  }
   function readAnchor() {
     try {
       const storage = pageWindow.localStorage;
@@ -4350,10 +4201,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     stats;
     overlay;
     q;
-    minimized = readFlag(KEYS.minimized);
     anchor = readAnchor() ?? DEFAULT_ANCHOR;
-    dragging = false;
-    suppressClickUntil = 0;
     tracker = new ComposerTracker((box) => this.layout(box));
     cleanups = [];
     tipToday = false;
@@ -4365,14 +4213,21 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const { root } = this.overlay;
       this.q = (selector) => root.querySelector(selector);
       this.bind();
-      this.applyMode();
       this.render();
       this.cleanups.push(service.onChange(() => this.render()));
       this.cleanups.push(onRouteChange(() => this.layout()));
       this.tracker.start();
       const tick = setInterval(() => this.render(), TICK_MS);
       const onResize = () => this.layout();
-      const onStorage = (event) => this.onStorage(event);
+      const onStorage = (event) => {
+        if (event.key !== KEYS.anchor)
+          return;
+        const anchor = parseAnchor(safeJson(event.newValue ?? ""));
+        if (anchor) {
+          this.anchor = anchor;
+          this.layout();
+        }
+      };
       pageWindow.addEventListener("resize", onResize, { passive: true });
       pageWindow.addEventListener("storage", onStorage);
       this.cleanups.push(() => {
@@ -4392,17 +4247,12 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       return this.overlay.host;
     }
     bind() {
-      this.q(".minimize").addEventListener("click", () => {
-        if (Date.now() < this.suppressClickUntil)
-          return;
-        this.setMinimized(true);
-        this.q(".orb").focus({ preventScroll: true });
-      });
-      this.q(".orb").addEventListener("click", () => {
-        this.setMinimized(false);
-        this.q(".minimize").focus({ preventScroll: true });
-      });
       const orb = this.q(".orb");
+      orb.addEventListener("click", () => {
+        if (this.service.state.canRefresh)
+          this.service.refreshNow();
+        openStats(this.stats);
+      });
       const showToday = (value) => {
         clearTimeout(this.tipTimer);
         if (!value || !this.stats.enabled())
@@ -4417,23 +4267,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       orb.addEventListener("pointerleave", () => showToday(false));
       orb.addEventListener("focus", () => showToday(true));
       orb.addEventListener("blur", () => showToday(false));
-      const today = this.q(".m-today");
-      today.addEventListener("click", () => openStats(this.stats));
-      today.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" && event.key !== " ")
-          return;
-        event.preventDefault();
-        openStats(this.stats);
-      });
-      this.q(".stats").addEventListener("click", () => openStats(this.stats));
-      this.q(".refresh").addEventListener("click", () => this.service.refreshNow());
-      this.q(".settings").addEventListener("click", () => emit("openSettings", undefined));
-      this.q(".native").addEventListener("click", () => {
-        const url = new URL(pageWindow.location.href);
-        url.searchParams.set("target", "aiusage");
-        pageWindow.location.assign(url.href);
-      });
-      this.installDrag(this.q(".header"), "button");
     }
     setTipToday(value) {
       if (value)
@@ -4447,17 +4280,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const day = readDay(this.stats.space());
       return day ? statDelta(usedOn(day) ?? 0) : null;
     }
-    setMinimized(value) {
-      this.minimized = value;
-      writeFlag(KEYS.minimized, value);
-      this.applyMode();
-    }
-    applyMode() {
-      this.q(".orb").hidden = !this.minimized;
-      this.q(".tip").hidden = !this.minimized;
-      this.q(".card").hidden = this.minimized;
-      this.layout();
-    }
     place(point) {
       const { host } = this.overlay;
       host.style.left = `${Math.round(point.left)}px`;
@@ -4465,133 +4287,35 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       host.style.right = "auto";
     }
     layout(composer = this.tracker.current) {
-      if (this.dragging)
-        return;
       const { host } = this.overlay;
       host.hidden = isAiRoute() && !composer;
       if (host.hidden)
         return;
       const vp = viewport();
-      if (this.minimized) {
-        const orb = boxOf(this.q(".orb"));
-        const point = composer ? dockPoint(composer, orb, vp) : null;
-        host.toggleAttribute("data-docked", !!point);
-        if (point) {
-          host.dataset.side = "left";
-          this.place(point);
-          host.toggleAttribute("data-tip-up", vp.height - (point.top + orb.height) < TIP_SPACE);
-          return;
-        }
-      } else {
-        host.removeAttribute("data-docked");
-      }
-      const handle = this.q(this.minimized ? ".orb" : ".card");
-      host.dataset.side = this.anchor.xEdge;
-      const size = boxOf(handle);
-      const target = pointFromAnchor(this.anchor, vp, size);
+      const orb = this.q(".orb");
+      const size = boxOf(orb);
+      const point = composer ? dockPoint(composer, size, vp) : null;
+      host.toggleAttribute("data-docked", !!point);
+      host.dataset.side = point ? "left" : this.anchor.xEdge;
+      const target = point ?? pointFromAnchor(this.anchor, vp, size);
       host.toggleAttribute("data-tip-up", vp.height - (target.top + size.height) < TIP_SPACE);
       this.place({ left: 0, top: 0 });
       const hostBox = boxOf(host);
-      const handleNow = boxOf(handle);
-      this.place({ left: target.left - (handleNow.left - hostBox.left), top: target.top - (handleNow.top - hostBox.top) });
+      const orbNow = boxOf(orb);
+      this.place({ left: target.left - (orbNow.left - hostBox.left), top: target.top - (orbNow.top - hostBox.top) });
     }
-    installDrag(handle, ignore) {
-      handle.addEventListener("pointerdown", (event) => {
-        if (event.button !== 0 || !event.isPrimary || this.minimized)
-          return;
-        if (event.target.closest(ignore))
-          return;
-        const { host } = this.overlay;
-        const start = { x: event.clientX, y: event.clientY };
-        const origin = boxOf(host);
-        const shell = this.q(".shell");
-        let moved = false;
-        const move = (e) => {
-          if (e.pointerId !== event.pointerId)
-            return;
-          const dx = e.clientX - start.x;
-          const dy = e.clientY - start.y;
-          if (!moved && !dragDistanceReached(dx, dy))
-            return;
-          moved = true;
-          this.dragging = true;
-          shell.classList.add("dragging");
-          const vp = viewport();
-          this.place({
-            left: Math.min(Math.max(8, origin.left + dx), Math.max(8, vp.width - origin.width - 8)),
-            top: Math.min(Math.max(8, origin.top + dy), Math.max(8, vp.height - origin.height - 8))
-          });
-        };
-        const end = (e) => {
-          if (e instanceof PointerEvent && e.pointerId !== event.pointerId)
-            return;
-          pageWindow.removeEventListener("pointermove", move, true);
-          pageWindow.removeEventListener("pointerup", end, true);
-          pageWindow.removeEventListener("pointercancel", end, true);
-          shell.classList.remove("dragging");
-          this.dragging = false;
-          if (!moved)
-            return;
-          this.suppressClickUntil = Date.now() + CLICK_GUARD_MS;
-          if (e.type === "pointerup") {
-            this.anchor = anchorFromBox(boxOf(this.q(".card")), viewport());
-            try {
-              pageWindow.localStorage.setItem(KEYS.anchor, JSON.stringify(this.anchor));
-            } catch {}
-          }
-          this.layout();
-        };
-        pageWindow.addEventListener("pointermove", move, true);
-        pageWindow.addEventListener("pointerup", end, true);
-        pageWindow.addEventListener("pointercancel", end, true);
-      });
-    }
-    onStorage(event) {
-      if (event.key === KEYS.anchor) {
-        const anchor = parseAnchor(safeJson(event.newValue ?? ""));
-        if (anchor && !this.dragging) {
-          this.anchor = anchor;
-          this.layout();
-        }
+    setRow(key, label, value, when, visible = true) {
+      for (const [part, text] of [["l", label], ["v", value], ["w", when]]) {
+        const cell = this.q(`.tip-${part}-${key}`);
+        cell.textContent = text;
+        cell.hidden = !visible;
       }
-    }
-    renderMeter(selector, meter, label, now) {
-      const row = this.q(selector);
-      row.hidden = !meter;
-      if (!meter)
-        return;
-      row.querySelector(".label").textContent = label;
-      row.querySelector(".value").textContent = t(`${formatPercent(meter.percent)} 已使用`, `${formatPercent(meter.percent)} used`);
-      row.querySelector(".sub").textContent = formatReset(meter.resetAt, now, meter.used);
-      const fill = row.querySelector(".fill");
-      fill.style.width = `${meter.percent}%`;
-      fill.dataset.tone = toneOf(meter.percent);
-      row.title = t(`${meter.used} / ${meter.limit}；重置时间：${formatAbsolute(meter.resetAt)}`, `${meter.used} / ${meter.limit}; resets: ${formatAbsolute(meter.resetAt)}`);
     }
     render() {
       const now = Date.now();
-      const { snapshot, loading, error, canRefresh, spaceId } = this.service.state;
+      const { snapshot, loading, error, spaceId } = this.service.state;
       const billing = visibleBilling(this.service.state.billing, now);
       const views = meterViews(snapshot, now);
-      this.q(".title-text").textContent = t("Notion AI 用量", "Notion AI Usage");
-      const badge = this.q(".badge");
-      badge.hidden = !snapshot?.preview;
-      badge.title = t("Notion 当前将此额度标记为 preview。", "Notion currently marks this allowance as preview.");
-      const refresh = this.q(".refresh");
-      refresh.disabled = !canRefresh;
-      refresh.classList.toggle("spin", loading);
-      refresh.setAttribute("aria-label", loading ? t("正在读取", "Loading") : t("刷新", "Refresh"));
-      refresh.title = refresh.getAttribute("aria-label");
-      for (const [selector, zh, en] of [
-        [".minimize", "最小化至输入框底部", "Minimize to the composer"],
-        [".settings", "NotionAI++ 设置", "NotionAI++ settings"],
-        [".stats", "按日期查看用量", "Usage by date"],
-        [".native", "打开原生用量页", "Open native Usage page"]
-      ]) {
-        const button = this.q(selector);
-        button.setAttribute("aria-label", t(zh, en));
-        button.title = t(zh, en);
-      }
       for (const [selector, view] of [[".r-rolling", views.rolling], [".r-monthly", views.monthly]]) {
         const ring = this.q(selector);
         const percent = Math.min(100, Math.max(0, view.percent ?? 0));
@@ -4599,70 +4323,36 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         ring.toggleAttribute("data-empty", view.percent == null || view.percent <= 0);
         ring.dataset.tone = view.tone;
       }
+      const applicable = !!snapshot && snapshot.status !== "not_applicable";
+      const rolling = applicable ? snapshot.rolling : null;
+      const monthly = applicable ? activeMonthly(snapshot, now) : null;
       const rollingText = formatPercent(views.rolling.percent);
       const monthlyText = formatPercent(views.monthly.percent);
+      this.setRow("rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : "");
+      this.setRow("monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : "");
       const todayText = this.todayText();
-      const showToday = this.tipToday && todayText !== null;
-      const rolling = snapshot && snapshot.status !== "not_applicable" ? snapshot.rolling : null;
-      const monthly = snapshot && snapshot.status !== "not_applicable" ? activeMonthly(snapshot, now) : null;
-      for (const [key, label, value, when] of [
-        ["rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : ""],
-        ["monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : ""],
-        ["today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly")]
-      ]) {
-        this.q(`.tip-l-${key}`).textContent = label;
-        this.q(`.tip-v-${key}`).textContent = value;
-        this.q(`.tip-w-${key}`).textContent = when;
-      }
-      this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = this.q(".tip-w-today").hidden = !showToday;
-      const todayRow = this.q(".m-today");
-      todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
-      todayRow.querySelector(".label").textContent = t("今日用量", "Used today");
-      todayRow.querySelector(".value").textContent = t(`${todayText} 月度额度`, `${todayText} of monthly`);
-      todayRow.querySelector(".sub").textContent = t("点击按日期查看用量 →", "Click for usage by date →");
-      this.q(".orb").setAttribute("aria-label", !snapshot ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore") : snapshot.status === "not_applicable" ? t("AI 用量：6 小时与月度均不适用，点击恢复", "AI usage: 6h and Monthly are not applicable, click to restore") : snapshot.status === "rate_limited" ? t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，已达上限，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, limit reached, click to restore`) : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
-      const notice = this.q(".notice");
-      let noticeText = "";
-      let noticeKind = error ? "error" : "info";
+      this.setRow("today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly"), this.tipToday && todayText !== null && !!monthly);
+      const plan = billing ? billingRow(billing, now) : null;
+      this.setRow("plan", plan?.label ?? "", plan?.value ?? "", plan?.detail ?? "", !!plan);
+      let note = "";
+      let kind = error ? "error" : "info";
       if (!snapshot) {
-        noticeText = error || (spaceId ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…") : t("等待 Notion 初始化当前工作区；也可以打开原生用量页触发读取。", "Waiting for Notion to initialize this workspace. You can also open the native Usage page."));
-        this.renderMeter(".m-rolling", null, "", now);
-        this.renderMeter(".m-monthly", null, "", now);
+        note = error || (loading || spaceId ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…") : t("等待 Notion 初始化当前工作区", "Waiting for Notion to set up this workspace"));
       } else if (snapshot.status === "not_applicable") {
-        noticeText = error || t("Notion 返回 not_applicable：当前账户或套餐没有可展示的 AI 用量窗口。", "Notion returned not_applicable: this account or plan has no AI usage window to display.");
-        this.renderMeter(".m-rolling", null, "", now);
-        this.renderMeter(".m-monthly", null, "", now);
-      } else {
-        this.renderMeter(".m-rolling", snapshot.rolling, windowLabel(snapshot.rolling.window), now);
-        this.renderMeter(".m-monthly", monthly, t("月度用量", "Monthly usage"), now);
-        if (snapshot.status === "rate_limited") {
-          noticeKind = "error";
-          noticeText = snapshot.limitedBy === "billing_period" ? t("已达到月度额度上限。", "The monthly allowance has been reached.") : t("已达到当前滚动窗口的额度上限。", "The rolling-window allowance has been reached.");
-          if (error)
-            noticeText += ` ${error}`;
-        } else if (error) {
-          noticeText = t(`${error}（继续显示最后一次有效数据）`, `${error} (showing the last valid data)`);
-        }
+        note = error || t("当前账户或套餐没有 AI 用量窗口", "This account or plan has no AI usage window");
+      } else if (snapshot.status === "rate_limited") {
+        kind = "error";
+        note = snapshot.limitedBy === "billing_period" ? t("已达到月度额度上限", "The monthly allowance has been reached") : t("已达到 6 小时额度上限", "The 6-hour allowance has been reached");
+      } else if (error) {
+        note = t(`${error}（显示最后一次有效数据）`, `${error} (showing the last valid data)`);
       }
-      notice.hidden = !noticeText;
-      notice.dataset.kind = noticeKind;
-      notice.textContent = noticeText;
-      const billingRowEl = this.q(".billing");
-      billingRowEl.hidden = !billing;
-      if (billing) {
-        const row = billingRow(billing, now);
-        billingRowEl.querySelector(".label").textContent = row.label;
-        billingRowEl.querySelector(".value").textContent = row.value;
-        const sub = billingRowEl.querySelector(".sub");
-        sub.textContent = row.detail;
-        sub.hidden = !row.detail;
-        billingRowEl.dataset.kind = billing.kind;
-        billingRowEl.title = row.tooltip;
-      }
-      const updatedAt = Math.max(snapshot?.updatedAt ?? 0, billing?.updatedAt ?? 0) || null;
-      this.q(".updated").textContent = updatedAt ? t(`${formatUpdated(updatedAt, now)} · Notion 同源接口`, `${formatUpdated(updatedAt, now)} · Notion same-origin API`) : t("尚未取得有效数据", "No valid data yet");
-      if (!this.minimized)
-        this.layout();
+      const noteEl = this.q(".tip-note");
+      noteEl.textContent = note;
+      noteEl.hidden = !note;
+      noteEl.dataset.kind = kind;
+      this.q(".tip-hint").textContent = t("点击按日期查看用量", "Click for usage by date");
+      this.q(".orb").setAttribute("aria-label", !applicable ? t("AI 用量，点击按日期查看", "AI usage, click for usage by date") : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击按日期查看`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click for usage by date`));
+      this.layout();
     }
   }
 
@@ -4731,8 +4421,8 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     name: "usageMeter",
     title: { zh: "AI 用量", en: "AI usage" },
     description: {
-      zh: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
-      en: "Shows Notion AI's 6-hour and monthly usage, plan and trial status, and logs monthly use per day. Minimized, two rings sit at the bottom center of the AI composer."
+      zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比、重置时间和套餐，点击按日期查看用量。",
+      en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages, reset times and plan; click for usage by date."
     },
     icon: Icons.gauge,
     tags: ["composer"],
@@ -4771,7 +4461,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.10";
+    win[FLAG] = "[20261007] v1.2.11";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4781,7 +4471,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.10"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.11"} started`);
   }
   boot();
 })();
