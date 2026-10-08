@@ -12,7 +12,7 @@ import { pageWindow, t } from "@utils/page";
 
 import { visibleBilling } from "./billing";
 import { ComposerTracker } from "./composer";
-import { billingRow, billingSummary, formatPercent, formatReset, formatUpdated, windowLabel } from "./format";
+import { billingRow, billingSummary, formatAbsolute, formatPercent, formatReset, formatUpdated, windowLabel } from "./format";
 import { type Anchor, anchorFromBox, dockPoint, dragDistanceReached, opensUpward, parseAnchor, type Point, pointFromAnchor } from "./geometry";
 import type { UsageService } from "./service";
 import { USAGE_CSS, USAGE_HTML } from "./styles";
@@ -246,11 +246,14 @@ export class UsageWidget {
         if (!meter) return;
         row.querySelector(".label")!.textContent = label;
         row.querySelector(".value")!.textContent = t(`${formatPercent(meter.percent)} 已使用`, `${formatPercent(meter.percent)} used`);
-        row.querySelector(".sub")!.textContent = formatReset(meter.resetAt, now);
+        row.querySelector(".sub")!.textContent = formatReset(meter.resetAt, now, meter.used);
         const fill = row.querySelector<HTMLElement>(".fill")!;
         fill.style.width = `${meter.percent}%`;
         fill.dataset.tone = toneOf(meter.percent);
-        row.title = `${meter.used} / ${meter.limit}`;
+        row.title = t(
+            `${meter.used} / ${meter.limit}；重置时间：${formatAbsolute(meter.resetAt)}`,
+            `${meter.used} / ${meter.limit}; resets: ${formatAbsolute(meter.resetAt)}`,
+        );
     }
 
     private renderSummary(parts: { text: string; sep?: "usage" | "billing" }[]) {
@@ -276,7 +279,9 @@ export class UsageWidget {
         const views = meterViews(snapshot, now);
 
         this.q(".title-text").textContent = t("Notion AI 用量", "Notion AI Usage");
-        this.q(".badge").hidden = !snapshot?.preview;
+        const badge = this.q(".badge");
+        badge.hidden = !snapshot?.preview;
+        badge.title = t("Notion 当前将此额度标记为 preview。", "Notion currently marks this allowance as preview.");
         const refresh = this.q<HTMLButtonElement>(".refresh");
         refresh.disabled = !canRefresh;
         refresh.classList.toggle("spin", loading);
@@ -301,7 +306,13 @@ export class UsageWidget {
         const monthlyText = formatPercent(views.monthly.percent);
         this.q(".tip-title").textContent = t("AI 用量", "AI usage");
         this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
-        this.q(".orb").setAttribute("aria-label", t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
+        this.q(".orb").setAttribute("aria-label", !snapshot
+            ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore")
+            : snapshot.status === "not_applicable"
+                ? t("AI 用量：6 小时与月度均不适用，点击恢复", "AI usage: 6h and Monthly are not applicable, click to restore")
+                : snapshot.status === "rate_limited"
+                    ? t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，已达上限，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, limit reached, click to restore`)
+                    : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
 
         const notice = this.q(".notice");
         const dot = this.q(".dot");
@@ -313,13 +324,13 @@ export class UsageWidget {
             dot.dataset.status = error ? "error" : "waiting";
             noticeText = error || (spaceId
                 ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…")
-                : t("等待 Notion 初始化当前工作区…", "Waiting for Notion to initialize this workspace…"));
+                : t("等待 Notion 初始化当前工作区；也可以打开原生用量页触发读取。", "Waiting for Notion to initialize this workspace. You can also open the native Usage page."));
             this.renderMeter(".m-rolling", null, "", now);
             this.renderMeter(".m-monthly", null, "", now);
         } else if (snapshot.status === "not_applicable") {
             this.renderSummary([{ text: t("不适用", "Not applicable") }, ...billingPiece]);
             dot.dataset.status = "neutral";
-            noticeText = error || t("当前账户或套餐没有可展示的 AI 用量窗口。", "This account or plan has no AI usage window to display.");
+            noticeText = error || t("Notion 返回 not_applicable：当前账户或套餐没有可展示的 AI 用量窗口。", "Notion returned not_applicable: this account or plan has no AI usage window to display.");
             this.renderMeter(".m-rolling", null, "", now);
             this.renderMeter(".m-monthly", null, "", now);
         } else {
@@ -355,6 +366,8 @@ export class UsageWidget {
             const sub = billingRowEl.querySelector<HTMLElement>(".sub")!;
             sub.textContent = row.detail;
             sub.hidden = !row.detail;
+            billingRowEl.dataset.kind = billing.kind;
+            billingRowEl.title = row.tooltip;
         }
         const updatedAt = Math.max(snapshot?.updatedAt ?? 0, billing?.updatedAt ?? 0) || null;
         this.q(".updated").textContent = updatedAt

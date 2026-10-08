@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.0.1
+// @version      20261007.1.0.2
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1612,6 +1612,7 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
     mode: {
       type: "select",
       label: "轮播方式 / Rotation",
+      description: "手动模式：回到首页后点击标题即可切换；定时模式：离开首页会自动停止计时 / Manual: click the title on home; Timer: pauses when you leave home",
       default: "refresh",
       options: [
         { value: "refresh", label: "刷新/进入首页时切换 / On refresh or entering home" },
@@ -1824,11 +1825,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 
   // src/plugins/navigator/effects.ts
   var EFFECTS = [
-    { value: "border", zh: "高亮边框", en: "Highlight border" },
-    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
-    { value: "fade", zh: "背景淡入淡出", en: "Background fade" },
-    { value: "jiggle", zh: "水平抖动", en: "Jiggle" },
-    { value: "none", zh: "无（仅滚动）", en: "None (scroll only)" }
+    { value: "none", zh: "无效果（纯平滑滚动）", en: "None (scroll only)", hint: "仅滚动 / scroll only" },
+    { value: "border", zh: "高亮边框", en: "Highlight border", hint: "彩色边框，持续 2 秒 / 2 s" },
+    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow", hint: "边框脉冲闪烁，持续 2 秒 / 2 s" },
+    { value: "fade", zh: "淡入淡出", en: "Fade", hint: "背景淡入淡出，持续 1.5 秒 / 1.5 s" },
+    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle", hint: "水平微抖动 / jiggle" }
   ];
   var running2 = new WeakMap;
   var KEYFRAMES = {
@@ -1872,6 +1873,38 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       easing: "ease-in-out"
     });
     running2.set(element, animation);
+  }
+  var PREVIEW_ID = "notionai-pp-effect-preview";
+  function previewEffect(effect) {
+    document.getElementById(PREVIEW_ID)?.remove();
+    const info = EFFECTS.find((item) => item.value === effect);
+    const holder = document.createElement("div");
+    holder.id = PREVIEW_ID;
+    Object.assign(holder.style, {
+      position: "fixed",
+      left: "0",
+      right: "0",
+      top: "24px",
+      zIndex: "2147483647",
+      display: "flex",
+      justifyContent: "center",
+      pointerEvents: "none"
+    });
+    const card = document.createElement("div");
+    card.textContent = info ? `${info.zh} / ${info.en}` : effect;
+    Object.assign(card.style, {
+      padding: "14px 22px",
+      borderRadius: "10px",
+      background: "#fff",
+      color: "#37352f",
+      font: "500 14px/1.4 ui-sans-serif, system-ui, sans-serif",
+      boxShadow: "0 8px 30px rgba(0,0,0,.18)"
+    });
+    holder.append(card);
+    document.body.append(holder);
+    playEffect(card, effect);
+    const duration = effect === "none" ? 600 : KEYFRAMES[effect].duration;
+    setTimeout(() => holder.remove(), duration + 600);
   }
 
   // src/plugins/navigator/messages.ts
@@ -2089,7 +2122,14 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       type: "select",
       label: "跳转定位效果 / Jump effect",
       default: "border",
-      options: EFFECTS.map((effect) => ({ value: effect.value, label: `${effect.zh} / ${effect.en}` }))
+      description: "选择后立即保存，点「预览」查看效果演示 / Saved on change; use Preview to see it",
+      options: EFFECTS.map((effect) => ({ value: effect.value, label: `${effect.zh} / ${effect.en}（${effect.hint}）` }))
+    },
+    preview: {
+      type: "action",
+      label: "预览当前效果 / Preview effect",
+      button: "预览 / Preview",
+      run: () => previewEffect(settings4.store.effect)
     }
   });
   var overlay2 = null;
@@ -2147,7 +2187,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       button.dataset.role = message.role;
       const mark = document.createElement("span");
       mark.className = "mark";
-      mark.textContent = message.role === "user" ? "❓" : "↳";
+      mark.textContent = message.role === "user" ? "❓" : "\uD83E\uDD16";
       const label = document.createElement("span");
       label.className = "label";
       label.textContent = summarize(message.text);
@@ -2682,7 +2722,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
   function aboutTab() {
-    const version = "[20261007] v1.0.1";
+    const version = "[20261007] v1.0.2";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2714,7 +2754,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.0.1";
+    const version = "[20261007] v1.0.2";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3362,9 +3402,22 @@ button { font: inherit; color: inherit; }
       minute: "2-digit"
     }).format(new Date(time));
   }
-  function formatReset(resetAt, now = Date.now()) {
-    if (resetAt === null)
-      return t("重置时间未知", "Reset time unavailable");
+  function formatAbsolute(time) {
+    if (time === null || !Number.isFinite(time))
+      return t("未知", "Unknown");
+    return new Intl.DateTimeFormat(locale(), {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).format(new Date(time));
+  }
+  function formatReset(resetAt, now = Date.now(), used) {
+    if (resetAt === null) {
+      return used === 0 ? t("暂无用量，开始使用后显示倒计时", "No usage yet; the countdown appears once you use AI") : t("重置时间未知", "Reset time unavailable");
+    }
     const diff = resetAt - now;
     if (diff <= 0)
       return t("即将重置", "Resetting soon");
@@ -3445,19 +3498,20 @@ button { font: inherit; color: inherit; }
   function billingRow(status, now = Date.now()) {
     switch (status.kind) {
       case "none":
-        return { label: t("Free 套餐", "Free Plan"), value: t("未订阅", "No subscription"), detail: "" };
+        return { label: t("Free 套餐", "Free Plan"), value: t("未订阅", "No subscription"), detail: "", tooltip: t("Free 套餐：未订阅", "Free Plan: No subscription") };
       case "trial":
         return {
           label: t("Business 试用", "Business Trial"),
           value: trialEndsToday(status, now) ? t("今天结束", "Ends today") : t(`剩余 ${trialDaysLeft(status, now)} 天`, `${trialDaysLeft(status, now)} days left`),
-          detail: t(`${formatDate(status.endAt, true)} 结束`, `Ends ${formatDate(status.endAt, true)}`)
+          detail: t(`${formatDate(status.endAt, true)} 结束`, `Ends ${formatDate(status.endAt, true)}`),
+          tooltip: t(`Business 试用：${formatAbsolute(status.startAt)} — ${formatAbsolute(status.endAt)}`, `Business Trial: ${formatAbsolute(status.startAt)} — ${formatAbsolute(status.endAt)}`)
         };
-      case "subscription":
-        return {
-          label: t(`${planName(status.plan)} 套餐`, `${planName(status.plan)} Plan`),
-          value: statusName(status.status),
-          detail: status.periodEndAt === null ? "" : t(`当前周期至 ${formatDate(status.periodEndAt, true)}`, `Current period ends ${formatDate(status.periodEndAt, true)}`)
-        };
+      case "subscription": {
+        const label = t(`${planName(status.plan)} 套餐`, `${planName(status.plan)} Plan`);
+        const value = statusName(status.status);
+        const detail = status.periodEndAt === null ? "" : t(`当前周期至 ${formatDate(status.periodEndAt, true)}`, `Current period ends ${formatDate(status.periodEndAt, true)}`);
+        return { label, value, detail, tooltip: detail ? t(`${label}：${value}；${detail}`, `${label}: ${value}; ${detail}`) : t(`${label}：${value}`, `${label}: ${value}`) };
+      }
     }
   }
 
@@ -3898,11 +3952,11 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         return;
       row.querySelector(".label").textContent = label;
       row.querySelector(".value").textContent = t(`${formatPercent(meter.percent)} 已使用`, `${formatPercent(meter.percent)} used`);
-      row.querySelector(".sub").textContent = formatReset(meter.resetAt, now);
+      row.querySelector(".sub").textContent = formatReset(meter.resetAt, now, meter.used);
       const fill = row.querySelector(".fill");
       fill.style.width = `${meter.percent}%`;
       fill.dataset.tone = toneOf(meter.percent);
-      row.title = `${meter.used} / ${meter.limit}`;
+      row.title = t(`${meter.used} / ${meter.limit}；重置时间：${formatAbsolute(meter.resetAt)}`, `${meter.used} / ${meter.limit}; resets: ${formatAbsolute(meter.resetAt)}`);
     }
     renderSummary(parts) {
       const container = this.q(".text");
@@ -3927,7 +3981,9 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const billingPart = billingSummary(billing, now);
       const views = meterViews(snapshot, now);
       this.q(".title-text").textContent = t("Notion AI 用量", "Notion AI Usage");
-      this.q(".badge").hidden = !snapshot?.preview;
+      const badge = this.q(".badge");
+      badge.hidden = !snapshot?.preview;
+      badge.title = t("Notion 当前将此额度标记为 preview。", "Notion currently marks this allowance as preview.");
       const refresh = this.q(".refresh");
       refresh.disabled = !canRefresh;
       refresh.classList.toggle("spin", loading);
@@ -3951,7 +4007,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const monthlyText = formatPercent(views.monthly.percent);
       this.q(".tip-title").textContent = t("AI 用量", "AI usage");
       this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
-      this.q(".orb").setAttribute("aria-label", t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
+      this.q(".orb").setAttribute("aria-label", !snapshot ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore") : snapshot.status === "not_applicable" ? t("AI 用量：6 小时与月度均不适用，点击恢复", "AI usage: 6h and Monthly are not applicable, click to restore") : snapshot.status === "rate_limited" ? t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，已达上限，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, limit reached, click to restore`) : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
       const notice = this.q(".notice");
       const dot = this.q(".dot");
       const billingPiece = billingPart ? [{ text: billingPart, sep: "billing" }] : [];
@@ -3960,13 +4016,13 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       if (!snapshot) {
         this.renderSummary([{ text: loading ? t("读取中", "Loading") : t("等待", "Waiting") }, ...billingPiece]);
         dot.dataset.status = error ? "error" : "waiting";
-        noticeText = error || (spaceId ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…") : t("等待 Notion 初始化当前工作区…", "Waiting for Notion to initialize this workspace…"));
+        noticeText = error || (spaceId ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…") : t("等待 Notion 初始化当前工作区；也可以打开原生用量页触发读取。", "Waiting for Notion to initialize this workspace. You can also open the native Usage page."));
         this.renderMeter(".m-rolling", null, "", now);
         this.renderMeter(".m-monthly", null, "", now);
       } else if (snapshot.status === "not_applicable") {
         this.renderSummary([{ text: t("不适用", "Not applicable") }, ...billingPiece]);
         dot.dataset.status = "neutral";
-        noticeText = error || t("当前账户或套餐没有可展示的 AI 用量窗口。", "This account or plan has no AI usage window to display.");
+        noticeText = error || t("Notion 返回 not_applicable：当前账户或套餐没有可展示的 AI 用量窗口。", "Notion returned not_applicable: this account or plan has no AI usage window to display.");
         this.renderMeter(".m-rolling", null, "", now);
         this.renderMeter(".m-monthly", null, "", now);
       } else {
@@ -4000,6 +4056,8 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         const sub = billingRowEl.querySelector(".sub");
         sub.textContent = row.detail;
         sub.hidden = !row.detail;
+        billingRowEl.dataset.kind = billing.kind;
+        billingRowEl.title = row.tooltip;
       }
       const updatedAt = Math.max(snapshot?.updatedAt ?? 0, billing?.updatedAt ?? 0) || null;
       this.q(".updated").textContent = updatedAt ? t(`${formatUpdated(updatedAt, now)} · Notion 同源接口`, `${formatUpdated(updatedAt, now)} · Notion same-origin API`) : t("尚未取得有效数据", "No valid data yet");
@@ -4048,7 +4106,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.0.1";
+    win[FLAG] = "[20261007] v1.0.2";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4058,7 +4116,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.0.1"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.0.2"} started`);
   }
   boot();
 })();

@@ -13,7 +13,7 @@ import { scrollParentOf, viewport, visibleBox } from "@utils/dom";
 import { isAiRoute, t } from "@utils/page";
 import { debounce, frameThrottle } from "@utils/time";
 
-import { EFFECTS, type Effect, playEffect } from "./effects";
+import { EFFECTS, type Effect, playEffect, previewEffect } from "./effects";
 import { type ChatMessage, collectMessages, summarize } from "./messages";
 import { NAV_CSS, NAV_HTML } from "./styles";
 import { Icons } from "@utils/icons";
@@ -33,7 +33,14 @@ export const settings = definePluginSettings({
         type: "select",
         label: "跳转定位效果 / Jump effect",
         default: "border",
-        options: EFFECTS.map(effect => ({ value: effect.value, label: `${effect.zh} / ${effect.en}` })),
+        description: "选择后立即保存，点「预览」查看效果演示 / Saved on change; use Preview to see it",
+        options: EFFECTS.map(effect => ({ value: effect.value, label: `${effect.zh} / ${effect.en}（${effect.hint}）` })),
+    },
+    preview: {
+        type: "action",
+        label: "预览当前效果 / Preview effect",
+        button: "预览 / Preview",
+        run: () => previewEffect(settings.store.effect as Effect),
     },
 });
 
@@ -92,7 +99,7 @@ function build() {
         button.dataset.role = message.role;
         const mark = document.createElement("span");
         mark.className = "mark";
-        mark.textContent = message.role === "user" ? "❓" : "↳";
+        mark.textContent = message.role === "user" ? "❓" : "🤖";
         const label = document.createElement("span");
         label.className = "label";
         label.textContent = summarize(message.text);

@@ -23,8 +23,20 @@ export function formatDate(time: number | null, withYear = false) {
     }).format(new Date(time));
 }
 
-export function formatReset(resetAt: number | null, now = Date.now()) {
-    if (resetAt === null) return t("重置时间未知", "Reset time unavailable");
+export function formatAbsolute(time: number | null) {
+    if (time === null || !Number.isFinite(time)) return t("未知", "Unknown");
+    return new Intl.DateTimeFormat(locale(), {
+        year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).format(new Date(time));
+}
+
+/** `used` lets a 0% rolling window say so: Notion starts its countdown with the first request. */
+export function formatReset(resetAt: number | null, now = Date.now(), used?: number) {
+    if (resetAt === null) {
+        return used === 0
+            ? t("暂无用量，开始使用后显示倒计时", "No usage yet; the countdown appears once you use AI")
+            : t("重置时间未知", "Reset time unavailable");
+    }
     const diff = resetAt - now;
     if (diff <= 0) return t("即将重置", "Resetting soon");
     if (diff > 86_400_000) return t(`${formatDate(resetAt)} 重置`, `Resets ${formatDate(resetAt)}`);
@@ -89,12 +101,13 @@ export interface BillingRow {
     label: string;
     value: string;
     detail: string;
+    tooltip: string;
 }
 
 export function billingRow(status: BillingStatus, now = Date.now()): BillingRow {
     switch (status.kind) {
         case "none":
-            return { label: t("Free 套餐", "Free Plan"), value: t("未订阅", "No subscription"), detail: "" };
+            return { label: t("Free 套餐", "Free Plan"), value: t("未订阅", "No subscription"), detail: "", tooltip: t("Free 套餐：未订阅", "Free Plan: No subscription") };
         case "trial":
             return {
                 label: t("Business 试用", "Business Trial"),
@@ -102,12 +115,16 @@ export function billingRow(status: BillingStatus, now = Date.now()): BillingRow 
                     ? t("今天结束", "Ends today")
                     : t(`剩余 ${trialDaysLeft(status, now)} 天`, `${trialDaysLeft(status, now)} days left`),
                 detail: t(`${formatDate(status.endAt, true)} 结束`, `Ends ${formatDate(status.endAt, true)}`),
+                tooltip: t(
+                    `Business 试用：${formatAbsolute(status.startAt)} — ${formatAbsolute(status.endAt)}`,
+                    `Business Trial: ${formatAbsolute(status.startAt)} — ${formatAbsolute(status.endAt)}`,
+                ),
             };
-        case "subscription":
-            return {
-                label: t(`${planName(status.plan)} 套餐`, `${planName(status.plan)} Plan`),
-                value: statusName(status.status),
-                detail: status.periodEndAt === null ? "" : t(`当前周期至 ${formatDate(status.periodEndAt, true)}`, `Current period ends ${formatDate(status.periodEndAt, true)}`),
-            };
+        case "subscription": {
+            const label = t(`${planName(status.plan)} 套餐`, `${planName(status.plan)} Plan`);
+            const value = statusName(status.status);
+            const detail = status.periodEndAt === null ? "" : t(`当前周期至 ${formatDate(status.periodEndAt, true)}`, `Current period ends ${formatDate(status.periodEndAt, true)}`);
+            return { label, value, detail, tooltip: detail ? t(`${label}：${value}；${detail}`, `${label}: ${value}; ${detail}`) : t(`${label}：${value}`, `${label}: ${value}`) };
+        }
     }
 }

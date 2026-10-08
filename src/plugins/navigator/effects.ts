@@ -8,12 +8,12 @@ import { reducedMotion } from "@utils/dom";
 
 export type Effect = "none" | "border" | "pulse" | "fade" | "jiggle";
 
-export const EFFECTS: { value: Effect; zh: string; en: string }[] = [
-    { value: "border", zh: "高亮边框", en: "Highlight border" },
-    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
-    { value: "fade", zh: "背景淡入淡出", en: "Background fade" },
-    { value: "jiggle", zh: "水平抖动", en: "Jiggle" },
-    { value: "none", zh: "无（仅滚动）", en: "None (scroll only)" },
+export const EFFECTS: { value: Effect; zh: string; en: string; hint: string }[] = [
+    { value: "none", zh: "无效果（纯平滑滚动）", en: "None (scroll only)", hint: "仅滚动 / scroll only" },
+    { value: "border", zh: "高亮边框", en: "Highlight border", hint: "彩色边框，持续 2 秒 / 2 s" },
+    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow", hint: "边框脉冲闪烁，持续 2 秒 / 2 s" },
+    { value: "fade", zh: "淡入淡出", en: "Fade", hint: "背景淡入淡出，持续 1.5 秒 / 1.5 s" },
+    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle", hint: "水平微抖动 / jiggle" },
 ];
 
 const running = new WeakMap<Element, Animation>();
@@ -59,4 +59,30 @@ export function playEffect(element: Element, effect: Effect) {
         easing: "ease-in-out",
     });
     running.set(element, animation);
+}
+
+const PREVIEW_ID = "notionai-pp-effect-preview";
+
+/** Plays the effect on a temporary card at the top of the page, like the original's 预览 button. */
+export function previewEffect(effect: Effect) {
+    document.getElementById(PREVIEW_ID)?.remove();
+    const info = EFFECTS.find(item => item.value === effect);
+    // The holder centers the card, because the jiggle keyframes own the card's `transform`.
+    const holder = document.createElement("div");
+    holder.id = PREVIEW_ID;
+    Object.assign(holder.style, {
+        position: "fixed", left: "0", right: "0", top: "24px", zIndex: "2147483647",
+        display: "flex", justifyContent: "center", pointerEvents: "none",
+    });
+    const card = document.createElement("div");
+    card.textContent = info ? `${info.zh} / ${info.en}` : effect;
+    Object.assign(card.style, {
+        padding: "14px 22px", borderRadius: "10px", background: "#fff", color: "#37352f",
+        font: "500 14px/1.4 ui-sans-serif, system-ui, sans-serif", boxShadow: "0 8px 30px rgba(0,0,0,.18)",
+    });
+    holder.append(card);
+    document.body.append(holder);
+    playEffect(card, effect);
+    const duration = effect === "none" ? 600 : KEYFRAMES[effect].duration;
+    setTimeout(() => holder.remove(), duration + 600);
 }

@@ -39,6 +39,7 @@ export const settings = definePluginSettings({
     mode: {
         type: "select",
         label: "轮播方式 / Rotation",
+        description: "手动模式：回到首页后点击标题即可切换；定时模式：离开首页会自动停止计时 / Manual: click the title on home; Timer: pauses when you leave home",
         default: "refresh",
         options: [
             { value: "refresh", label: "刷新/进入首页时切换 / On refresh or entering home" },
