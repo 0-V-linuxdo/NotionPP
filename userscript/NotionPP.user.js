@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.3
+// @version      20261007.1.2.4
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2897,7 +2897,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.3";
+    const version = "[20261007] v1.2.4";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2930,7 +2930,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.3";
+    const version = "[20261007] v1.2.4";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4314,6 +4314,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   };
   var DEFAULT_ANCHOR = { xEdge: "right", xOffset: 16, yEdge: "top", yOffset: 16 };
   var TIP_SPACE = 64;
+  var CARD_MARGIN = 8;
   var CARD_GAP = 7;
   var CLICK_GUARD_MS = 500;
   var TICK_MS = 15000;
@@ -4505,6 +4506,21 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const hostBox = boxOf(host);
       const handleNow = boxOf(handle);
       this.place({ left: target.left - (handleNow.left - hostBox.left), top: target.top - (handleNow.top - hostBox.top) });
+      this.fitCard(vp);
+    }
+    fitCard(vp) {
+      const card = this.q(".card");
+      card.style.translate = "";
+      if (card.hidden)
+        return;
+      const box = boxOf(card);
+      let shift = 0;
+      if (box.right > vp.width - CARD_MARGIN)
+        shift = vp.width - CARD_MARGIN - box.right;
+      if (box.left + shift < CARD_MARGIN)
+        shift = CARD_MARGIN - box.left;
+      if (shift)
+        card.style.translate = `${Math.round(shift)}px 0`;
     }
     installDrag(handle, ignore) {
       handle.addEventListener("pointerdown", (event) => {
@@ -4802,7 +4818,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.3";
+    win[FLAG] = "[20261007] v1.2.4";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4812,7 +4828,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.3"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.4"} started`);
   }
   boot();
 })();

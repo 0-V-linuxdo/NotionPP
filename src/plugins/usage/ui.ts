@@ -30,6 +30,7 @@ export const KEYS = {
 } as const;
 const DEFAULT_ANCHOR: Anchor = { xEdge: "right", xOffset: 16, yEdge: "top", yOffset: 16 };
 const TIP_SPACE = 64;
+const CARD_MARGIN = 8;
 const CARD_GAP = 7;
 const CLICK_GUARD_MS = 500;
 const TICK_MS = 15_000;
@@ -228,6 +229,19 @@ export class UsageWidget {
         const hostBox = boxOf(host);
         const handleNow = boxOf(handle);
         this.place({ left: target.left - (handleNow.left - hostBox.left), top: target.top - (handleNow.top - hostBox.top) });
+        this.fitCard(vp);
+    }
+
+    /** Slides the open card sideways so it stays inside a narrow window; the pill stays put. */
+    private fitCard(vp: { width: number }) {
+        const card = this.q(".card");
+        card.style.translate = "";
+        if (card.hidden) return;
+        const box = boxOf(card);
+        let shift = 0;
+        if (box.right > vp.width - CARD_MARGIN) shift = vp.width - CARD_MARGIN - box.right;
+        if (box.left + shift < CARD_MARGIN) shift = CARD_MARGIN - box.left;
+        if (shift) card.style.translate = `${Math.round(shift)}px 0`;
     }
 
     private installDrag(handle: HTMLElement, ignore: string) {
