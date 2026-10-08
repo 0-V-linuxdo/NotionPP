@@ -6,7 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { quoteBlocks, quoteLines, rangeAt } from "@plugins/userQuotes/index";
+import { buildMirror, quoteLines } from "@plugins/userQuotes/index";
 
 describe("quote lines", () => {
     const text = "> F. 引用行样式\n>第二行\n\n完成落地\n  > again\na > not a quote";
@@ -20,14 +20,10 @@ describe("quote lines", () => {
         expect(text.slice(lines[2].start, lines[2].end)).toBe("> again");
     });
 
-    test("groups consecutive lines into one bar", () => {
-        expect(quoteBlocks(quoteLines(text)).map(block => block.length)).toEqual([2, 1]);
-    });
-
-    test("maps offsets across several text nodes", () => {
-        const el = document.createElement("div");
-        el.innerHTML = "ab<b>cd</b>ef";
-        expect(rangeAt(el, 1, 5)?.toString()).toBe("bcde");
-        expect(rangeAt(el, 0, 9)).toBeNull();
+    test("lays quote runs out as indented blocks and keeps blank lines", () => {
+        const box = document.createElement("div");
+        box.append(buildMirror(text));
+        const rows = [...box.children].map(child => child.className === "q" ? `[${[...child.children].map(row => row.textContent).join("|")}]` : child.textContent);
+        expect(rows).toEqual(["[F. 引用行样式|第二行]", "", "完成落地", "[again]", "a > not a quote"]);
     });
 });

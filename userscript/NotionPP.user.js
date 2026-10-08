@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.8.2
+// @version      20261007.1.8.3
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -4360,7 +4360,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.8.2";
+    const version = "[20261007] v1.8.3";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4394,7 +4394,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.8.2";
+    const version = "[20261007] v1.8.3";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -6193,11 +6193,7 @@ button { font: inherit; }
 
   // src/plugins/userQuotes/index.ts
   var STYLE_ID5 = "notionai-pp-user-quotes";
-  var HOST = "data-npp-quote-host";
-  var LAYER = "data-npp-quote-layer";
-  var MARKER_HL = "npp-quote-marker";
-  var TEXT_HL = "npp-quote-text";
-  var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]:not([contenteditable='true'])`;
+  var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]`;
   var settings14 = definePluginSettings({
     dim: {
       type: "boolean",
@@ -6217,116 +6213,73 @@ button { font: inherit; }
     });
     return result;
   }
-  function quoteBlocks(lines) {
-    const blocks = [];
-    for (const line of lines) {
-      const last = blocks.at(-1);
-      if (last && last.at(-1).line === line.line - 1)
-        last.push(line);
-      else
-        blocks.push([line]);
-    }
-    return blocks;
-  }
-  function rangeAt(root, start, end) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const range = document.createRange();
-    let seen = 0;
-    let started = false;
-    for (let node = walker.nextNode();node; node = walker.nextNode()) {
-      const length = node.textContent?.length ?? 0;
-      if (!started && start <= seen + length) {
-        range.setStart(node, start - seen);
-        started = true;
-      }
-      if (started && end <= seen + length) {
-        range.setEnd(node, end - seen);
-        return range;
-      }
-      seen += length;
-    }
-    return null;
-  }
-  var highlights = () => globalThis.CSS?.highlights;
-  var Highlight = () => globalThis.Highlight;
+  var MIRROR = "data-npp-quote-mirror";
+  var HIDDEN = "data-npp-quote-hidden";
   function css3() {
-    return `[${HOST}] { position: relative; }
-[${LAYER}] { position: absolute; inset: 0; pointer-events: none; }
-[${LAYER}] > div { position: absolute; width: 3px; border-radius: 2px; background: var(--c-texTer, rgba(127,127,127,.6)); opacity: .7; }
-::highlight(${MARKER_HL}) { color: transparent; }
-${settings14.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(127,127,127,.9)); }` : ""}`;
+    return `[${HIDDEN}] { display: none !important; }
+[${MIRROR}] > div:empty::after { content: "\\200b"; }
+[${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
+[${MIRROR}] .q > div:empty::after { content: "\\200b"; }
+${settings14.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
   }
-  function drawLeaf(leaf, markers, texts) {
-    const host = leaf.parentElement;
-    if (!host)
-      return;
-    let layer = host.querySelector(`:scope > [${LAYER}]`);
-    const lines = quoteLines(leaf.textContent ?? "");
-    if (!lines.length) {
-      layer?.remove();
-      host.removeAttribute(HOST);
-      return;
-    }
-    host.setAttribute(HOST, "");
-    if (!layer) {
-      layer = document.createElement("div");
-      layer.setAttribute(LAYER, "");
-      layer.setAttribute("aria-hidden", "true");
-      host.append(layer);
-    }
-    const origin = host.getBoundingClientRect();
-    const bars = [];
-    for (const block of quoteBlocks(lines)) {
-      const marker = rangeAt(leaf, block[0].start, block[0].start + 1);
-      const whole = rangeAt(leaf, block[0].start, block.at(-1).end);
-      if (!marker || !whole)
-        continue;
-      const rects = [...whole.getClientRects()].filter((rect) => rect.height > 0);
-      if (!rects.length)
-        continue;
-      const top = Math.min(...rects.map((rect) => rect.top));
-      const bottom = Math.max(...rects.map((rect) => rect.bottom));
-      const bar = document.createElement("div");
-      bar.style.left = `${marker.getBoundingClientRect().left - origin.left - 8}px`;
-      bar.style.top = `${top - origin.top + 2}px`;
-      bar.style.height = `${Math.max(0, bottom - top - 4)}px`;
-      bars.push(bar);
-      for (const line of block) {
-        const markerRange = rangeAt(leaf, line.start, line.body);
-        const textRange = rangeAt(leaf, line.body, line.end);
-        if (markerRange)
-          markers.push(markerRange);
-        if (textRange && line.end > line.body)
-          texts.push(textRange);
+  function buildMirror(text) {
+    const fragment = document.createDocumentFragment();
+    const quotes = new Map(quoteLines(text).map((line) => [line.line, line]));
+    const row = (content) => Object.assign(document.createElement("div"), { textContent: content });
+    let block = null;
+    text.split(`
+`).forEach((line, index) => {
+      const quote = quotes.get(index);
+      if (quote) {
+        if (!block) {
+          block = document.createElement("div");
+          block.className = "q";
+          fragment.append(block);
+        }
+        block.append(row(text.slice(quote.body, quote.end)));
+      } else {
+        block = null;
+        fragment.append(row(line));
       }
+    });
+    return fragment;
+  }
+  function unmirror(leaf) {
+    leaf.removeAttribute(HIDDEN);
+    const next = leaf.nextElementSibling;
+    if (next?.hasAttribute(MIRROR))
+      next.remove();
+  }
+  function mirror2(leaf) {
+    const text = leaf.textContent ?? "";
+    const editing = leaf.getAttribute("contenteditable") === "true";
+    if (editing || !quoteLines(text).length)
+      return unmirror(leaf);
+    let copy = leaf.nextElementSibling;
+    if (!copy?.hasAttribute(MIRROR)) {
+      copy = document.createElement("div");
+      copy.setAttribute(MIRROR, "");
+      leaf.after(copy);
     }
-    layer.replaceChildren(...bars);
+    if (copy.dataset.src === text)
+      return void leaf.setAttribute(HIDDEN, "");
+    copy.className = leaf.className;
+    copy.setAttribute("style", leaf.getAttribute("style") ?? "");
+    copy.style.cursor = "text";
+    copy.dataset.src = text;
+    copy.replaceChildren(buildMirror(text));
+    leaf.setAttribute(HIDDEN, "");
   }
   function render2() {
-    const markers = [];
-    const texts = [];
-    const live = new Set;
-    for (const leaf of document.querySelectorAll(LEAF2)) {
-      drawLeaf(leaf, markers, texts);
-      if (leaf.parentElement)
-        live.add(leaf.parentElement);
-    }
-    for (const host of document.querySelectorAll(`[${HOST}]`)) {
-      if (!live.has(host))
-        clear(host);
-    }
-    const registry = highlights();
-    const HL = Highlight();
-    if (registry && HL) {
-      registry.set(MARKER_HL, new HL(...markers));
-      registry.set(TEXT_HL, new HL(...texts));
+    for (const leaf of document.querySelectorAll(LEAF2))
+      mirror2(leaf);
+    for (const copy of document.querySelectorAll(`[${MIRROR}]`)) {
+      const leaf = copy.previousElementSibling;
+      if (!leaf?.matches(LEAF2))
+        copy.remove();
     }
   }
-  function clear(host) {
-    host.removeAttribute(HOST);
-    host.querySelector(`:scope > [${LAYER}]`)?.remove();
-  }
-  var schedule4 = debounce(render2, 150, 500);
+  var schedule4 = debounce(render2, 120, 400);
   var stopDom5 = null;
   var textWatch = null;
   function applyStyle() {
@@ -6353,16 +6306,15 @@ ${settings14.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(
       applyStyle();
       render2();
       stopDom5 = onDomChange((mutations) => {
-        if (mutations.every((m) => m.target.hasAttribute?.(LAYER)))
+        if (mutations.every((m) => m.target.closest?.(`[${MIRROR}]`)))
           return;
         schedule4();
       });
       textWatch = new MutationObserver((mutations) => {
-        if (mutations.some((m) => m.target.parentElement?.closest(`[${USER_STEP}]`)))
+        if (mutations.some((m) => (m.target instanceof Element ? m.target : m.target.parentElement)?.closest(`[${USER_STEP}]`)))
           schedule4();
       });
-      textWatch.observe(document.documentElement, { characterData: true, subtree: true });
-      window.addEventListener("resize", schedule4);
+      textWatch.observe(document.documentElement, { characterData: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
     },
     stop() {
       stopDom5?.();
@@ -6370,11 +6322,10 @@ ${settings14.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(
       textWatch?.disconnect();
       textWatch = null;
       schedule4.cancel();
-      window.removeEventListener("resize", schedule4);
-      for (const host of document.querySelectorAll(`[${HOST}]`))
-        clear(host);
-      highlights()?.delete(MARKER_HL);
-      highlights()?.delete(TEXT_HL);
+      for (const leaf of document.querySelectorAll(`[${HIDDEN}]`))
+        unmirror(leaf);
+      for (const copy of document.querySelectorAll(`[${MIRROR}]`))
+        copy.remove();
       document.getElementById(STYLE_ID5)?.remove();
     },
     onSettingsChange() {
@@ -6463,7 +6414,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.8.2";
+    win[FLAG] = "[20261007] v1.8.3";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6490,7 +6441,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.8.2"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.8.3"} started`);
   }
   boot();
 })();

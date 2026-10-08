@@ -14,17 +14,13 @@ import { USER_STEP } from "../navigator/messages";
 
 /*
  * Like Void++'s userQuotes: lines of your own questions that start with ">" get a bar on the left,
- * like a quote. Notion keeps the question as one plain text node, so nothing in it is rewritten:
- * the "> " marker is made invisible and the quoted text dimmed with CSS highlights, and the bars
- * are drawn on a separate layer inside the bubble.
+ * like a quote. Notion keeps the question as one plain text node that it owns, so it is left untouched:
+ * Notion's own text is hidden and a copy laid out with real quote blocks is shown in its place,
+ * rebuilt whenever the text changes and dropped while the question is being edited.
  */
 
 const STYLE_ID = "notionai-pp-user-quotes";
-const HOST = "data-npp-quote-host";
-const LAYER = "data-npp-quote-layer";
-const MARKER_HL = "npp-quote-marker";
-const TEXT_HL = "npp-quote-text";
-const LEAF = `[${USER_STEP}] [data-content-editable-leaf]:not([contenteditable='true'])`;
+const LEAF = `[${USER_STEP}] [data-content-editable-leaf]`;
 
 export const settings = definePluginSettings({
     dim: {
@@ -55,119 +51,77 @@ export function quoteLines(text: string): QuoteLine[] {
     return result;
 }
 
-/** Runs of quote lines on consecutive lines, each drawn as one bar. */
-export function quoteBlocks(lines: QuoteLine[]): QuoteLine[][] {
-    const blocks: QuoteLine[][] = [];
-    for (const line of lines) {
-        const last = blocks.at(-1);
-        if (last && last.at(-1)!.line === line.line - 1) last.push(line);
-        else blocks.push([line]);
-    }
-    return blocks;
-}
-
-/** A range over character offsets of an element's text, across however many text nodes it has. */
-export function rangeAt(root: Element, start: number, end: number): Range | null {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const range = document.createRange();
-    let seen = 0;
-    let started = false;
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const length = node.textContent?.length ?? 0;
-        if (!started && start <= seen + length) {
-            range.setStart(node, start - seen);
-            started = true;
-        }
-        if (started && end <= seen + length) {
-            range.setEnd(node, end - seen);
-            return range;
-        }
-        seen += length;
-    }
-    return null;
-}
-
-const highlights = () => (globalThis as any).CSS?.highlights as Map<string, unknown> | undefined;
-const Highlight = () => (globalThis as any).Highlight as (new (...ranges: Range[]) => unknown) | undefined;
+const MIRROR = "data-npp-quote-mirror";
+const HIDDEN = "data-npp-quote-hidden";
 
 function css() {
-    return `[${HOST}] { position: relative; }
-[${LAYER}] { position: absolute; inset: 0; pointer-events: none; }
-[${LAYER}] > div { position: absolute; width: 3px; border-radius: 2px; background: var(--c-texTer, rgba(127,127,127,.6)); opacity: .7; }
-::highlight(${MARKER_HL}) { color: transparent; }
-${settings.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(127,127,127,.9)); }` : ""}`;
+    return `[${HIDDEN}] { display: none !important; }
+[${MIRROR}] > div:empty::after { content: "\\200b"; }
+[${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
+[${MIRROR}] .q > div:empty::after { content: "\\200b"; }
+${settings.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
 }
 
-function drawLeaf(leaf: HTMLElement, markers: Range[], texts: Range[]) {
-    const host = leaf.parentElement;
-    if (!host) return;
-    let layer = host.querySelector<HTMLElement>(`:scope > [${LAYER}]`);
-    const lines = quoteLines(leaf.textContent ?? "");
-    if (!lines.length) {
-        layer?.remove();
-        host.removeAttribute(HOST);
-        return;
-    }
-    host.setAttribute(HOST, "");
-    if (!layer) {
-        layer = document.createElement("div");
-        layer.setAttribute(LAYER, "");
-        layer.setAttribute("aria-hidden", "true");
-        host.append(layer);
-    }
-    const origin = host.getBoundingClientRect();
-    const bars: HTMLElement[] = [];
-    for (const block of quoteBlocks(lines)) {
-        const marker = rangeAt(leaf, block[0].start, block[0].start + 1);
-        const whole = rangeAt(leaf, block[0].start, block.at(-1)!.end);
-        if (!marker || !whole) continue;
-        const rects = [...whole.getClientRects()].filter(rect => rect.height > 0);
-        if (!rects.length) continue;
-        const top = Math.min(...rects.map(rect => rect.top));
-        const bottom = Math.max(...rects.map(rect => rect.bottom));
-        const bar = document.createElement("div");
-        // in the bubble's side padding, so wrapped lines of a long quote don't run under it
-        bar.style.left = `${marker.getBoundingClientRect().left - origin.left - 8}px`;
-        bar.style.top = `${top - origin.top + 2}px`;
-        bar.style.height = `${Math.max(0, bottom - top - 4)}px`;
-        bars.push(bar);
-        for (const line of block) {
-            const markerRange = rangeAt(leaf, line.start, line.body);
-            const textRange = rangeAt(leaf, line.body, line.end);
-            if (markerRange) markers.push(markerRange);
-            if (textRange && line.end > line.body) texts.push(textRange);
+/** The mirror's content: plain lines as rows, each run of quote lines as one indented block. */
+export function buildMirror(text: string): DocumentFragment {
+    const fragment = document.createDocumentFragment();
+    const quotes = new Map(quoteLines(text).map(line => [line.line, line]));
+    const row = (content: string) => Object.assign(document.createElement("div"), { textContent: content });
+    let block: HTMLElement | null = null;
+    text.split("\n").forEach((line, index) => {
+        const quote = quotes.get(index);
+        if (quote) {
+            if (!block) {
+                block = document.createElement("div");
+                block.className = "q";
+                fragment.append(block);
+            }
+            block.append(row(text.slice(quote.body, quote.end)));
+        } else {
+            block = null;
+            fragment.append(row(line));
         }
+    });
+    return fragment;
+}
+
+function unmirror(leaf: Element) {
+    leaf.removeAttribute(HIDDEN);
+    const next = leaf.nextElementSibling;
+    if (next?.hasAttribute(MIRROR)) next.remove();
+}
+
+function mirror(leaf: HTMLElement) {
+    const text = leaf.textContent ?? "";
+    const editing = leaf.getAttribute("contenteditable") === "true";
+    if (editing || !quoteLines(text).length) return unmirror(leaf);
+    let copy = leaf.nextElementSibling as HTMLElement | null;
+    if (!copy?.hasAttribute(MIRROR)) {
+        copy = document.createElement("div");
+        copy.setAttribute(MIRROR, "");
+        leaf.after(copy);
     }
-    layer.replaceChildren(...bars);
+    if (copy.dataset.src === text) return void leaf.setAttribute(HIDDEN, "");
+    copy.className = leaf.className;
+    copy.setAttribute("style", leaf.getAttribute("style") ?? "");
+    copy.style.cursor = "text";
+    copy.dataset.src = text;
+    copy.replaceChildren(buildMirror(text));
+    leaf.setAttribute(HIDDEN, "");
 }
 
 export function render() {
-    const markers: Range[] = [];
-    const texts: Range[] = [];
-    const live = new Set<Element>();
-    for (const leaf of document.querySelectorAll<HTMLElement>(LEAF)) {
-        drawLeaf(leaf, markers, texts);
-        if (leaf.parentElement) live.add(leaf.parentElement);
-    }
-    for (const host of document.querySelectorAll(`[${HOST}]`)) {
-        if (!live.has(host)) clear(host);
-    }
-    const registry = highlights();
-    const HL = Highlight();
-    if (registry && HL) {
-        registry.set(MARKER_HL, new HL(...markers));
-        registry.set(TEXT_HL, new HL(...texts));
+    for (const leaf of document.querySelectorAll<HTMLElement>(LEAF)) mirror(leaf);
+    // mirrors whose question is gone
+    for (const copy of document.querySelectorAll(`[${MIRROR}]`)) {
+        const leaf = copy.previousElementSibling;
+        if (!leaf?.matches(LEAF)) copy.remove();
     }
 }
 
-function clear(host: Element) {
-    host.removeAttribute(HOST);
-    host.querySelector(`:scope > [${LAYER}]`)?.remove();
-}
-
-const schedule = debounce(render, 150, 500);
+const schedule = debounce(render, 120, 400);
 let stopDom: (() => void) | null = null;
-/** Text edited in place (an edited question) changes no child lists, so DomWatch misses it. */
+/** Text edited in place and edit mode switching change no child lists, so DomWatch misses them. */
 let textWatch: MutationObserver | null = null;
 
 function applyStyle() {
@@ -195,15 +149,14 @@ export default definePlugin({
         applyStyle();
         render();
         stopDom = onDomChange(mutations => {
-            // our own bar layers changing must not trigger another pass
-            if (mutations.every(m => (m.target as Element).hasAttribute?.(LAYER))) return;
+            // our own mirrors changing must not trigger another pass
+            if (mutations.every(m => (m.target as Element).closest?.(`[${MIRROR}]`))) return;
             schedule();
         });
         textWatch = new MutationObserver(mutations => {
-            if (mutations.some(m => m.target.parentElement?.closest(`[${USER_STEP}]`))) schedule();
+            if (mutations.some(m => (m.target instanceof Element ? m.target : m.target.parentElement)?.closest(`[${USER_STEP}]`))) schedule();
         });
-        textWatch.observe(document.documentElement, { characterData: true, subtree: true });
-        window.addEventListener("resize", schedule);
+        textWatch.observe(document.documentElement, { characterData: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
     },
     stop() {
         stopDom?.();
@@ -211,10 +164,8 @@ export default definePlugin({
         textWatch?.disconnect();
         textWatch = null;
         schedule.cancel();
-        window.removeEventListener("resize", schedule);
-        for (const host of document.querySelectorAll(`[${HOST}]`)) clear(host);
-        highlights()?.delete(MARKER_HL);
-        highlights()?.delete(TEXT_HL);
+        for (const leaf of document.querySelectorAll(`[${HIDDEN}]`)) unmirror(leaf);
+        for (const copy of document.querySelectorAll(`[${MIRROR}]`)) copy.remove();
         document.getElementById(STYLE_ID)?.remove();
     },
     onSettingsChange() {
