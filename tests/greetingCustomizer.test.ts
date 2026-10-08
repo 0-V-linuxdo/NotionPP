@@ -118,6 +118,7 @@ describe("GreetingCustomizer", () => {
         const host = document.getElementById(MANAGER_HOST_ID)!;
         expect(host).not.toBeNull();
         const root = host.shadowRoot!;
+        expect([...root.querySelectorAll<HTMLButtonElement>(".editor .btn")].filter(b => !b.hidden).length).toBe(1);
         const textarea = root.querySelector("textarea")!;
         textarea.value = "  New line\nsecond  ";
         root.querySelector<HTMLButtonElement>(".editor .btn-primary")!.click();

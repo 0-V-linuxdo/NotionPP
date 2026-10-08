@@ -32,6 +32,7 @@ export const CSS = `
   --shadow: 0 0 0 1px #383836, 0 24px 48px rgba(25,25,25,.64);
   color-scheme: dark; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 svg { width: 1rem; height: 1rem; flex-shrink: 0; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid color-mix(in srgb, var(--fg-primary) 55%, transparent); outline-offset: 1px; }
