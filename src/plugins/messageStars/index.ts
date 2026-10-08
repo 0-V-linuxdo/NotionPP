@@ -78,6 +78,26 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
     return wrapper;
 }
 
+/**
+ * Right after Notion's own icon buttons (copy, save, feedback), before anything that stretches
+ * to fill the row, such as the "Undo" group, which would otherwise push the star to the far end.
+ */
+export function place(row: HTMLElement, copyWrapper: HTMLElement, star: HTMLElement) {
+    let after: Element = copyWrapper;
+    for (let next = after.nextElementSibling; next && next !== star; next = next.nextElementSibling) {
+        if (!isIconWrapper(next)) break;
+        after = next;
+    }
+    if (after.nextElementSibling !== star) row.insertBefore(star, after.nextElementSibling);
+    // The prompt toolbar is sized for the copy button alone (an inline 24px width); let it grow.
+    if (row.style.width.endsWith("px")) row.style.width = "auto";
+}
+
+const isIconWrapper = (node: Element) =>
+    !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? ""))
+    && !!node.querySelector("[role='button'][aria-label], button[aria-label]")
+    && !node.textContent?.trim();
+
 export function scan() {
     const chatId = currentChatId();
     const stars = starsOf(chatId);
@@ -93,8 +113,8 @@ export function scan() {
             ours = null;
         }
         if (!id) continue;
-        // Appended last so Notion's own buttons keep their order and React's bookkeeping.
-        ours ??= row.appendChild(makeButton(copy, id));
+        ours ??= makeButton(copy, id);
+        place(row, copy.parentElement!, ours);
         paint(ours.firstElementChild as HTMLElement, stars.has(id));
     }
 }

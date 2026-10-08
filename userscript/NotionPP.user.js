@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.3.2
+// @version      20261007.1.3.3
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2656,6 +2656,19 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     wrapper.append(button);
     return wrapper;
   }
+  function place(row, copyWrapper, star) {
+    let after = copyWrapper;
+    for (let next = after.nextElementSibling;next && next !== star; next = next.nextElementSibling) {
+      if (!isIconWrapper(next))
+        break;
+      after = next;
+    }
+    if (after.nextElementSibling !== star)
+      row.insertBefore(star, after.nextElementSibling);
+    if (row.style.width.endsWith("px"))
+      row.style.width = "auto";
+  }
+  var isIconWrapper = (node) => !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? "")) && !!node.querySelector("[role='button'][aria-label], button[aria-label]") && !node.textContent?.trim();
   function scan3() {
     const chatId = currentChatId();
     const stars = starsOf(chatId);
@@ -2674,7 +2687,8 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       }
       if (!id)
         continue;
-      ours ??= row.appendChild(makeButton(copy, id));
+      ours ??= makeButton(copy, id);
+      place(row, copy.parentElement, ours);
       paint(ours.firstElementChild, stars.has(id));
     }
   }
@@ -3445,7 +3459,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.3.2";
+    const version = "[20261007] v1.3.3";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -3478,7 +3492,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.3.2";
+    const version = "[20261007] v1.3.3";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5232,7 +5246,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.3.2";
+    win[FLAG] = "[20261007] v1.3.3";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5254,7 +5268,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.3.2"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.3.3"} started`);
   }
   boot();
 })();

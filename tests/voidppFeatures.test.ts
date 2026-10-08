@@ -100,3 +100,24 @@ describe("wider chat", () => {
         expect(css(1100)).toContain("max-width: 1044px");
     });
 });
+
+describe("star placement", () => {
+    test("sits after Notion's icon buttons, before a stretching group, and widens a fixed row", async () => {
+        const { place } = await import("@plugins/messageStars/index");
+        document.body.innerHTML = `
+          <div id="row" style="display:flex">
+            <div class="w"><div role="button" aria-label="Copy response"></div></div>
+            <div class="w"><div role="button" aria-label="Share positive feedback"></div></div>
+            <div style="flex: 1 1 0px"><div role="button" aria-label="Undo">Undo</div></div>
+          </div>
+          <div id="user" style="display:flex; width: 24px"><div class="w"><div role="button" aria-label="Copy text"></div></div></div>`;
+        const row = document.getElementById("row")!;
+        const star = document.createElement("div");
+        place(row, row.firstElementChild as HTMLElement, star);
+        expect([...row.children].indexOf(star)).toBe(2);
+        const user = document.getElementById("user")!;
+        place(user, user.firstElementChild as HTMLElement, document.createElement("div"));
+        expect(user.children.length).toBe(2);
+        expect(user.style.width).toBe("auto");
+    });
+});
