@@ -76,6 +76,20 @@ describe("chat navigator detection", () => {
         expect(messages[2].element.classList.contains("picked")).toBe(true);
     });
 
+    test("a reply cut off before any text is listed by its steps", () => {
+        document.body.innerHTML = `<div>
+          <div><div data-agent-chat-user-step-id="u1"><div data-content-editable-leaf="true">重写布局</div></div></div>
+          <div class="cut"><div><div role="button" aria-expanded="false" aria-controls=":r1:"><div>10 steps</div></div></div>
+            <div><div role="button" aria-expanded="false" aria-controls=":r2:"><div>2 steps</div></div></div>
+            <div><div role="button" aria-label="Copy response"></div></div></div>
+          <div><div data-agent-chat-user-step-id="u2"><div data-content-editable-leaf="true">continue where you left</div></div></div>
+          <div><div class="body">好的</div></div></div>`;
+        const messages = collectMessages();
+        expect(messages.map(m => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+        expect(messages[1].text).toMatch(/^(回答已中断（10 steps · 2 steps）|Reply interrupted \(10 steps · 2 steps\))$/);
+        expect(messages[1].element.classList.contains("cut")).toBe(true);
+    });
+
     test("an empty user step with nothing to recover is left out", () => {
         document.body.innerHTML = `<div>
           <div><div data-agent-chat-user-step-id="u1"><div data-content-editable-leaf="true">Hi</div></div></div>

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { t } from "@utils/page";
+
 export type Role = "user" | "assistant";
 
 export interface ChatMessage {
@@ -124,9 +126,16 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
             const body = assistantBody(sibling);
             const bodyText = readText(body, body === sibling ? skip : skip.filter(node => body.contains(node)));
             const reply = bodyText || readText(sibling, skip);
-            if (!reply) continue;
-            messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
-            break;
+            if (reply) {
+                messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
+                break;
+            }
+            // A reply cut off before any text still shows its collapsed steps; list it so the turn isn't lost.
+            const steps = [...sibling.querySelectorAll(TOGGLE)].map(toggle => toggle.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
+            if (steps.length) {
+                messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text: t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`) });
+                break;
+            }
         }
     });
     return messages;
