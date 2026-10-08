@@ -104,12 +104,20 @@ describe("settings dialog", () => {
         expect(sheet.querySelector(".sheet-title")!.textContent).toBe("Chat navigator");
         expect(titles()).toContain("Jump effect");
         expect(titles().some(text => / \/ /.test(text ?? ""))).toBe(false);
-        expect([...sheet.querySelectorAll("option")].some(o => /[\u4e00-\u9fff]/.test(o.textContent ?? ""))).toBe(false);
+        const effect = [...sheet.querySelectorAll<HTMLButtonElement>(".dropdown")][0];
+        expect(effect.textContent).toBe("Highlight border");
+        effect.click();
+        const items = [...root().querySelectorAll<HTMLButtonElement>(".layer-menu .menu-item")];
+        expect(items.map(item => item.textContent)).toContain("Pulse glow");
+        expect(items.some(item => /[\u4e00-\u9fff]/.test(item.textContent ?? ""))).toBe(false);
+        items.find(item => item.dataset.value === "pulse")!.click();
+        expect(getValue(chatNavigator.name, "effect")).toBe("pulse");
+        expect(effect.textContent).toBe("Pulse glow");
+        expect(root().querySelector(".layer-menu")).toBeNull();
 
         openSettings("preferences");
-        const language = root().querySelector<HTMLSelectElement>(".prefs select")!;
-        language.value = "zh";
-        language.dispatchEvent(new Event("change"));
+        root().querySelector<HTMLButtonElement>(".prefs .dropdown")!.click();
+        root().querySelector<HTMLButtonElement>('.layer-menu .menu-item[data-value="zh"]')!.click();
         expect(getValue("settings", "language")).toBe("zh");
         expect(root().querySelector(".content-head h2")!.textContent).toBe("偏好设置");
         sheet = openNavigator();

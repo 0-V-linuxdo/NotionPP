@@ -96,7 +96,7 @@ const cleanups: (() => void)[] = [];
 const settingKeys = (plugin: Plugin) => Object.entries(plugin.settings?.def ?? {}) as [string, OptionDef][];
 const hasSettings = (plugin: Plugin) => settingKeys(plugin).length > 0;
 
-function pushLayer(kind: "nested" | "confirm", content: HTMLElement, onClose?: () => void) {
+function pushLayer(kind: "nested" | "confirm" | "menu", content: HTMLElement, onClose?: () => void) {
     const el = h("div", { class: `layer layer-${kind}` }, content);
     const entry = {
         el,
@@ -153,10 +153,61 @@ function section(title: string, ...children: Child[]) {
     return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
 }
 
+/**
+ * Notion's settings dropdown: a borderless button showing only the chosen value, opening a
+ * menu with every option in full. A native <select> is as wide as its longest option, which
+ * a settings row cannot fit.
+ */
 function selectControl(label: string, options: { value: string; label: string }[], value: string, onChange: (value: string) => void) {
-    const select = h("select", { class: "select", "aria-label": label, onchange: () => onChange(select.value) });
-    for (const o of options) select.append(option(o.value, o.label, value === o.value));
-    return select;
+    let current = value;
+    const text = h("span", { class: "dropdown-value" });
+    const trigger = h("button", { type: "button", class: "dropdown", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label },
+        text, icon(Icons.chevronDown));
+    const sync = () => {
+        const chosen = options.find(o => o.value === current) ?? options[0];
+        text.textContent = chosen?.label ?? "";
+        trigger.title = chosen?.label ?? "";
+    };
+    sync();
+    trigger.addEventListener("click", () => {
+        let layer: ReturnType<typeof pushLayer>;
+        const pick = (next: string) => {
+            layer.close();
+            trigger.focus();
+            if (next === current) return;
+            current = next;
+            sync();
+            onChange(next);
+        };
+        const items = options.map(o => h("button", {
+            type: "button", role: "option", class: "menu-item", "aria-selected": String(o.value === current), "data-value": o.value,
+            onclick: () => pick(o.value),
+        }, h("span", { class: "menu-label" }, o.label), o.value === current && icon(Icons.check)));
+        const menu = h("div", { class: "menu", role: "listbox", "aria-label": label }, ...items);
+        menu.addEventListener("keydown", event => {
+            const { key } = event as KeyboardEvent;
+            if (key !== "ArrowDown" && key !== "ArrowUp") return;
+            event.preventDefault();
+            const index = items.indexOf(menu.querySelector<HTMLButtonElement>(".menu-item:focus") ?? items[0]);
+            items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+        });
+        layer = pushLayer("menu", menu, () => trigger.setAttribute("aria-expanded", "false"));
+        trigger.setAttribute("aria-expanded", "true");
+        placeMenu(menu, trigger.getBoundingClientRect());
+        (items.find(item => item.getAttribute("aria-selected") === "true") ?? items[0])?.focus();
+    });
+    return trigger;
+}
+
+const MENU_GAP = 4;
+
+/** Right-aligns the menu under its button, or above it when there is no room below. */
+function placeMenu(menu: HTMLElement, anchor: DOMRect) {
+    const width = Math.max(anchor.width, menu.offsetWidth);
+    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+    const below = anchor.bottom + MENU_GAP;
+    const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
+    Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
 }
 
 function settingField(plugin: Plugin, key: string, def: OptionDef): HTMLElement {

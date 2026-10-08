@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.0
+// @version      20261007.1.2.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -551,6 +551,8 @@
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
     info: `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`,
     alert: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
+    check: `<path d="M20 6 9 17l-5-5"/>`,
+    chevronDown: `<path d="m6 9 6 6 6-6"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -580,8 +582,8 @@
       description: { zh: "回复完成后折叠，或生成过程中就折叠", en: "After the reply finishes, or while it is still writing" },
       default: "finished",
       options: [
-        { value: "finished", label: { zh: "回复完成后", en: "When the reply finishes" } },
-        { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately, even while streaming" } }
+        { value: "finished", label: { zh: "回复完成后", en: "After the reply" } },
+        { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately" } }
       ]
     },
     collapseHistory: {
@@ -1625,9 +1627,9 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
       description: { zh: "定时切换在离开首页时会暂停", en: "The timer pauses while you are away from home" },
       default: "refresh",
       options: [
-        { value: "refresh", label: { zh: "刷新/进入首页时切换", en: "On refresh or entering home" } },
-        { value: "interval", label: { zh: "按时间间隔切换", en: "On a timer" } },
-        { value: "manual", label: { zh: "点击问候语切换", en: "Click the greeting" } }
+        { value: "refresh", label: { zh: "刷新或进入首页时", en: "On refresh or visit" } },
+        { value: "interval", label: { zh: "按时间间隔", en: "On a timer" } },
+        { value: "manual", label: { zh: "点击问候语时", en: "On click" } }
       ]
     },
     order: {
@@ -2568,9 +2570,22 @@ button { font: inherit; color: inherit; }
 .color input::-moz-color-swatch { border: 0; border-radius: 4px; }
 .color-value { font-size: 14px; color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
 .number { width: 5rem; text-align: right; }
-.row .select { height: 28px; max-width: 100%; padding-left: 8px; font-weight: 500; border-color: transparent; background-color: transparent;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .select:hover { background-color: var(--surface-hover); }
+
+/* Dropdown (Notion: borderless value + chevron, options in a popup menu) */
+.dropdown { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 28px; padding: 0 6px 0 8px; border: 0;
+  border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; font-weight: 500; cursor: pointer; }
+.dropdown:hover, .dropdown[aria-expanded="true"] { background: var(--surface-hover); }
+.dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+.layer-menu { display: block; padding: 0; background: transparent; }
+.menu { position: fixed; display: flex; flex-direction: column; gap: 1px; max-width: min(20rem, calc(100vw - 16px));
+  max-height: min(20rem, calc(100vh - 16px)); overflow-y: auto; padding: 4px; border-radius: 10px; background: var(--surface-l1);
+  box-shadow: var(--shadow); }
+.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; padding: 4px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-hover); outline: none; }
+.menu-label { white-space: normal; }
+.menu-item svg { width: 14px; height: 14px; color: var(--fg-primary); }
 .row .input { height: 28px; }
 .dialog:focus, .sheet:focus { outline: none; }
 .prefs { gap: 0; padding-top: .25rem; }
@@ -2688,10 +2703,57 @@ button { font: inherit; color: inherit; }
     return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
   }
   function selectControl(label, options, value, onChange) {
-    const select = h("select", { class: "select", "aria-label": label, onchange: () => onChange(select.value) });
-    for (const o of options)
-      select.append(option(o.value, o.label, value === o.value));
-    return select;
+    let current = value;
+    const text = h("span", { class: "dropdown-value" });
+    const trigger = h("button", { type: "button", class: "dropdown", "aria-haspopup": "listbox", "aria-expanded": "false", "aria-label": label }, text, icon(Icons.chevronDown));
+    const sync = () => {
+      const chosen = options.find((o) => o.value === current) ?? options[0];
+      text.textContent = chosen?.label ?? "";
+      trigger.title = chosen?.label ?? "";
+    };
+    sync();
+    trigger.addEventListener("click", () => {
+      let layer;
+      const pick = (next) => {
+        layer.close();
+        trigger.focus();
+        if (next === current)
+          return;
+        current = next;
+        sync();
+        onChange(next);
+      };
+      const items = options.map((o) => h("button", {
+        type: "button",
+        role: "option",
+        class: "menu-item",
+        "aria-selected": String(o.value === current),
+        "data-value": o.value,
+        onclick: () => pick(o.value)
+      }, h("span", { class: "menu-label" }, o.label), o.value === current && icon(Icons.check)));
+      const menu = h("div", { class: "menu", role: "listbox", "aria-label": label }, ...items);
+      menu.addEventListener("keydown", (event) => {
+        const { key } = event;
+        if (key !== "ArrowDown" && key !== "ArrowUp")
+          return;
+        event.preventDefault();
+        const index = items.indexOf(menu.querySelector(".menu-item:focus") ?? items[0]);
+        items[(index + (key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus();
+      });
+      layer = pushLayer("menu", menu, () => trigger.setAttribute("aria-expanded", "false"));
+      trigger.setAttribute("aria-expanded", "true");
+      placeMenu(menu, trigger.getBoundingClientRect());
+      (items.find((item) => item.getAttribute("aria-selected") === "true") ?? items[0])?.focus();
+    });
+    return trigger;
+  }
+  var MENU_GAP = 4;
+  function placeMenu(menu, anchor) {
+    const width = Math.max(anchor.width, menu.offsetWidth);
+    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+    const below = anchor.bottom + MENU_GAP;
+    const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
+    Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
   }
   function settingField(plugin, key, def) {
     const store = plugin.settings.store;
@@ -2849,7 +2911,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.0";
+    const version = "[20261007] v1.2.1";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2882,7 +2944,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.0";
+    const version = "[20261007] v1.2.1";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4752,7 +4814,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.0";
+    win[FLAG] = "[20261007] v1.2.1";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4762,7 +4824,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.1"} started`);
   }
   boot();
 })();

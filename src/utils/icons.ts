@@ -19,6 +19,8 @@ export const Icons = {
     x: `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
     info: `<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>`,
     alert: `<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>`,
+    check: `<path d="M20 6 9 17l-5-5"/>`,
+    chevronDown: `<path d="m6 9 6 6 6-6"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
 } as const;
 

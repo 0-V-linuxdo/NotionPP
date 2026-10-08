@@ -34,8 +34,8 @@ export const settings = definePluginSettings({
         description: { zh: "回复完成后折叠，或生成过程中就折叠", en: "After the reply finishes, or while it is still writing" },
         default: "finished",
         options: [
-            { value: "finished", label: { zh: "回复完成后", en: "When the reply finishes" } },
-            { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately, even while streaming" } },
+            { value: "finished", label: { zh: "回复完成后", en: "After the reply" } },
+            { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately" } },
         ],
     },
     collapseHistory: {

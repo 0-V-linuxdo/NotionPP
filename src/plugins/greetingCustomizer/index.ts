@@ -42,9 +42,9 @@ export const settings = definePluginSettings({
         description: { zh: "定时切换在离开首页时会暂停", en: "The timer pauses while you are away from home" },
         default: "refresh",
         options: [
-            { value: "refresh", label: { zh: "刷新/进入首页时切换", en: "On refresh or entering home" } },
-            { value: "interval", label: { zh: "按时间间隔切换", en: "On a timer" } },
-            { value: "manual", label: { zh: "点击问候语切换", en: "Click the greeting" } },
+            { value: "refresh", label: { zh: "刷新或进入首页时", en: "On refresh or visit" } },
+            { value: "interval", label: { zh: "按时间间隔", en: "On a timer" } },
+            { value: "manual", label: { zh: "点击问候语时", en: "On click" } },
         ],
     },
     order: {

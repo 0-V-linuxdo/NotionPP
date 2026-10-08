@@ -174,9 +174,22 @@ button { font: inherit; color: inherit; }
 .color input::-moz-color-swatch { border: 0; border-radius: 4px; }
 .color-value { font-size: 14px; color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
 .number { width: 5rem; text-align: right; }
-.row .select { height: 28px; max-width: 100%; padding-left: 8px; font-weight: 500; border-color: transparent; background-color: transparent;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .select:hover { background-color: var(--surface-hover); }
+
+/* Dropdown (Notion: borderless value + chevron, options in a popup menu) */
+.dropdown { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 28px; padding: 0 6px 0 8px; border: 0;
+  border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; font-weight: 500; cursor: pointer; }
+.dropdown:hover, .dropdown[aria-expanded="true"] { background: var(--surface-hover); }
+.dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown svg { width: 14px; height: 14px; color: var(--fg-tertiary); }
+.layer-menu { display: block; padding: 0; background: transparent; }
+.menu { position: fixed; display: flex; flex-direction: column; gap: 1px; max-width: min(20rem, calc(100vw - 16px));
+  max-height: min(20rem, calc(100vh - 16px)); overflow-y: auto; padding: 4px; border-radius: 10px; background: var(--surface-l1);
+  box-shadow: var(--shadow); }
+.menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; padding: 4px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg-primary); font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-hover); outline: none; }
+.menu-label { white-space: normal; }
+.menu-item svg { width: 14px; height: 14px; color: var(--fg-primary); }
 .row .input { height: 28px; }
 .dialog:focus, .sheet:focus { outline: none; }
 .prefs { gap: 0; padding-top: .25rem; }
