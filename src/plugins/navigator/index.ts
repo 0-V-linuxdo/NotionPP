@@ -146,7 +146,9 @@ function build() {
         mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "🤖";
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = labels[index];
+        label.textContent = summarize(message.text);
+        // Only when the whole prompt doesn't fit: show where it differs from an earlier one.
+        if (labels[index] !== label.textContent) label.dataset.compact = labels[index];
         button.title = summarize(message.text, 400);
         button.append(mark, label);
         button.addEventListener("click", () => jump(message.id));
@@ -154,8 +156,17 @@ function build() {
         item.append(button);
         return item;
     }));
+    compactOverflowing();
     activeId = "";
     updateActive();
+}
+
+/** Labels cut off by the menu's width switch to their compact form, so the differing tail stays visible. */
+function compactOverflowing() {
+    if (!overlay) return;
+    for (const label of overlay.root.querySelectorAll<HTMLElement>(".label[data-compact]")) {
+        if (label.scrollWidth > label.clientWidth + 1) label.textContent = label.dataset.compact!;
+    }
 }
 
 function setActive(id: string) {
