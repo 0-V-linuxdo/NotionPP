@@ -147,3 +147,19 @@ describe("geometry", () => {
         expect(parseAnchor({ xEdge: "left", xOffset: -1, yEdge: "top", yOffset: 0 })).toBeNull();
     });
 });
+
+describe("usage reset countdown", () => {
+    const HOUR = 3_600_000;
+    test("counts down past a day instead of printing a date", async () => {
+        const { formatReset } = await import("@plugins/usage/format");
+        expect(formatReset(NOW + 35 * HOUR, NOW)).toMatch(/^(1 天 11 小时后重置|Resets in 1d 11h)$/);
+        expect(formatReset(NOW + 48 * HOUR, NOW)).toMatch(/^(2 天后重置|Resets in 2d)$/);
+        expect(formatReset(NOW + 90 * 60_000, NOW)).toMatch(/^(1 小时 30 分钟后重置|Resets in 1h 30m)$/);
+        expect(formatReset(NOW + 24 * HOUR, NOW)).toMatch(/^(24 小时后重置|Resets in 24h)$/);
+    });
+    test("explains a missing reset at zero usage", async () => {
+        const { formatReset } = await import("@plugins/usage/format");
+        expect(formatReset(null, NOW, 0)).toMatch(/暂无用量|No usage yet/);
+        expect(formatReset(null, NOW, 5)).toMatch(/重置时间未知|Reset time unavailable/);
+    });
+});

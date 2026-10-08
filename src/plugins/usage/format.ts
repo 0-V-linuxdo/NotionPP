@@ -39,8 +39,16 @@ export function formatReset(resetAt: number | null, now = Date.now(), used?: num
     }
     const diff = resetAt - now;
     if (diff <= 0) return t("即将重置", "Resetting soon");
-    if (diff > 86_400_000) return t(`${formatDate(resetAt)} 重置`, `Resets ${formatDate(resetAt)}`);
     const minutes = Math.max(1, Math.ceil(diff / 60_000));
+    if (minutes > 1440) {
+        // Past a day, minutes are noise; the exact time is in the row tooltip.
+        const hours = Math.ceil(minutes / 60);
+        const d = Math.floor(hours / 24);
+        const h = hours % 24;
+        return h
+            ? t(`${d} 天 ${h} 小时后重置`, `Resets in ${d}d ${h}h`)
+            : t(`${d} 天后重置`, `Resets in ${d}d`);
+    }
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     if (h && m) return t(`${h} 小时 ${m} 分钟后重置`, `Resets in ${h}h ${m}m`);
