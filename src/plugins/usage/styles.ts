@@ -120,9 +120,9 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
-.tip-rows { display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 2px; }
+.tip-rows { display: grid; grid-template-columns: auto auto; row-gap: 2px; margin: 0; }
 .tip-rows dt { color: #ada9a3; }
-.tip-rows dd { margin: 0; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
 .tip-rows .today { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
 .tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
