@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.9.0
+// @version      20261007.1.9.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -453,6 +453,48 @@
       logger2.warn("XHR hook unavailable:", error);
     }
     installBeacon();
+    installFrameGuard();
+  }
+  var guarded = new WeakSet;
+  function guardWindow(win) {
+    if (!win || guarded.has(win))
+      return;
+    try {
+      const native = win.fetch;
+      if (typeof native !== "function")
+        return;
+      guarded.add(win);
+      win.fetch = function(input, init) {
+        try {
+          const isRequest = isInstance(input, "Request");
+          const url = resolveUrl(isRequest ? input.url : String(input));
+          const method = String(init?.method ?? (isRequest ? input.method : "GET")).toUpperCase();
+          if (isBlocked(url, method))
+            return Promise.resolve(emptyResponse());
+        } catch {}
+        return Reflect.apply(native, this, arguments);
+      };
+    } catch {}
+  }
+  function installFrameGuard() {
+    const proto = pageWindow.HTMLIFrameElement?.prototype;
+    const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "contentWindow");
+    if (!proto || !descriptor?.get)
+      return;
+    const read = descriptor.get;
+    try {
+      Object.defineProperty(proto, "contentWindow", {
+        ...descriptor,
+        get() {
+          const win = read.call(this);
+          if (blockers.size)
+            guardWindow(win);
+          return win;
+        }
+      });
+    } catch (error) {
+      logger2.warn("iframe guard unavailable:", error);
+    }
   }
   function installBeacon() {
     const nav = pageWindow.navigator;
@@ -4808,7 +4850,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.9.0";
+    const version = "[20261007] v1.9.1";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4843,7 +4885,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.9.0";
+    const version = "[20261007] v1.9.1";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -6863,7 +6905,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.9.0";
+    win[FLAG] = "[20261007] v1.9.1";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6891,7 +6933,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger7.info(`NotionAI++ ${"[20261007] v1.9.0"} started`);
+    logger7.info(`NotionAI++ ${"[20261007] v1.9.1"} started`);
   }
   boot();
 })();

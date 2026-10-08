@@ -259,6 +259,51 @@ export function installHooks() {
         logger.warn("XHR hook unavailable:", error);
     }
     installBeacon();
+    installFrameGuard();
+}
+
+/*
+ * Some libraries (Sentry among them) take fetch from a fresh same-origin iframe to dodge page
+ * hooks. Reading an iframe's contentWindow therefore hands back a window whose fetch also
+ * honours the blockers; observation is not extended there, only blocking.
+ */
+const guarded = new WeakSet<object>();
+
+function guardWindow(win: Window | null) {
+    if (!win || guarded.has(win)) return;
+    try {
+        const native = win.fetch;
+        if (typeof native !== "function") return;
+        guarded.add(win);
+        win.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
+            try {
+                const isRequest = isInstance(input, "Request");
+                const url = resolveUrl(isRequest ? (input as Request).url : String(input));
+                const method = String(init?.method ?? (isRequest ? (input as Request).method : "GET")).toUpperCase();
+                if (isBlocked(url, method)) return Promise.resolve(emptyResponse());
+            } catch {}
+            return Reflect.apply(native, this, arguments) as Promise<Response>;
+        } as typeof win.fetch;
+    } catch {}
+}
+
+function installFrameGuard() {
+    const proto = (pageWindow as unknown as { HTMLIFrameElement?: typeof HTMLIFrameElement }).HTMLIFrameElement?.prototype;
+    const descriptor = proto && Object.getOwnPropertyDescriptor(proto, "contentWindow");
+    if (!proto || !descriptor?.get) return;
+    const read = descriptor.get;
+    try {
+        Object.defineProperty(proto, "contentWindow", {
+            ...descriptor,
+            get(this: HTMLIFrameElement) {
+                const win = read.call(this) as Window | null;
+                if (blockers.size) guardWindow(win);
+                return win;
+            },
+        });
+    } catch (error) {
+        logger.warn("iframe guard unavailable:", error);
+    }
 }
 
 function installBeacon() {

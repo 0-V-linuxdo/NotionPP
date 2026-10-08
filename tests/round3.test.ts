@@ -9,6 +9,7 @@ import { describe, expect, test } from "bun:test";
 import { definePlugin, pluginError, registerPlugins, startPlugins, StartAt } from "@api/PluginManager";
 import { counterText, searchHistory } from "@plugins/inputHistory/index";
 import { categoryOf } from "@plugins/noTelemetry/index";
+import { openSettings, SETTINGS_HOST_ID } from "@plugins/settings";
 import { NOTION_PAGES } from "@plugins/settings/notionSettings";
 
 describe("prompt history browser", () => {
@@ -56,6 +57,13 @@ describe("plugin errors", () => {
         startPlugins(StartAt.DomReady);
         expect(pluginError("brokenForTest")).toMatchObject({ stage: "start", message: "selector not found" });
         expect(broken.started).toBe(false);
+
+        openSettings();
+        const card = document.getElementById(SETTINGS_HOST_ID)!.shadowRoot!.querySelector('.card[data-plugin="brokenForTest"]')!;
+        expect(card.classList.contains("crashed")).toBe(true);
+        expect(card.querySelector(".card-error-text")?.textContent).toContain("selector not found");
+        expect(card.querySelector(".card-error .btn")).not.toBeNull();
+        document.getElementById(SETTINGS_HOST_ID)?.remove();
     });
 });
 
