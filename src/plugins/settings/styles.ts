@@ -202,6 +202,7 @@ button { font: inherit; color: inherit; }
   .sheet-body { margin: 0 -20px -16px; padding: 0 20px 16px; }
   .row { flex-wrap: wrap; gap: 8px 16px; }
   .row-control { max-width: 100%; }
+  .row-control .dropdown { margin-left: -8px; }
 }
 
 /* About tab */
