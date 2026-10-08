@@ -12,7 +12,7 @@ import { isAiRoute, pageWindow, t } from "@utils/page";
 
 import { visibleBilling } from "./billing";
 import { ComposerTracker } from "./composer";
-import { billingRow, formatCountdown, formatPercent } from "./format";
+import { billingRow, formatCountdown, formatDate, formatPercent } from "./format";
 import { type Anchor, dockPoint, parseAnchor, type Point, pointFromAnchor } from "./geometry";
 import type { UsageService } from "./service";
 import { readDay, statDelta, usedOn } from "./stats";
@@ -186,7 +186,11 @@ export class UsageWidget {
         const todayText = this.todayText();
         this.setRow("today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly"), this.tipToday && todayText !== null && !!monthly);
         const plan = billing ? billingRow(billing, now) : null;
-        this.setRow("plan", plan?.label ?? "", plan?.value ?? "", plan?.detail ?? "", !!plan);
+        // The card's "Current period ends …" line is too long for a tooltip; keep the date only.
+        const planWhen = billing?.kind === "subscription" && billing.periodEndAt !== null
+            ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`)
+            : billing?.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
+        this.setRow("plan", plan?.label ?? "", plan?.value ?? "", planWhen, !!plan);
 
         let note = "";
         let kind: "info" | "error" = error ? "error" : "info";

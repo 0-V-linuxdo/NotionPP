@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.11
+// @version      20261007.1.2.12
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2912,7 +2912,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.11";
+    const version = "[20261007] v1.2.12";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2945,7 +2945,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.11";
+    const version = "[20261007] v1.2.12";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4333,7 +4333,8 @@ button { font: inherit; }
       const todayText = this.todayText();
       this.setRow("today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly"), this.tipToday && todayText !== null && !!monthly);
       const plan = billing ? billingRow(billing, now) : null;
-      this.setRow("plan", plan?.label ?? "", plan?.value ?? "", plan?.detail ?? "", !!plan);
+      const planWhen = billing?.kind === "subscription" && billing.periodEndAt !== null ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`) : billing?.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
+      this.setRow("plan", plan?.label ?? "", plan?.value ?? "", planWhen, !!plan);
       let note = "";
       let kind = error ? "error" : "info";
       if (!snapshot) {
@@ -4461,7 +4462,7 @@ button { font: inherit; }
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.11";
+    win[FLAG] = "[20261007] v1.2.12";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4471,7 +4472,7 @@ button { font: inherit; }
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.11"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.12"} started`);
   }
   boot();
 })();
