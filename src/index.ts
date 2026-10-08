@@ -13,6 +13,7 @@ import { isTopmostNotionDocument, pageWindow } from "@utils/page";
 import autoCollapseThinking from "@plugins/autoCollapseThinking/index";
 import focusHighlight from "@plugins/focusHighlight/index";
 import greetingCustomizer from "@plugins/greetingCustomizer/index";
+import hideShare from "@plugins/hideShare/index";
 import inputHistory from "@plugins/inputHistory/index";
 import messageStars from "@plugins/messageStars/index";
 import chatNavigator from "@plugins/navigator/index";
@@ -34,7 +35,7 @@ function boot() {
     installHooks();
     registerPlugins([
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
-        inputHistory, widerChat, autoCollapseThinking, focusHighlight, greetingCustomizer,
+        inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);

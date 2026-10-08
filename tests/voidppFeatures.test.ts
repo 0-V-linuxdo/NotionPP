@@ -13,7 +13,10 @@ import { messageIdFor, scan } from "@plugins/messageStars/index";
 import { setStarsActive, STARS_KEY, starsOf, toggleStar } from "@plugins/messageStars/store";
 import { columnOf, css } from "@plugins/widerChat/index";
 
-const frame = () => new Promise(resolve => setTimeout(resolve, 40));
+
+async function until(done: () => boolean, ms = 1000) {
+    for (let waited = 0; waited < ms && !done(); waited += 10) await new Promise(resolve => setTimeout(resolve, 10));
+}
 
 afterEach(() => {
     document.body.innerHTML = "";
@@ -49,9 +52,9 @@ describe("reply watcher", () => {
         ];
         const release = watchReplies();
         document.body.innerHTML = `<div data-notion-chat-input-container><div role="button" data-testid="agent-stop-inference-button"></div></div>`;
-        await frame();
+        await until(() => events.length === 1);
         document.querySelector(STOP_BUTTON)!.remove();
-        await frame();
+        await until(() => events.length === 2);
         release();
         offs.forEach(off => off());
         expect(events).toEqual(["start:abc", "end:abc:false"]);
@@ -132,7 +135,24 @@ describe("star visibility", () => {
         const star = document.querySelector<HTMLElement>("[data-npp-star] > *")!;
         expect(star.style.opacity).toBe("0");
         copy.style.opacity = "1";
-        await frame();
+        await until(() => star.style.opacity === "1");
         expect(star.style.opacity).toBe("1");
+    });
+});
+
+describe("hide share", () => {
+    test("hides the chat Share button, and page Share only when asked", async () => {
+        const { css } = await import("@plugins/hideShare/index");
+        document.body.innerHTML = `<div role="button" data-testid="share-chat-button"></div><div role="button" aria-label="Pin chat"></div><div class="notion-topbar-share-menu"></div>`;
+        const style = document.createElement("style");
+        style.textContent = css(false);
+        document.head.append(style);
+        const display = (selector: string) => getComputedStyle(document.querySelector(selector)!).display;
+        expect(display("[data-testid='share-chat-button']")).toBe("none");
+        expect(display("[aria-label='Pin chat']")).not.toBe("none");
+        expect(display(".notion-topbar-share-menu")).not.toBe("none");
+        style.textContent = css(true);
+        expect(display(".notion-topbar-share-menu")).toBe("none");
+        style.remove();
     });
 });

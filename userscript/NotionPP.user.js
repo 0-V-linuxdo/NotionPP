@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.3.5
+// @version      20261007.1.4.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -559,6 +559,7 @@
     browser: `<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/>`,
     history: `<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>`,
     width: `<path d="M21 12H3"/><path d="m15 6 6 6-6 6"/><path d="m9 18-6-6 6-6"/>`,
+    shareOff: `<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m2 2 20 20"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -2100,13 +2101,60 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   });
 
+  // src/plugins/hideShare/index.ts
+  var STYLE_ID3 = "notionai-pp-hide-share";
+  var CHAT_SHARE = "[data-testid='share-chat-button']";
+  var PAGE_SHARE = ".notion-topbar-share-menu";
+  var settings4 = definePluginSettings({
+    pages: {
+      type: "boolean",
+      label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
+      description: { zh: "普通 Notion 页面右上角的「分享」按钮", en: "The Share button at the top right of ordinary Notion pages" },
+      default: false
+    }
+  });
+  function css(pages) {
+    const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
+    return `${selectors.join(", ")} { display: none !important; }`;
+  }
+  function apply2() {
+    let style = document.getElementById(STYLE_ID3);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID3;
+      (document.head ?? document.documentElement).append(style);
+    }
+    style.textContent = css(settings4.store.pages);
+  }
+  var hideShare_default = definePlugin({
+    name: "hideShare",
+    title: { zh: "隐藏分享按钮", en: "Hide Share button" },
+    description: {
+      zh: "隐藏 Notion AI 对话右上角的分享按钮，避免误点把对话分享出去。也可以顺带隐藏普通页面的分享按钮。",
+      en: "Hides the Share button at the top right of Notion AI chats so a chat is not shared by accident. Can also hide Share on ordinary pages."
+    },
+    icon: Icons.shareOff,
+    tags: ["appearance"],
+    enabledByDefault: true,
+    settings: settings4,
+    start() {
+      apply2();
+    },
+    stop() {
+      document.getElementById(STYLE_ID3)?.remove();
+    },
+    onSettingsChange() {
+      apply2();
+    }
+  });
+
   // src/plugins/inputHistory/index.ts
   var STORE_KEY = "notionai-pp:input-history:v1";
   var COMPOSER = "[data-notion-chat-input-container]";
   var EDITOR2 = `${COMPOSER} [contenteditable='true']`;
   var SEND = "[data-testid='agent-send-message-button']";
   var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
-  var settings4 = definePluginSettings({
+  var settings5 = definePluginSettings({
     max: {
       type: "number",
       label: { zh: "最多保存条数", en: "Prompts to keep" },
@@ -2182,7 +2230,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function record(editor) {
     if (!editor)
       return;
-    save(remember(load(), textOf(editor), settings4.store.max));
+    save(remember(load(), textOf(editor), settings5.store.max));
     reset();
   }
   function consume(event) {
@@ -2250,7 +2298,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.history,
     tags: ["composer"],
     enabledByDefault: true,
-    settings: settings4,
+    settings: settings5,
     start() {
       document.addEventListener("keydown", onKeyDown, true);
       document.addEventListener("click", onClick2, true);
@@ -2919,7 +2967,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var COMPOSER2 = "[data-notion-chat-input-container]";
   var SPAN_GAP = 12;
   var MIN_SPAN = 120;
-  var settings5 = definePluginSettings({
+  var settings6 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     effect: {
       type: "select",
@@ -2932,7 +2980,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       type: "action",
       label: { zh: "预览效果", en: "Preview effect" },
       button: { zh: "预览", en: "Preview" },
-      run: () => previewEffect(settings5.store.effect)
+      run: () => previewEffect(settings6.store.effect)
     }
   });
   var overlay2 = null;
@@ -2944,7 +2992,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
   function visibleMessages(all) {
-    return settings5.store.showAssistant ? all : all.filter((message) => message.role === "user");
+    return settings6.store.showAssistant ? all : all.filter((message) => message.role === "user");
   }
   function placeRail() {
     if (!overlay2)
@@ -3100,7 +3148,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       clearTimeout(timer);
       timer = window.setTimeout(() => {
         (isRoot ? window : scroller).removeEventListener("scroll", settle);
-        playEffect(target, settings5.store.effect);
+        playEffect(target, settings6.store.effect);
       }, SETTLE_MS);
     };
     (isRoot ? window : scroller).addEventListener("scroll", settle, { passive: true });
@@ -3117,7 +3165,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings5,
+    settings: settings6,
     start() {
       overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
       overlay2.host.hidden = true;
@@ -3176,7 +3224,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   });
 
   // src/plugins/replyNotification/index.ts
-  var settings6 = definePluginSettings({
+  var settings7 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -3210,7 +3258,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   });
   var audio = null;
   var cleanups4 = [];
-  function chime(volume = settings6.store.volume) {
+  function chime(volume = settings7.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -3247,7 +3295,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings6.store.sound
+        silent: settings7.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -3256,20 +3304,20 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     } catch {}
   }
   function notify2({ error }) {
-    if (settings6.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings7.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings6.store.sound)
+    if (settings7.store.sound)
       chime();
-    if (settings6.store.desktop)
+    if (settings7.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings6.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings7.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings6.store.sound)
+    if (settings7.store.sound)
       chime();
-    if (settings6.store.desktop)
+    if (settings7.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -3282,7 +3330,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings6,
+    settings: settings7,
     start() {
       cleanups4 = [watchReplies(), on("replyEnd", notify2)];
     },
@@ -3293,7 +3341,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       audio = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings6.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings7.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
@@ -3494,7 +3542,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.3.5";
+    const version = "[20261007] v1.4.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -3527,7 +3575,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.3.5";
+    const version = "[20261007] v1.4.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3577,7 +3625,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var SIZE = 32;
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" };
-  var settings7 = definePluginSettings({
+  var settings8 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -3686,7 +3734,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings7,
+    settings: settings8,
     start() {
       remember2();
       const onVisible = () => seen();
@@ -3697,7 +3745,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error }) => {
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings7.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings8.store.showDone ? "done" : "idle");
         }),
         onDomChange(() => {
           const link = iconLink();
@@ -5096,7 +5144,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings8 = definePluginSettings({
+  var settings9 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -5143,19 +5191,19 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings8.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings9.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings8.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings9.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings8.store.usageStats,
-    setEnabled: (value) => void (settings8.store.usageStats = value),
-    retain: () => settings8.store.retainDays,
-    hoverDelay: () => settings8.store.hoverStatsDelay,
-    showPlan: () => settings8.store.showPlan,
+    enabled: () => settings9.store.usageStats,
+    setEnabled: (value) => void (settings9.store.usageStats = value),
+    retain: () => settings9.store.retainDays,
+    hoverDelay: () => settings9.store.hoverStatsDelay,
+    showPlan: () => settings9.store.showPlan,
     refresh: record2
   };
   function mount() {
@@ -5174,7 +5222,7 @@ button { font: inherit; }
     tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings8,
+    settings: settings9,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -5201,11 +5249,11 @@ button { font: inherit; }
   });
 
   // src/plugins/widerChat/index.ts
-  var STYLE_ID3 = "notionai-pp-wider-chat";
+  var STYLE_ID4 = "notionai-pp-wider-chat";
   var MARK2 = "data-npp-chat-column";
   var COMPOSER3 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings9 = definePluginSettings({
+  var settings10 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -5233,18 +5281,18 @@ button { font: inherit; }
       column.setAttribute(MARK2, "");
     }
   }
-  function css(width) {
+  function css2(width) {
     return `[${MARK2}] { max-width: ${width}px !important; }
 ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
   }
-  function apply2() {
-    let style = document.getElementById(STYLE_ID3);
+  function apply3() {
+    let style = document.getElementById(STYLE_ID4);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID3;
+      style.id = STYLE_ID4;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css(settings9.store.width);
+    style.textContent = css2(settings10.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -5256,21 +5304,21 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings9,
+    settings: settings10,
     start() {
-      apply2();
+      apply3();
       mark();
       stopDom4 = onDomChange(mark);
     },
     stop() {
       stopDom4?.();
       stopDom4 = null;
-      document.getElementById(STYLE_ID3)?.remove();
+      document.getElementById(STYLE_ID4)?.remove();
       for (const node of document.querySelectorAll(`[${MARK2}]`))
         node.removeAttribute(MARK2);
     },
     onSettingsChange() {
-      apply2();
+      apply3();
     }
   });
 
@@ -5281,7 +5329,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.3.5";
+    win[FLAG] = "[20261007] v1.4.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5292,6 +5340,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       tabStatus_default,
       inputHistory_default,
       widerChat_default,
+      hideShare_default,
       autoCollapseThinking_default,
       focusHighlight_default,
       greetingCustomizer_default
@@ -5303,7 +5352,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.3.5"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.4.0"} started`);
   }
   boot();
 })();
