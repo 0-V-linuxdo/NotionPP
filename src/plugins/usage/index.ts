@@ -21,6 +21,12 @@ export const settings = definePluginSettings({
         description: { zh: "按天记录月度额度的使用量", en: "Log how much of the monthly allowance is used each day" },
         default: true,
     },
+    showPlan: {
+        type: "boolean",
+        label: { zh: "悬停时显示套餐", en: "Show plan on hover" },
+        description: { zh: "在悬停提示里显示套餐和周期截止日期", en: "Show the plan and its period end date in the hover tooltip" },
+        default: false,
+    },
     hoverStatsDelay: {
         type: "number",
         label: { zh: "悬停显示今日用量的延迟（秒）", en: "Delay before showing today on hover, in seconds" },
@@ -68,6 +74,7 @@ const stats: WidgetStats = {
     setEnabled: value => void (settings.store.usageStats = value),
     retain: () => settings.store.retainDays,
     hoverDelay: () => settings.store.hoverStatsDelay,
+    showPlan: () => settings.store.showPlan,
     refresh: record,
 };
 
@@ -80,8 +87,8 @@ export default definePlugin({
     name: "usageMeter",
     title: { zh: "AI 用量", en: "AI usage" },
     description: {
-        zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比、重置时间和套餐，点击按日期查看用量。",
-        en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages, reset times and plan; click for usage by date.",
+        zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比和重置时间，点击按日期查看用量。",
+        en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages and reset times; click for usage by date.",
     },
     icon: Icons.gauge,
     tags: ["composer"],

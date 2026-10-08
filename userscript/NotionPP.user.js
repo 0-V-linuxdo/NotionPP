@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.12
+// @version      20261007.1.2.13
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2912,7 +2912,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.12";
+    const version = "[20261007] v1.2.13";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2945,7 +2945,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.12";
+    const version = "[20261007] v1.2.13";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4142,24 +4142,25 @@ button { font: inherit; }
 .ring[data-tone="warning"] { color: var(--warn); }
 .ring[data-tone="danger"] { color: var(--danger); }
 .tip {
-  position: absolute; left: 50%; top: calc(100% + 6px); z-index: 3; width: max-content; max-width: 300px; padding: 5px 8px;
+  position: absolute; left: 50%; top: calc(100% + 6px); z-index: 3; width: max-content; min-width: 176px; max-width: 280px;
+  display: flex; flex-direction: column; gap: 8px; padding: 8px 10px;
   border-radius: 6px; color: #f0efed; background: #2c2c2b;
-  box-shadow: 0 4px 12px -2px rgba(0,0,0,.08), inset 0 0 0 1px rgba(255,255,255,.05);
+  box-shadow: 0 4px 12px -2px rgba(0,0,0,.16), inset 0 0 0 1px rgba(255,255,255,.05);
   font: 400 12px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; pointer-events: none;
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
 :host(:not([data-docked])) .tip { left: auto; right: 0; transform: none; }
 :host(:not([data-docked])[data-side="left"]) .tip { left: 0; right: auto; }
-.tip-rows { display: grid; grid-template-columns: auto auto auto; row-gap: 2px; margin: 0; }
-.tip-rows dt { color: #ada9a3; }
-.tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
-.tip-rows dd.when { padding-left: 12px; text-align: left; font-weight: 400; color: #ada9a3; }
-.tip-rows .sep { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
-.tip-note { grid-column: 1 / -1; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); white-space: normal; max-width: 280px; }
+.blk { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lbl { font-size: 11px; color: #ada9a3; }
+.val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.sub { color: #ada9a3; font-variant-numeric: tabular-nums; }
+.meters { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
+.today { padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.09); }
+.plan, .tip-note { padding-top: 8px; border-top: 1px solid rgba(255,255,255,.09); }
+.tip-note { white-space: normal; color: #ada9a3; }
 .tip-note[data-kind="error"] { color: #ff9b94; }
-.tip-hint { margin-top: 4px; color: #7d7a75; }
-.tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
 @media (prefers-reduced-motion: reduce) { .tip, .ring-fill { transition: none; } }
 `;
@@ -4169,13 +4170,15 @@ button { font: inherit; }
   var USAGE_HTML = `
 <div class="shell">
   <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
-  <span class="tip" role="tooltip"><dl class="tip-rows">
-    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd><dd class="when tip-w-rolling"></dd>
-    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd><dd class="when tip-w-monthly"></dd>
-    <dt class="sep tip-l-today" hidden></dt><dd class="sep tip-v-today" hidden></dd><dd class="sep when tip-w-today" hidden></dd>
-    <dt class="sep tip-l-plan" hidden></dt><dd class="sep tip-v-plan" hidden></dd><dd class="sep when tip-w-plan" hidden></dd>
-    <dd class="tip-note" hidden></dd>
-  </dl><div class="tip-hint"></div></span>
+  <span class="tip" role="tooltip">
+    <div class="blk today" hidden><div class="lbl tip-l-today"></div><div class="val tip-v-today"></div></div>
+    <div class="meters">
+      <div class="blk"><div class="lbl tip-l-rolling"></div><div class="val tip-v-rolling"></div><div class="sub tip-w-rolling"></div></div>
+      <div class="blk"><div class="lbl tip-l-monthly"></div><div class="val tip-v-monthly"></div><div class="sub tip-w-monthly"></div></div>
+    </div>
+    <div class="blk plan" hidden><div class="lbl tip-l-plan"></div><div class="val tip-v-plan"></div><div class="sub tip-w-plan"></div></div>
+    <div class="tip-note" hidden></div>
+  </span>
 </div>`;
 
   // src/plugins/usage/ui.ts
@@ -4304,12 +4307,10 @@ button { font: inherit; }
       const orbNow = boxOf(orb);
       this.place({ left: target.left - (orbNow.left - hostBox.left), top: target.top - (orbNow.top - hostBox.top) });
     }
-    setRow(key, label, value, when, visible = true) {
-      for (const [part, text] of [["l", label], ["v", value], ["w", when]]) {
-        const cell = this.q(`.tip-${part}-${key}`);
-        cell.textContent = text;
-        cell.hidden = !visible;
-      }
+    setText(selector, text) {
+      const el = this.q(selector);
+      el.textContent = text;
+      el.hidden = !text;
     }
     render() {
       const now = Date.now();
@@ -4328,13 +4329,25 @@ button { font: inherit; }
       const monthly = applicable ? activeMonthly(snapshot, now) : null;
       const rollingText = formatPercent(views.rolling.percent);
       const monthlyText = formatPercent(views.monthly.percent);
-      this.setRow("rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : "");
-      this.setRow("monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : "");
+      const used = (text) => text === "—" ? text : t(`已用 ${text}`, `${text} used`);
+      this.q(".tip-l-rolling").textContent = t("6 小时", "6-hour");
+      this.q(".tip-v-rolling").textContent = used(rollingText);
+      this.setText(".tip-w-rolling", rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : "");
+      this.q(".tip-l-monthly").textContent = t("月度", "Monthly");
+      this.q(".tip-v-monthly").textContent = used(monthlyText);
+      this.setText(".tip-w-monthly", monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : "");
       const todayText = this.todayText();
-      this.setRow("today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly"), this.tipToday && todayText !== null && !!monthly);
-      const plan = billing ? billingRow(billing, now) : null;
-      const planWhen = billing?.kind === "subscription" && billing.periodEndAt !== null ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`) : billing?.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
-      this.setRow("plan", plan?.label ?? "", plan?.value ?? "", planWhen, !!plan);
+      this.q(".today").hidden = !(this.tipToday && todayText !== null && !!monthly);
+      this.q(".tip-l-today").textContent = t("今天", "Today");
+      this.q(".tip-v-today").textContent = todayText === null ? "" : t(`占月度额度 ${todayText}`, `${todayText} of monthly`);
+      const plan = this.stats.showPlan() && billing ? billingRow(billing, now) : null;
+      this.q(".plan").hidden = !plan;
+      if (plan && billing) {
+        const planWhen = billing.kind === "subscription" && billing.periodEndAt !== null ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`) : billing.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
+        this.q(".tip-l-plan").textContent = plan.label;
+        this.q(".tip-v-plan").textContent = plan.value;
+        this.setText(".tip-w-plan", planWhen);
+      }
       let note = "";
       let kind = error ? "error" : "info";
       if (!snapshot) {
@@ -4351,7 +4364,6 @@ button { font: inherit; }
       noteEl.textContent = note;
       noteEl.hidden = !note;
       noteEl.dataset.kind = kind;
-      this.q(".tip-hint").textContent = t("点击按日期查看用量", "Click for usage by date");
       this.q(".orb").setAttribute("aria-label", !applicable ? t("AI 用量，点击按日期查看", "AI usage, click for usage by date") : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击按日期查看`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click for usage by date`));
       this.layout();
     }
@@ -4364,6 +4376,12 @@ button { font: inherit; }
       label: { zh: "记录每日用量", en: "Daily usage stats" },
       description: { zh: "按天记录月度额度的使用量", en: "Log how much of the monthly allowance is used each day" },
       default: true
+    },
+    showPlan: {
+      type: "boolean",
+      label: { zh: "悬停时显示套餐", en: "Show plan on hover" },
+      description: { zh: "在悬停提示里显示套餐和周期截止日期", en: "Show the plan and its period end date in the hover tooltip" },
+      default: false
     },
     hoverStatsDelay: {
       type: "number",
@@ -4411,6 +4429,7 @@ button { font: inherit; }
     setEnabled: (value) => void (settings5.store.usageStats = value),
     retain: () => settings5.store.retainDays,
     hoverDelay: () => settings5.store.hoverStatsDelay,
+    showPlan: () => settings5.store.showPlan,
     refresh: record
   };
   function mount() {
@@ -4422,8 +4441,8 @@ button { font: inherit; }
     name: "usageMeter",
     title: { zh: "AI 用量", en: "AI usage" },
     description: {
-      zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比、重置时间和套餐，点击按日期查看用量。",
-      en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages, reset times and plan; click for usage by date."
+      zh: "在 AI 输入框底部中央用两个圆环显示 6 小时与月度用量，悬停查看百分比和重置时间，点击按日期查看用量。",
+      en: "Two rings at the bottom center of the AI composer show 6-hour and monthly usage. Hover for percentages and reset times; click for usage by date."
     },
     icon: Icons.gauge,
     tags: ["composer"],
@@ -4462,7 +4481,7 @@ button { font: inherit; }
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.12";
+    win[FLAG] = "[20261007] v1.2.13";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4472,7 +4491,7 @@ button { font: inherit; }
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.12"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.13"} started`);
   }
   boot();
 })();

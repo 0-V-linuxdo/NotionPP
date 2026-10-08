@@ -34,24 +34,25 @@ button { font: inherit; }
 .ring[data-tone="warning"] { color: var(--warn); }
 .ring[data-tone="danger"] { color: var(--danger); }
 .tip {
-  position: absolute; left: 50%; top: calc(100% + 6px); z-index: 3; width: max-content; max-width: 300px; padding: 5px 8px;
+  position: absolute; left: 50%; top: calc(100% + 6px); z-index: 3; width: max-content; min-width: 176px; max-width: 280px;
+  display: flex; flex-direction: column; gap: 8px; padding: 8px 10px;
   border-radius: 6px; color: #f0efed; background: #2c2c2b;
-  box-shadow: 0 4px 12px -2px rgba(0,0,0,.08), inset 0 0 0 1px rgba(255,255,255,.05);
+  box-shadow: 0 4px 12px -2px rgba(0,0,0,.16), inset 0 0 0 1px rgba(255,255,255,.05);
   font: 400 12px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; pointer-events: none;
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
 :host(:not([data-docked])) .tip { left: auto; right: 0; transform: none; }
 :host(:not([data-docked])[data-side="left"]) .tip { left: 0; right: auto; }
-.tip-rows { display: grid; grid-template-columns: auto auto auto; row-gap: 2px; margin: 0; }
-.tip-rows dt { color: #ada9a3; }
-.tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
-.tip-rows dd.when { padding-left: 12px; text-align: left; font-weight: 400; color: #ada9a3; }
-.tip-rows .sep { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
-.tip-note { grid-column: 1 / -1; margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); white-space: normal; max-width: 280px; }
+.blk { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.lbl { font-size: 11px; color: #ada9a3; }
+.val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.sub { color: #ada9a3; font-variant-numeric: tabular-nums; }
+.meters { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; }
+.today { padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.09); }
+.plan, .tip-note { padding-top: 8px; border-top: 1px solid rgba(255,255,255,.09); }
+.tip-note { white-space: normal; color: #ada9a3; }
 .tip-note[data-kind="error"] { color: #ff9b94; }
-.tip-hint { margin-top: 4px; color: #7d7a75; }
-.tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
 @media (prefers-reduced-motion: reduce) { .tip, .ring-fill { transition: none; } }
 `;
@@ -63,11 +64,13 @@ const RING = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle c
 export const USAGE_HTML = `
 <div class="shell">
   <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
-  <span class="tip" role="tooltip"><dl class="tip-rows">
-    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd><dd class="when tip-w-rolling"></dd>
-    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd><dd class="when tip-w-monthly"></dd>
-    <dt class="sep tip-l-today" hidden></dt><dd class="sep tip-v-today" hidden></dd><dd class="sep when tip-w-today" hidden></dd>
-    <dt class="sep tip-l-plan" hidden></dt><dd class="sep tip-v-plan" hidden></dd><dd class="sep when tip-w-plan" hidden></dd>
-    <dd class="tip-note" hidden></dd>
-  </dl><div class="tip-hint"></div></span>
+  <span class="tip" role="tooltip">
+    <div class="blk today" hidden><div class="lbl tip-l-today"></div><div class="val tip-v-today"></div></div>
+    <div class="meters">
+      <div class="blk"><div class="lbl tip-l-rolling"></div><div class="val tip-v-rolling"></div><div class="sub tip-w-rolling"></div></div>
+      <div class="blk"><div class="lbl tip-l-monthly"></div><div class="val tip-v-monthly"></div><div class="sub tip-w-monthly"></div></div>
+    </div>
+    <div class="blk plan" hidden><div class="lbl tip-l-plan"></div><div class="val tip-v-plan"></div><div class="sub tip-w-plan"></div></div>
+    <div class="tip-note" hidden></div>
+  </span>
 </div>`;

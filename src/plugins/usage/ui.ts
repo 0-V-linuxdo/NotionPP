@@ -40,6 +40,7 @@ function readAnchor(): Anchor | null {
 
 export interface WidgetStats extends StatsContext {
     hoverDelay: () => number;
+    showPlan: () => boolean;
 }
 
 /**
@@ -153,12 +154,10 @@ export class UsageWidget {
         this.place({ left: target.left - (orbNow.left - hostBox.left), top: target.top - (orbNow.top - hostBox.top) });
     }
 
-    private setRow(key: string, label: string, value: string, when: string, visible = true) {
-        for (const [part, text] of [["l", label], ["v", value], ["w", when]] as const) {
-            const cell = this.q(`.tip-${part}-${key}`);
-            cell.textContent = text;
-            cell.hidden = !visible;
-        }
+    private setText(selector: string, text: string) {
+        const el = this.q(selector);
+        el.textContent = text;
+        el.hidden = !text;
     }
 
     render() {
@@ -181,16 +180,32 @@ export class UsageWidget {
         const monthly = applicable ? activeMonthly(snapshot, now) : null;
         const rollingText = formatPercent(views.rolling.percent);
         const monthlyText = formatPercent(views.monthly.percent);
-        this.setRow("rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : "");
-        this.setRow("monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : "");
+        // Stacked label / value / reset blocks like Void++'s UsagePanel: one meter per column, so
+        // no column is stretched by the longest free text of another row.
+        const used = (text: string) => text === "—" ? text : t(`已用 ${text}`, `${text} used`);
+        this.q(".tip-l-rolling").textContent = t("6 小时", "6-hour");
+        this.q(".tip-v-rolling").textContent = used(rollingText);
+        this.setText(".tip-w-rolling", rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : "");
+        this.q(".tip-l-monthly").textContent = t("月度", "Monthly");
+        this.q(".tip-v-monthly").textContent = used(monthlyText);
+        this.setText(".tip-w-monthly", monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : "");
+
         const todayText = this.todayText();
-        this.setRow("today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly"), this.tipToday && todayText !== null && !!monthly);
-        const plan = billing ? billingRow(billing, now) : null;
-        // The card's "Current period ends …" line is too long for a tooltip; keep the date only.
-        const planWhen = billing?.kind === "subscription" && billing.periodEndAt !== null
-            ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`)
-            : billing?.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
-        this.setRow("plan", plan?.label ?? "", plan?.value ?? "", planWhen, !!plan);
+        this.q(".today").hidden = !(this.tipToday && todayText !== null && !!monthly);
+        this.q(".tip-l-today").textContent = t("今天", "Today");
+        this.q(".tip-v-today").textContent = todayText === null ? "" : t(`占月度额度 ${todayText}`, `${todayText} of monthly`);
+
+        const plan = this.stats.showPlan() && billing ? billingRow(billing, now) : null;
+        this.q(".plan").hidden = !plan;
+        if (plan && billing) {
+            // The card's "Current period ends …" line is too long for a tooltip; keep the date only.
+            const planWhen = billing.kind === "subscription" && billing.periodEndAt !== null
+                ? t(`周期至 ${formatDate(billing.periodEndAt)}`, `until ${formatDate(billing.periodEndAt)}`)
+                : billing.kind === "trial" ? t(`${formatDate(billing.endAt)} 结束`, `ends ${formatDate(billing.endAt)}`) : "";
+            this.q(".tip-l-plan").textContent = plan.label;
+            this.q(".tip-v-plan").textContent = plan.value;
+            this.setText(".tip-w-plan", planWhen);
+        }
 
         let note = "";
         let kind: "info" | "error" = error ? "error" : "info";
@@ -210,7 +225,6 @@ export class UsageWidget {
         noteEl.textContent = note;
         noteEl.hidden = !note;
         noteEl.dataset.kind = kind;
-        this.q(".tip-hint").textContent = t("点击按日期查看用量", "Click for usage by date");
 
         this.q(".orb").setAttribute("aria-label", !applicable
             ? t("AI 用量，点击按日期查看", "AI usage, click for usage by date")
