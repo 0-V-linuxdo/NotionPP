@@ -30,6 +30,10 @@ export const NAV_CSS = `
 .line.starred { background: #d9730d; opacity: 1; }
 .line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
 .line.starred.active { background: #d9730d; box-shadow: 0 0 3px #d9730d; }
+/* Like Void++'s dashed tick: the reply Notion AI is still writing. */
+.line.streaming { background: repeating-linear-gradient(90deg, var(--line-active) 0 3px, transparent 3px 5px); opacity: 1; animation: npp-live 1.2s ease-in-out infinite; }
+.line.streaming.active { box-shadow: none; }
+@keyframes npp-live { 50% { opacity: .45; } }
 .menu {
   position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
@@ -47,10 +51,12 @@ button.item {
 button.item:hover { color: var(--text); background: var(--hover); }
 button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
 button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
+div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
+.live { flex: 0 0 auto; padding: 0 5px; border: 1px dashed var(--line); border-radius: 4px; color: var(--subtle); font-size: 10.5px; font-style: normal; line-height: 16px; }
 .label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } .line.streaming { animation: none; } }
 @media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
 `;
 

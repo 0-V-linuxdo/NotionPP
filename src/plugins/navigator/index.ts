@@ -6,13 +6,13 @@
 
 import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
-import { currentChatId } from "@api/Reply";
+import { currentChatId, replyState, watchReplies } from "@api/Reply";
 import { createOverlay, type Overlay } from "@api/Overlay";
 import { definePlugin } from "@api/PluginManager";
 import { onRouteChange } from "@api/Router";
 import { definePluginSettings } from "@api/Settings";
 import { scrollParentOf, viewport, visibleBox } from "@utils/dom";
-import { isAiRoute } from "@utils/page";
+import { isAiRoute, t } from "@utils/page";
 import { debounce, frameThrottle } from "@utils/time";
 
 import { EFFECTS, type Effect, playEffect, previewEffect } from "./effects";
@@ -36,6 +36,15 @@ const MIN_SPAN = 120;
 
 export const settings = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
+    keyboard: {
+        type: "boolean",
+        label: { zh: "键盘快捷键", en: "Keyboard shortcuts" },
+        description: {
+            zh: "焦点不在输入框时：↑/↓ 上一条或下一条消息，Home/End 第一条或最后一条，⌘/Ctrl+↑/↓ 对话顶部或底部，Esc 收起目录",
+            en: "When not typing: ↑/↓ previous or next message, Home/End first or last, ⌘/Ctrl+↑/↓ top or bottom of the chat, Esc closes the outline",
+        },
+        default: true,
+    },
     effect: {
         type: "select",
         label: { zh: "跳转定位效果", en: "Jump effect" },
@@ -110,14 +119,104 @@ export function railSpan() {
     return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
 }
 
+/**
+ * Like Void++'s dashed tick: while Notion AI writes, its reply is marked as in progress. Before
+ * the reply has any text, a placeholder stands in for it after the last prompt.
+ */
+export function streamingState(list: ChatMessage[], streaming = replyState() === "streaming") {
+    if (!streaming || !settings.store.showAssistant) return { id: "", pending: false };
+    const last = list[list.length - 1];
+    if (last?.role === "assistant") return { id: last.id, pending: false };
+    return { id: "", pending: true };
+}
+
+function pendingLine() {
+    const line = document.createElement("div");
+    line.className = "line streaming pending";
+    line.dataset.role = "assistant";
+    return line;
+}
+
+const liveTag = () => {
+    const tag = document.createElement("span");
+    tag.className = "live";
+    tag.textContent = t("生成中", "Writing");
+    return tag;
+};
+
+function pendingItem() {
+    const item = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "item pending";
+    row.dataset.role = "assistant";
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.textContent = "🤖";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = t("正在回复…", "Writing a reply…");
+    row.append(mark, label, liveTag());
+    item.append(row);
+    return item;
+}
+
+const TYPING = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox']";
+
+function isTyping(node: EventTarget | Element | null) {
+    return node instanceof Element && !!node.closest(TYPING);
+}
+
+/** Notion menus, dialogs and our own panels keep their arrow keys. */
+function keysBelongElsewhere(event: KeyboardEvent) {
+    const active = document.activeElement;
+    if (isTyping(event.target) || isTyping(active)) return true;
+    if (active instanceof HTMLElement && active.id.startsWith("notionai-pp-") && active !== overlay?.host) return true;
+    return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
+}
+
+/** Like Void++'s navigator keys: step through messages, jump to the ends, or close the outline. */
+function onKeyDown(event: KeyboardEvent) {
+    if (!settings.store.keyboard || !overlay || overlay.host.hidden || !messages.length || !isAiRoute()) return;
+    if (event.defaultPrevented || event.altKey || event.shiftKey) return;
+    if (event.key === "Escape") {
+        if (!overlay.host.matches(":focus-within")) return;
+        (overlay.root.activeElement as HTMLElement | null)?.blur();
+        event.preventDefault();
+        return;
+    }
+    const arrow = event.key === "ArrowUp" || event.key === "ArrowDown";
+    const edge = event.key === "Home" || event.key === "End";
+    if (!arrow && !edge) return;
+    if (keysBelongElsewhere(event)) return;
+    const up = event.key === "ArrowUp" || event.key === "Home";
+    if (arrow && (event.metaKey || event.ctrlKey)) scrollToEdge(up);
+    else if (event.metaKey || event.ctrlKey) return;
+    else if (edge) jump(up ? messages[0].id : messages[messages.length - 1].id);
+    else {
+        const index = Math.max(0, messages.findIndex(m => m.id === activeId));
+        const next = messages[Math.min(messages.length - 1, Math.max(0, index + (up ? -1 : 1)))];
+        jump(next.id);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+}
+
+function scrollToEdge(top: boolean) {
+    const first = messages.find(m => m.element.isConnected)?.element;
+    if (!first) return;
+    const scroller = scrollParentOf(first);
+    scroller.scrollTo({ top: top ? 0 : scroller.scrollHeight, behavior: "smooth" });
+}
+
 function build() {
     if (!overlay) return;
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const stars = starsActive() ? starsOf(currentChatId()) : new Set<string>();
-    const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}\u0001${stars.has(m.id) ? 1 : 0}`).join("\u0002");
+    const live = streamingState(next);
+    const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}\u0001${stars.has(m.id) ? 1 : 0}`).join("\u0002") + `\u0003${live.id}\u0003${live.pending ? 1 : 0}`;
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
-    overlay.host.hidden = !next.length;
+    overlay.host.hidden = !next.length && !live.pending;
     placeRail();
     if (nextSignature === signature) {
         if (!sameElements) updateActive();
@@ -130,8 +229,9 @@ function build() {
         line.dataset.id = message.id;
         line.dataset.role = message.role;
         line.classList.toggle("starred", stars.has(message.id));
+        line.classList.toggle("streaming", message.id === live.id);
         return line;
-    }));
+    }), ...(live.pending ? [pendingLine()] : []));
     const labels = outlineLabels(next);
     q("ul").replaceChildren(...next.map((message, index) => {
         const button = document.createElement("button");
@@ -140,6 +240,7 @@ function build() {
         button.dataset.id = message.id;
         button.dataset.role = message.role;
         button.classList.toggle("starred", stars.has(message.id));
+        button.classList.toggle("streaming", message.id === live.id);
         const mark = document.createElement("span");
         mark.className = "mark";
         mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "🤖";
@@ -150,11 +251,12 @@ function build() {
         if (labels[index] !== label.textContent) label.dataset.compact = labels[index];
         button.title = summarize(message.text, 400);
         button.append(mark, label);
+        if (message.id === live.id) button.append(liveTag());
         button.addEventListener("click", () => jump(message.id));
         const item = document.createElement("li");
         item.append(button);
         return item;
-    }));
+    }), ...(live.pending ? [pendingItem()] : []));
     compactOverflowing();
     activeId = "";
     updateActive();
@@ -261,7 +363,12 @@ export default definePlugin({
         }
         document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
         document.addEventListener("animationend", onLayout, { capture: true, passive: true });
+        document.addEventListener("keydown", onKeyDown, true);
         cleanups = [
+            watchReplies(),
+            on("replyStart", () => build()),
+            on("replyEnd", () => build()),
+            () => document.removeEventListener("keydown", onKeyDown, true),
             onDomChange(onLayout),
             onDomChange(rescan),
             () => document.removeEventListener("transitionend", onLayout, { capture: true }),

@@ -191,3 +191,35 @@ describe("starred list", () => {
         expect(controlRow()?.id).toBe("row");
     });
 });
+
+describe("custom CSS", () => {
+    test("applies, updates and removes the page style", async () => {
+        const { setValue, reloadFromStorage } = await import("@api/Settings");
+        const { QUICK_CSS_ID, startQuickCss, stopQuickCss } = await import("../src/plugins/settings/quickCss");
+        reloadFromStorage(null);
+        const stop = startQuickCss();
+        expect(document.getElementById(QUICK_CSS_ID)).toBeNull();
+        setValue("settings", "quickCss", "body { color: red; }");
+        expect(document.getElementById(QUICK_CSS_ID)?.textContent).toBe("body { color: red; }");
+        setValue("settings", "quickCssOn", false);
+        expect(document.getElementById(QUICK_CSS_ID)).toBeNull();
+        setValue("settings", "quickCssOn", true);
+        expect(document.getElementById(QUICK_CSS_ID)).not.toBeNull();
+        stop();
+        stopQuickCss();
+        expect(document.getElementById(QUICK_CSS_ID)).toBeNull();
+        reloadFromStorage(null);
+    });
+});
+
+describe("navigator streaming mark", () => {
+    test("marks the reply being written, or a placeholder before it has text", async () => {
+        const { streamingState } = await import("@plugins/navigator/index");
+        const el = document.createElement("div");
+        const user = { id: "a", role: "user" as const, element: el, text: "q" };
+        const reply = { id: "a:assistant", role: "assistant" as const, element: el, text: "r" };
+        expect(streamingState([user, reply], true)).toEqual({ id: "a:assistant", pending: false });
+        expect(streamingState([user], true)).toEqual({ id: "", pending: true });
+        expect(streamingState([user, reply], false)).toEqual({ id: "", pending: false });
+    });
+});

@@ -12,6 +12,7 @@ import { Icons } from "@utils/icons";
 import { button, h, icon, iconButton, optionRow, row, section, selectControl, switchControl } from "@utils/kit";
 import { t, type Text, tr } from "@utils/page";
 
+import { quickCssTab, startQuickCss, stopQuickCss } from "./quickCss";
 import { CSS } from "./styles";
 
 declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
@@ -279,6 +280,7 @@ function aboutTab() {
 
 const TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "css", icon: Icons.braces, title: () => t("自定义 CSS", "Custom CSS"), hint: () => t("像 Void++ 的 Quick CSS：写给 Notion 页面的样式，输入即生效，随设置保存。", "Like Void++'s Quick CSS: styles for the Notion page, applied as you type and saved with your settings."), render: quickCssTab },
     { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab },
 ];
@@ -346,7 +348,7 @@ export default definePlugin({
     enabledByDefault: true,
     required: true,
     start() {
-        cleanups.push(on("openSettings", () => openSettings()));
+        cleanups.push(on("openSettings", () => openSettings()), startQuickCss());
         if (typeof GM_registerMenuCommand === "function") {
             try {
                 GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -355,6 +357,7 @@ export default definePlugin({
     },
     stop() {
         for (const cleanup of cleanups.splice(0)) cleanup();
+        stopQuickCss();
         close();
     },
 });

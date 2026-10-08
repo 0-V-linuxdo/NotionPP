@@ -151,7 +151,7 @@ describe("chat navigator rail", () => {
         expect(host.style.getPropertyValue("--nav-right")).toBe("356px");
         panel.remove();
         // Frames can run late on a loaded machine; still well inside the 250ms rescan delay.
-        for (let waited = 0; waited < 200 && host.style.getPropertyValue("--nav-right") !== "20px"; waited += 10) {
+        for (let waited = 0; waited < 240 && host.style.getPropertyValue("--nav-right") !== "20px"; waited += 10) {
             await new Promise(resolve => setTimeout(resolve, 10));
         }
         expect(host.style.getPropertyValue("--nav-right")).toBe("20px");

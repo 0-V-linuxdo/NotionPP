@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.5.2
+// @version      20261007.1.6.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -560,6 +560,7 @@
     history: `<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>`,
     width: `<path d="M21 12H3"/><path d="m15 6 6 6-6 6"/><path d="m9 18-6-6 6-6"/>`,
     shareOff: `<path d="M12 2v13"/><path d="m16 6-4-4-4 4"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="m2 2 20 20"/>`,
+    braces: `<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -1424,6 +1425,19 @@ button { font: inherit; color: inherit; }
   color: var(--fg-primary); font: inherit; font-size: 14px; padding: 0 10px; }
 .input::placeholder { color: var(--fg-tertiary); }
 .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+
+/* Custom CSS tab */
+.quick-css { padding-bottom: 1.25rem; }
+.code-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border-l2); border-radius: 8px;
+  background: var(--surface-field); overflow: hidden; }
+.code-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.code { flex: 1; min-height: 12rem; resize: none; border: 0; padding: 10px 12px; background: transparent; color: var(--fg-primary);
+  font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; white-space: pre; overflow: auto; }
+.code:focus { outline: none; }
+.code::placeholder { color: var(--fg-tertiary); }
+.code-foot { display: flex; justify-content: space-between; gap: .75rem; padding: 6px 12px; border-top: 1px solid var(--border-l1);
+  color: var(--fg-tertiary); font-size: 12px; }
+.code-status { flex-shrink: 0; font-variant-numeric: tabular-nums; }
 
 /* Main dialog: nav + content */
 .dialog { position: relative; display: flex; width: min(56rem, calc(100vw - 2rem)); height: min(40rem, calc(100vh - 2rem));
@@ -2333,6 +2347,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   var stopDom3 = null;
   var stopNet = null;
   var currentChatId = () => new URL(pageWindow.location.href).searchParams.get("t") ?? "";
+  var replyState = () => state;
   function check3() {
     const streaming = !!document.querySelector(STOP_BUTTON);
     if (streaming && state === "idle") {
@@ -2714,6 +2729,10 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 .line.starred { background: #d9730d; opacity: 1; }
 .line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
 .line.starred.active { background: #d9730d; box-shadow: 0 0 3px #d9730d; }
+/* Like Void++'s dashed tick: the reply Notion AI is still writing. */
+.line.streaming { background: repeating-linear-gradient(90deg, var(--line-active) 0 3px, transparent 3px 5px); opacity: 1; animation: npp-live 1.2s ease-in-out infinite; }
+.line.streaming.active { box-shadow: none; }
+@keyframes npp-live { 50% { opacity: .45; } }
 .menu {
   position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
@@ -2731,10 +2750,12 @@ button.item {
 button.item:hover { color: var(--text); background: var(--hover); }
 button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
 button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
+div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
+.live { flex: 0 0 auto; padding: 0 5px; border: 1px dashed var(--line); border-radius: 4px; color: var(--subtle); font-size: 10.5px; font-style: normal; line-height: 16px; }
 .label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } .line.streaming { animation: none; } }
 @media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
 `;
   var NAV_HTML = `
@@ -2802,6 +2823,15 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var MIN_SPAN = 120;
   var settings6 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
+    keyboard: {
+      type: "boolean",
+      label: { zh: "键盘快捷键", en: "Keyboard shortcuts" },
+      description: {
+        zh: "焦点不在输入框时：↑/↓ 上一条或下一条消息，Home/End 第一条或最后一条，⌘/Ctrl+↑/↓ 对话顶部或底部，Esc 收起目录",
+        en: "When not typing: ↑/↓ previous or next message, Home/End first or last, ⌘/Ctrl+↑/↓ top or bottom of the chat, Esc closes the outline"
+      },
+      default: true
+    },
     effect: {
       type: "select",
       label: { zh: "跳转定位效果", en: "Jump effect" },
@@ -2869,15 +2899,103 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
     return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
   }
+  function streamingState(list, streaming = replyState() === "streaming") {
+    if (!streaming || !settings6.store.showAssistant)
+      return { id: "", pending: false };
+    const last = list[list.length - 1];
+    if (last?.role === "assistant")
+      return { id: last.id, pending: false };
+    return { id: "", pending: true };
+  }
+  function pendingLine() {
+    const line = document.createElement("div");
+    line.className = "line streaming pending";
+    line.dataset.role = "assistant";
+    return line;
+  }
+  var liveTag = () => {
+    const tag = document.createElement("span");
+    tag.className = "live";
+    tag.textContent = t("生成中", "Writing");
+    return tag;
+  };
+  function pendingItem() {
+    const item = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "item pending";
+    row.dataset.role = "assistant";
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.textContent = "\uD83E\uDD16";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = t("正在回复…", "Writing a reply…");
+    row.append(mark, label, liveTag());
+    item.append(row);
+    return item;
+  }
+  var TYPING = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox']";
+  function isTyping(node) {
+    return node instanceof Element && !!node.closest(TYPING);
+  }
+  function keysBelongElsewhere(event) {
+    const active = document.activeElement;
+    if (isTyping(event.target) || isTyping(active))
+      return true;
+    if (active instanceof HTMLElement && active.id.startsWith("notionai-pp-") && active !== overlay2?.host)
+      return true;
+    return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
+  }
+  function onKeyDown2(event) {
+    if (!settings6.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
+      return;
+    if (event.defaultPrevented || event.altKey || event.shiftKey)
+      return;
+    if (event.key === "Escape") {
+      if (!overlay2.host.matches(":focus-within"))
+        return;
+      overlay2.root.activeElement?.blur();
+      event.preventDefault();
+      return;
+    }
+    const arrow = event.key === "ArrowUp" || event.key === "ArrowDown";
+    const edge = event.key === "Home" || event.key === "End";
+    if (!arrow && !edge)
+      return;
+    if (keysBelongElsewhere(event))
+      return;
+    const up = event.key === "ArrowUp" || event.key === "Home";
+    if (arrow && (event.metaKey || event.ctrlKey))
+      scrollToEdge(up);
+    else if (event.metaKey || event.ctrlKey)
+      return;
+    else if (edge)
+      jump(up ? messages[0].id : messages[messages.length - 1].id);
+    else {
+      const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
+      const next = messages[Math.min(messages.length - 1, Math.max(0, index + (up ? -1 : 1)))];
+      jump(next.id);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function scrollToEdge(top) {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return;
+    const scroller = scrollParentOf(first);
+    scroller.scrollTo({ top: top ? 0 : scroller.scrollHeight, behavior: "smooth" });
+  }
   function build() {
     if (!overlay2)
       return;
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const stars = starsActive() ? starsOf(currentChatId()) : new Set;
-    const nextSignature = next.map((m) => `${m.id}\x01${summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02");
+    const live = streamingState(next);
+    const nextSignature = next.map((m) => `${m.id}\x01${summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02") + `\x03${live.id}\x03${live.pending ? 1 : 0}`;
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
-    overlay2.host.hidden = !next.length;
+    overlay2.host.hidden = !next.length && !live.pending;
     placeRail();
     if (nextSignature === signature) {
       if (!sameElements)
@@ -2891,8 +3009,9 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       line.dataset.id = message.id;
       line.dataset.role = message.role;
       line.classList.toggle("starred", stars.has(message.id));
+      line.classList.toggle("streaming", message.id === live.id);
       return line;
-    }));
+    }), ...live.pending ? [pendingLine()] : []);
     const labels = outlineLabels(next);
     q("ul").replaceChildren(...next.map((message, index) => {
       const button = document.createElement("button");
@@ -2901,6 +3020,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       button.dataset.id = message.id;
       button.dataset.role = message.role;
       button.classList.toggle("starred", stars.has(message.id));
+      button.classList.toggle("streaming", message.id === live.id);
       const mark = document.createElement("span");
       mark.className = "mark";
       mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "\uD83E\uDD16";
@@ -2911,11 +3031,13 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
         label.dataset.compact = labels[index];
       button.title = summarize(message.text, 400);
       button.append(mark, label);
+      if (message.id === live.id)
+        button.append(liveTag());
       button.addEventListener("click", () => jump(message.id));
       const item = document.createElement("li");
       item.append(button);
       return item;
-    }));
+    }), ...live.pending ? [pendingItem()] : []);
     compactOverflowing();
     activeId = "";
     updateActive();
@@ -3023,7 +3145,12 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       }
       document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
       document.addEventListener("animationend", onLayout, { capture: true, passive: true });
+      document.addEventListener("keydown", onKeyDown2, true);
       cleanups2 = [
+        watchReplies(),
+        on("replyStart", () => build()),
+        on("replyEnd", () => build()),
+        () => document.removeEventListener("keydown", onKeyDown2, true),
         onDomChange(onLayout),
         onDomChange(rescan),
         () => document.removeEventListener("transitionend", onLayout, { capture: true }),
@@ -3663,19 +3790,106 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   });
 
+  // src/plugins/settings/quickCss.ts
+  var SELF = "settings";
+  var CSS_KEY = "quickCss";
+  var CSS_ON_KEY = "quickCssOn";
+  var QUICK_CSS_ID = "notionai-pp-quick-css";
+  var INDENT = "  ";
+  var quickCss = () => String(getValue(SELF, CSS_KEY) ?? "");
+  var quickCssOn = () => getValue(SELF, CSS_ON_KEY) !== false;
+  function applyQuickCss() {
+    const css = quickCssOn() ? quickCss() : "";
+    let style = document.getElementById(QUICK_CSS_ID);
+    if (!css.trim()) {
+      style?.remove();
+      return;
+    }
+    if (!style) {
+      style = document.createElement("style");
+      style.id = QUICK_CSS_ID;
+    }
+    if (style.textContent !== css)
+      style.textContent = css;
+    const parent = document.head ?? document.documentElement;
+    if (style.parentNode !== parent || style.nextElementSibling)
+      parent.append(style);
+  }
+  function startQuickCss() {
+    applyQuickCss();
+    return onSettingsChange((plugin, key) => {
+      if (plugin === "*" || plugin === SELF && (key === CSS_KEY || key === CSS_ON_KEY || key === "*"))
+        applyQuickCss();
+    });
+  }
+  function stopQuickCss() {
+    document.getElementById(QUICK_CSS_ID)?.remove();
+  }
+  function onEditorKey(event, area) {
+    if (event.key !== "Tab" || event.altKey || event.metaKey || event.ctrlKey)
+      return;
+    event.preventDefault();
+    const { selectionStart: start, selectionEnd: end, value } = area;
+    const lineStart = value.lastIndexOf(`
+`, start - 1) + 1;
+    if (event.shiftKey) {
+      if (value.startsWith(INDENT, lineStart)) {
+        area.setRangeText("", lineStart, lineStart + INDENT.length, "preserve");
+        area.setSelectionRange(Math.max(lineStart, start - INDENT.length), Math.max(lineStart, end - INDENT.length));
+      }
+    } else {
+      area.setRangeText(INDENT, start, end, "end");
+    }
+    area.dispatchEvent(new Event("input"));
+  }
+  function quickCssTab() {
+    const area = h("textarea", {
+      class: "code",
+      spellcheck: false,
+      "aria-label": t("自定义 CSS", "Custom CSS"),
+      placeholder: t(`/* 例：把 AI 回复的字号调大 */
+[data-agent-chat-user-step-id] { font-size: 15px; }`, `/* Example: larger text in prompts */
+[data-agent-chat-user-step-id] { font-size: 15px; }`)
+    });
+    area.value = quickCss();
+    const status = h("span", { class: "code-status" });
+    const showStatus = () => {
+      const lines = area.value ? area.value.split(`
+`).length : 0;
+      status.textContent = !quickCssOn() ? t("已停用", "Off") : lines ? t(`已应用 · ${lines} 行`, `Applied · ${lines} lines`) : t("未填写", "Empty");
+    };
+    const save = debounce(() => {
+      setValue(SELF, CSS_KEY, area.value);
+      showStatus();
+    }, 300, 1200);
+    area.addEventListener("input", () => save());
+    area.addEventListener("keydown", (event) => onEditorKey(event, area));
+    area.addEventListener("blur", () => {
+      save.cancel();
+      setValue(SELF, CSS_KEY, area.value);
+      showStatus();
+    });
+    const toggle = switchControl(quickCssOn(), t("启用自定义 CSS", "Use custom CSS"), (value) => {
+      setValue(SELF, CSS_ON_KEY, value);
+      showStatus();
+    });
+    showStatus();
+    return h("div", { class: "tab-root quick-css" }, section(t("开关", "Switch"), row(t("启用自定义 CSS", "Use custom CSS"), t("关掉后样式立即移除，内容会保留", "Turning it off removes the styles at once and keeps what you wrote"), toggle)), h("div", { class: "code-wrap" }, area, h("div", { class: "code-foot" }, h("span", {}, t("输入即生效 · 作用于 Notion 页面，不影响 NotionAI++ 自己的面板 · Tab 缩进", "Applies as you type · styles the Notion page, not NotionAI++'s own panels · Tab indents")), status)));
+  }
+
   // src/plugins/settings/index.ts
   var SETTINGS_HOST_ID = "notionai-pp-settings";
-  var SELF = "settings";
+  var SELF2 = "settings";
   var REPO_URL = "https://github.com/0-V-linuxdo/NotionPP";
   var both = (text) => typeof text === "string" ? text : `${text.zh} ${text.en}`;
   function readList(key) {
-    const raw = getValue(SELF, key);
+    const raw = getValue(SELF2, key);
     return typeof raw === "string" && raw ? raw.split(",") : [];
   }
   function toggleInList(key, name) {
     const list = readList(key);
     const next = list.includes(name) ? list.filter((n) => n !== name) : [...list, name];
-    setValue(SELF, key, next.join(","));
+    setValue(SELF2, key, next.join(","));
   }
   var CATEGORY_LABELS = {
     favorites: () => t("收藏", "Favorites"),
@@ -3846,23 +4060,24 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   var LANGUAGE_KEY = "language";
   function preferencesTab() {
-    const current = String(getValue(SELF, LANGUAGE_KEY) ?? "auto");
+    const current = String(getValue(SELF2, LANGUAGE_KEY) ?? "auto");
     const language = selectControl(t("界面语言", "Language"), [
       { value: "auto", label: t("跟随 Notion", "Same as Notion") },
       { value: "zh", label: "中文" },
       { value: "en", label: "English" }
     ], current, (value) => {
-      setValue(SELF, LANGUAGE_KEY, value);
+      setValue(SELF2, LANGUAGE_KEY, value);
       openSettings("preferences");
     });
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.5.2";
+    const version = "[20261007] v1.6.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "css", icon: Icons.braces, title: () => t("自定义 CSS", "Custom CSS"), hint: () => t("像 Void++ 的 Quick CSS：写给 Notion 页面的样式，输入即生效，随设置保存。", "Like Void++'s Quick CSS: styles for the Notion page, applied as you type and saved with your settings."), render: quickCssTab },
     { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab }
   ];
@@ -3891,7 +4106,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.5.2";
+    const version = "[20261007] v1.6.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3916,14 +4131,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     dialog.focus();
   }
   var settings_default = definePlugin({
-    name: SELF,
+    name: SELF2,
     title: { zh: "设置面板", en: "Settings" },
     description: { zh: "NotionAI++ 设置面板与脚本管理器菜单命令。", en: "The NotionAI++ settings panel and its userscript manager menu command." },
     icon: Icons.cog,
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups6.push(on("openSettings", () => openSettings()));
+      cleanups6.push(on("openSettings", () => openSettings()), startQuickCss());
       if (typeof GM_registerMenuCommand === "function") {
         try {
           GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -3933,6 +4148,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     stop() {
       for (const cleanup of cleanups6.splice(0))
         cleanup();
+      stopQuickCss();
       close2();
     }
   });
@@ -5645,7 +5861,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.5.2";
+    win[FLAG] = "[20261007] v1.6.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5668,7 +5884,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.5.2"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.6.0"} started`);
   }
   boot();
 })();
