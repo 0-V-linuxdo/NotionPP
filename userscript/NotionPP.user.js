@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.7
+// @version      20261007.1.2.8
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2924,7 +2924,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.7";
+    const version = "[20261007] v1.2.8";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2957,7 +2957,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.7";
+    const version = "[20261007] v1.2.8";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4184,7 +4184,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   --row: rgba(255,255,255,.08); --bar: rgba(255,255,255,.10); --value: #c7c7c7; --billing: #d9c4ff;
   --info: #c6dfff; --info-bg: rgba(58,132,217,.14); --error: #ffc5c5; --error-bg: rgba(221,70,70,.14);
   --tip: #f7f7f5; --tip-bg: #2f2f2f; --tip-border: rgba(255,255,255,.12); --track: rgba(255,255,255,.18);
-  --core: #202124; --shadow: 0 14px 42px rgba(0,0,0,.36);
+  --ring: #ada9a3; --orb-hover: rgba(255,255,255,.055); --warn: #d8a32f; --danger: #e56458;
+  --shadow: 0 14px 42px rgba(0,0,0,.36);
   position: fixed; top: 16px; left: auto; right: 16px; z-index: 2147483646;
   display: block; width: max-content; max-width: calc(100vw - 16px);
   color: var(--text); font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -4196,7 +4197,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   --btn: rgba(15,15,15,.06); --btn-hover: rgba(15,15,15,.11); --row: rgba(15,15,15,.09); --bar: rgba(15,15,15,.1);
   --value: #555; --billing: #6940a5; --info: #24588f; --info-bg: rgba(46,119,190,.11); --error: #a62d2f;
   --error-bg: rgba(190,46,48,.1); --tip: #252525; --tip-bg: #fff; --tip-border: rgba(15,15,15,.12);
-  --track: rgba(15,15,15,.16); --shadow: 0 14px 38px rgba(15,15,15,.18);
+  --track: rgba(15,15,15,.16); --ring: #7d7a75; --orb-hover: rgba(55,53,47,.06); --shadow: 0 14px 38px rgba(15,15,15,.18);
 }
 :host([hidden]) { display: none; }
 * { box-sizing: border-box; }
@@ -4264,33 +4265,38 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 .m-today { cursor: pointer; }
 .m-today .value { color: var(--text); font-weight: 650; }
 .m-today:hover .sub { color: var(--text); }
-.tip .tip-today { margin-top: 3px; padding-top: 4px; border-top: 1px solid var(--tip-border); color: var(--tip); }
 .footer {
   display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px 7px 14px;
   border-top: 1px solid var(--row); color: var(--faint); font-size: 10px;
 }
+/* Minimized: two Void++-style SVG progress rings (round caps, monochrome until a limit is near)
+   in one Notion icon button, with a Notion tooltip (same colors in both themes). */
 .orb {
-  pointer-events: auto; display: inline-flex; gap: 4px; padding: 2px; border: 0; border-radius: 999px;
-  background: transparent; cursor: pointer; user-select: none;
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 5px;
+  border: 0; border-radius: 6px; color: var(--ring); background: transparent; cursor: pointer; user-select: none;
+  transition: background .1s ease;
 }
-.ring {
-  --p: 0; --c: #35b46f; position: relative; width: 20px; height: 20px; border-radius: 50%;
-  background: conic-gradient(from -90deg, var(--c) calc(var(--p) * 1%), var(--track) 0); box-shadow: 0 2px 7px rgba(0,0,0,.22);
-}
-.ring::after { content: ""; position: absolute; inset: 2.5px; border-radius: inherit; background: var(--core); }
-.ring[data-tone="warning"] { --c: #dfa83a; }
-.ring[data-tone="danger"] { --c: #ed6566; }
-.ring[data-tone="waiting"], .ring[data-tone="neutral"] { --c: #8c8c8c; }
+.orb:hover, .orb:focus-visible { background: var(--orb-hover); }
+.ring { display: block; width: 18px; height: 18px; color: inherit; overflow: visible; }
+.ring-track { fill: none; stroke: currentColor; stroke-opacity: .28; stroke-width: 2; }
+.ring-fill { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
+.ring[data-empty] .ring-fill { visibility: hidden; }
+.ring[data-tone="warning"] { color: var(--warn); }
+.ring[data-tone="danger"] { color: var(--danger); }
 .tip {
-  position: absolute; left: 50%; top: calc(100% + 8px); z-index: 3; min-width: 160px; padding: 7px 9px 8px;
-  border: 1px solid var(--tip-border); border-radius: 8px; color: var(--tip); background: var(--tip-bg);
-  box-shadow: 0 5px 18px rgba(0,0,0,.3); white-space: nowrap; pointer-events: none;
-  opacity: 0; visibility: hidden; transform: translate(-50%, -2px); transition: opacity .12s, transform .12s, visibility .12s;
+  position: absolute; left: 50%; top: calc(100% + 6px); z-index: 3; width: max-content; max-width: 300px; padding: 5px 8px;
+  border-radius: 6px; color: #f0efed; background: #2c2c2b;
+  box-shadow: 0 4px 12px -2px rgba(0,0,0,.08), inset 0 0 0 1px rgba(255,255,255,.05);
+  font: 400 12px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; white-space: nowrap; pointer-events: none;
+  opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
-:host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 8px); transform: translate(-50%, 2px); }
-.tip b { display: block; font-size: 13px; font-weight: 600; }
-.tip span { display: block; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
+:host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
+.tip-rows { display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 2px; }
+.tip-rows dt { color: #ada9a3; }
+.tip-rows dd { margin: 0; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tip-rows .today { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
+.tip-rows [hidden] { display: none !important; }
+.orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
 .dragging, .dragging * { cursor: grabbing !important; }
 @media (prefers-reduced-motion: reduce) { .fill, .tip { transition: none; } .spin svg.i { animation: none; opacity: .55; } }
 `;
@@ -4303,10 +4309,17 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
   };
+  var RING_RADIUS = 7;
+  var RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+  var RING = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle class="ring-track" cx="9" cy="9" r="${RING_RADIUS}"/><circle class="ring-fill" cx="9" cy="9" r="${RING_RADIUS}" transform="rotate(-90 9 9)" stroke-dasharray="${RING_CIRCUMFERENCE}" stroke-dashoffset="${RING_CIRCUMFERENCE}"/></svg>`;
   var USAGE_HTML = `
 <div class="shell">
-  <button class="orb" type="button" hidden><span class="ring r-rolling"></span><span class="ring r-monthly"></span></button>
-  <span class="tip" role="tooltip" hidden><b class="tip-title"></b><span class="tip-detail"></span><span class="tip-today" hidden></span></span>
+  <button class="orb" type="button" hidden>${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
+  <span class="tip" role="tooltip" hidden><dl class="tip-rows">
+    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd>
+    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd>
+    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd>
+  </dl></span>
   <div class="summary">
     <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">${ICONS.chevron}</span></button>
     <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
@@ -4665,17 +4678,24 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       }
       for (const [selector, view] of [[".r-rolling", views.rolling], [".r-monthly", views.monthly]]) {
         const ring = this.q(selector);
-        ring.style.setProperty("--p", String(view.percent ?? 0));
+        const percent = Math.min(100, Math.max(0, view.percent ?? 0));
+        ring.querySelector(".ring-fill").setAttribute("stroke-dashoffset", String(RING_CIRCUMFERENCE * (1 - percent / 100)));
+        ring.toggleAttribute("data-empty", view.percent == null || view.percent <= 0);
         ring.dataset.tone = view.tone;
       }
       const rollingText = formatPercent(views.rolling.percent);
       const monthlyText = formatPercent(views.monthly.percent);
-      this.q(".tip-title").textContent = t("AI 用量", "AI usage");
-      this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
       const todayText = this.todayText();
-      const tipToday = this.q(".tip-today");
-      tipToday.hidden = !this.tipToday || todayText === null;
-      tipToday.textContent = t(`今天 ${todayText} 月度额度`, `Today ${todayText} of monthly allowance`);
+      const showToday = this.tipToday && todayText !== null;
+      for (const [key, label, value] of [
+        ["rolling", t("6 小时", "6-hour"), rollingText],
+        ["monthly", t("月度", "Monthly"), monthlyText],
+        ["today", t("今天", "Today"), todayText === null ? "" : t(`月度的 ${todayText}`, `${todayText} of monthly`)]
+      ]) {
+        this.q(`.tip-l-${key}`).textContent = label;
+        this.q(`.tip-v-${key}`).textContent = value;
+      }
+      this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = !showToday;
       const todayRow = this.q(".m-today");
       todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
       todayRow.querySelector(".label").textContent = t("今日用量", "Used today");
@@ -4845,7 +4865,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.7";
+    win[FLAG] = "[20261007] v1.2.8";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4855,7 +4875,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.7"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.8"} started`);
   }
   boot();
 })();

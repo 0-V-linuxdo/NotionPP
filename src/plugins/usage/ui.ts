@@ -18,7 +18,7 @@ import { type Anchor, anchorFromBox, dockPoint, dragDistanceReached, opensUpward
 import type { UsageService } from "./service";
 import { readDay, statDelta, usedOn } from "./stats";
 import { openStats, type StatsContext } from "./statsDialog";
-import { USAGE_CSS, USAGE_HTML } from "./styles";
+import { RING_CIRCUMFERENCE, USAGE_CSS, USAGE_HTML } from "./styles";
 import { activeMonthly, type Meter, meterViews, toneOf } from "./verdict";
 
 export const HOST_ID = "notionai-pp-usage";
@@ -360,17 +360,25 @@ export class UsageWidget {
 
         for (const [selector, view] of [[".r-rolling", views.rolling], [".r-monthly", views.monthly]] as const) {
             const ring = this.q(selector);
-            ring.style.setProperty("--p", String(view.percent ?? 0));
+            const percent = Math.min(100, Math.max(0, view.percent ?? 0));
+            ring.querySelector(".ring-fill")!.setAttribute("stroke-dashoffset", String(RING_CIRCUMFERENCE * (1 - percent / 100)));
+            // A round cap still draws a dot at 0%; hide the fill until there is something to show.
+            ring.toggleAttribute("data-empty", view.percent == null || view.percent <= 0);
             ring.dataset.tone = view.tone;
         }
         const rollingText = formatPercent(views.rolling.percent);
         const monthlyText = formatPercent(views.monthly.percent);
-        this.q(".tip-title").textContent = t("AI 用量", "AI usage");
-        this.q(".tip-detail").textContent = t(`6 小时 ${rollingText} · 月度 ${monthlyText}`, `6h ${rollingText} · Monthly ${monthlyText}`);
         const todayText = this.todayText();
-        const tipToday = this.q(".tip-today");
-        tipToday.hidden = !this.tipToday || todayText === null;
-        tipToday.textContent = t(`今天 ${todayText} 月度额度`, `Today ${todayText} of monthly allowance`);
+        const showToday = this.tipToday && todayText !== null;
+        for (const [key, label, value] of [
+            ["rolling", t("6 小时", "6-hour"), rollingText],
+            ["monthly", t("月度", "Monthly"), monthlyText],
+            ["today", t("今天", "Today"), todayText === null ? "" : t(`月度的 ${todayText}`, `${todayText} of monthly`)],
+        ] as const) {
+            this.q(`.tip-l-${key}`).textContent = label;
+            this.q(`.tip-v-${key}`).textContent = value;
+        }
+        this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = !showToday;
         const todayRow = this.q(".m-today");
         todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
         todayRow.querySelector(".label")!.textContent = t("今日用量", "Used today");
