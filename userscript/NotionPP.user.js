@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.5
+// @version      20261007.1.2.6
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2423,7 +2423,8 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   all: initial;
   --bg: #f7f7f5; --text: #37352f; --subtle: #6b6b6b; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
   --active: rgba(15,15,15,.1); --line: rgba(15,15,15,.28); --line-active: #37352f; --shadow: 0 10px 30px rgba(15,15,15,.18);
-  position: fixed; top: var(--nav-top, 10rem); right: var(--nav-right, 20px); z-index: 2147483000; display: block;
+  position: fixed; top: var(--nav-top, 4rem); height: var(--nav-height, calc(100vh - 12rem)); right: var(--nav-right, 20px);
+  width: 0; z-index: 2147483000; display: block; pointer-events: none;
   font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :host([data-theme="dark"]) {
@@ -2432,21 +2433,22 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 }
 :host([hidden]) { display: none; }
 * { box-sizing: border-box; }
+/* Like Void++: the rail is centered in the space between the chat header and the composer. */
 .rail {
-  position: absolute; top: 0; right: 0; max-height: calc(100vh - 12rem); overflow: hidden; padding: 4px 0;
-  cursor: pointer; transition: opacity .2s ease;
+  position: absolute; top: 50%; right: 0; max-height: 100%; overflow: hidden; padding: 4px 0; transform: translateY(-50%);
+  cursor: pointer; transition: opacity .2s ease; pointer-events: auto;
 }
 .lines { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; transition: transform .2s ease; }
 .line { width: 16px; height: 2px; border-radius: 2px; background: var(--line); transition: width .2s, background .2s; }
 .line[data-role="assistant"] { width: 10px; opacity: .7; }
 .line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
 .menu {
-  position: absolute; top: -8px; right: -8px; width: 300px; max-height: calc(100vh - 12rem); overflow-y: auto; padding: 6px;
+  position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
-  opacity: 0; visibility: hidden; transform: translateX(10px); transition: opacity .2s, visibility .2s, transform .2s;
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translate(10px, -50%); transition: opacity .2s, visibility .2s, transform .2s;
   overscroll-behavior: contain;
 }
-:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; transform: none; }
+:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
 :host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
 .head { padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; font-weight: 600; }
 ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
@@ -2461,7 +2463,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } }
-@media (max-width: 640px) { :host { top: 5rem; right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
+@media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
 `;
   var NAV_HTML = `
 <nav class="root" aria-label="Chat outline">
@@ -2478,6 +2480,9 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var SETTLE_MS = 150;
   var RAIL_MARGIN = 20;
   var SIDE_PANELS = "[role='complementary'], aside";
+  var COMPOSER = "[data-notion-chat-input-container]";
+  var SPAN_GAP = 12;
+  var MIN_SPAN = 120;
   var settings4 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     effect: {
@@ -2528,16 +2533,34 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
     }
     overlay2.host.style.setProperty("--nav-right", `${right}px`);
+    const span = railSpan();
+    if (span) {
+      overlay2.host.style.setProperty("--nav-top", `${span.top}px`);
+      overlay2.host.style.setProperty("--nav-height", `${span.height}px`);
+    }
+  }
+  function railSpan() {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return null;
+    const { height } = viewport();
+    const pane = scrollParentOf(first);
+    const isRoot = pane === document.scrollingElement || pane === document.documentElement;
+    const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
+    const composer = document.querySelector(COMPOSER)?.getBoundingClientRect();
+    const top = Math.max(0, paneBox.top) + SPAN_GAP;
+    const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
+    return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
   }
   function build() {
     if (!overlay2)
       return;
-    placeRail();
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const nextSignature = next.map((m) => `${m.id}\x01${summarize(m.text)}`).join("\x02");
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
     overlay2.host.hidden = !next.length;
+    placeRail();
     if (nextSignature === signature) {
       if (!sameElements)
         updateActive();
@@ -2898,7 +2921,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.5";
+    const version = "[20261007] v1.2.6";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2931,7 +2954,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.5";
+    const version = "[20261007] v1.2.6";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4819,7 +4842,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.5";
+    win[FLAG] = "[20261007] v1.2.6";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4829,7 +4852,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.5"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.6"} started`);
   }
   boot();
 })();

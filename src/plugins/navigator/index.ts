@@ -26,6 +26,9 @@ const SCROLL_OFFSET = 72;
 const SETTLE_MS = 150;
 const RAIL_MARGIN = 20;
 const SIDE_PANELS = "[role='complementary'], aside";
+const COMPOSER = "[data-notion-chat-input-container]";
+const SPAN_GAP = 12;
+const MIN_SPAN = 120;
 
 export const settings = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
@@ -79,16 +82,38 @@ export function placeRail() {
         right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
     }
     overlay.host.style.setProperty("--nav-right", `${right}px`);
+    const span = railSpan();
+    if (span) {
+        overlay.host.style.setProperty("--nav-top", `${span.top}px`);
+        overlay.host.style.setProperty("--nav-height", `${span.height}px`);
+    }
+}
+
+/**
+ * The strip the rail is centered in, as Void++ does: from the top of the chat's scroll pane to
+ * the top of the composer, so the rail sits mid-conversation rather than near the bottom.
+ */
+export function railSpan() {
+    const first = messages.find(m => m.element.isConnected)?.element;
+    if (!first) return null;
+    const { height } = viewport();
+    const pane = scrollParentOf(first);
+    const isRoot = pane === document.scrollingElement || pane === document.documentElement;
+    const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
+    const composer = document.querySelector(COMPOSER)?.getBoundingClientRect();
+    const top = Math.max(0, paneBox.top) + SPAN_GAP;
+    const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
+    return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
 }
 
 function build() {
     if (!overlay) return;
-    placeRail();
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}`).join("\u0002");
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
     overlay.host.hidden = !next.length;
+    placeRail();
     if (nextSignature === signature) {
         if (!sameElements) updateActive();
         return;

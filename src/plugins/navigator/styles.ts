@@ -9,7 +9,8 @@ export const NAV_CSS = `
   all: initial;
   --bg: #f7f7f5; --text: #37352f; --subtle: #6b6b6b; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
   --active: rgba(15,15,15,.1); --line: rgba(15,15,15,.28); --line-active: #37352f; --shadow: 0 10px 30px rgba(15,15,15,.18);
-  position: fixed; top: var(--nav-top, 10rem); right: var(--nav-right, 20px); z-index: 2147483000; display: block;
+  position: fixed; top: var(--nav-top, 4rem); height: var(--nav-height, calc(100vh - 12rem)); right: var(--nav-right, 20px);
+  width: 0; z-index: 2147483000; display: block; pointer-events: none;
   font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :host([data-theme="dark"]) {
@@ -18,21 +19,22 @@ export const NAV_CSS = `
 }
 :host([hidden]) { display: none; }
 * { box-sizing: border-box; }
+/* Like Void++: the rail is centered in the space between the chat header and the composer. */
 .rail {
-  position: absolute; top: 0; right: 0; max-height: calc(100vh - 12rem); overflow: hidden; padding: 4px 0;
-  cursor: pointer; transition: opacity .2s ease;
+  position: absolute; top: 50%; right: 0; max-height: 100%; overflow: hidden; padding: 4px 0; transform: translateY(-50%);
+  cursor: pointer; transition: opacity .2s ease; pointer-events: auto;
 }
 .lines { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; transition: transform .2s ease; }
 .line { width: 16px; height: 2px; border-radius: 2px; background: var(--line); transition: width .2s, background .2s; }
 .line[data-role="assistant"] { width: 10px; opacity: .7; }
 .line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
 .menu {
-  position: absolute; top: -8px; right: -8px; width: 300px; max-height: calc(100vh - 12rem); overflow-y: auto; padding: 6px;
+  position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
-  opacity: 0; visibility: hidden; transform: translateX(10px); transition: opacity .2s, visibility .2s, transform .2s;
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translate(10px, -50%); transition: opacity .2s, visibility .2s, transform .2s;
   overscroll-behavior: contain;
 }
-:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; transform: none; }
+:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
 :host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
 .head { padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; font-weight: 600; }
 ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
@@ -47,7 +49,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } }
-@media (max-width: 640px) { :host { top: 5rem; right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
+@media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
 `;
 
 export const NAV_HTML = `
