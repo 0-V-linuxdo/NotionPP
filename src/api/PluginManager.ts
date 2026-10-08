@@ -29,6 +29,10 @@ export interface PluginDef {
     enabledByDefault: boolean;
     required?: boolean;
     startAt?: StartAt;
+    /** Turning it on or off only fully applies after a page reload (it hooks things the page grabs at load). */
+    restartNeeded?: boolean;
+    /** The day (YYYY-MM-DD) its behaviour last changed, for the settings panel's "Recently updated". */
+    updatedAt?: string;
     settings?: PluginSettings<OptionsDef>;
     start(): void;
     stop(): void;
@@ -110,7 +114,55 @@ export function registerPlugins(list: Plugin[]) {
     for (const plugin of list) {
         plugin.settings?.bind(plugin.name);
         plugins.set(plugin.name, plugin);
+        bootEnabled.set(plugin.name, isEnabled(plugin));
     }
+    trackNewPlugins();
+}
+
+/* ---------- reload needed ---------- */
+
+/** Each plugin's on/off state when the page loaded. */
+const bootEnabled = new Map<string, boolean>();
+
+/** Plugins switched since the page loaded that only fully apply after a reload; switching back clears them. */
+export const pendingRestart = () => allPlugins().filter(p => p.restartNeeded && bootEnabled.has(p.name) && bootEnabled.get(p.name) !== isEnabled(p));
+
+/* ---------- new and recently updated ---------- */
+
+export const SEEN_KEY = "notionai-pp:plugins-seen:v1";
+export const NEW_FOR_MS = 2 * 24 * 60 * 60 * 1000;
+export const UPDATED_FOR_MS = 7 * 24 * 60 * 60 * 1000;
+let seen: Record<string, number> = {};
+
+/**
+ * Like Void++'s trackNewPlugins: remembers when each plugin was first seen. On the very first
+ * run everything counts as old, so a fresh install does not flag every plugin as new.
+ */
+function trackNewPlugins(now = Date.now()) {
+    let stored: unknown = null;
+    try {
+        stored = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "null");
+    } catch {}
+    const first = !stored || typeof stored !== "object";
+    seen = first ? {} : { ...(stored as Record<string, number>) };
+    let changed = first;
+    for (const name of plugins.keys()) {
+        if (typeof seen[name] === "number") continue;
+        seen[name] = first ? 0 : now;
+        changed = true;
+    }
+    if (!changed) return;
+    try {
+        localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+    } catch {}
+}
+
+export const isNewPlugin = (name: string, now = Date.now()) => (seen[name] ?? 0) > 0 && now - seen[name] < NEW_FOR_MS;
+
+export function isRecentlyUpdated(plugin: Plugin, now = Date.now()) {
+    if (isNewPlugin(plugin.name, now)) return true;
+    const at = plugin.updatedAt ? Date.parse(plugin.updatedAt) : NaN;
+    return Number.isFinite(at) && now - at < UPDATED_FOR_MS && now >= at;
 }
 
 let phase: StartAt | null = null;
@@ -120,6 +172,31 @@ export function startPlugins(at: StartAt) {
     for (const plugin of plugins.values()) {
         if ((plugin.startAt ?? StartAt.DomReady) !== at && at === StartAt.DocumentStart) continue;
         if (isEnabled(plugin)) startPlugin(plugin);
+    }
+    if (at === StartAt.DomReady) scheduleRetries();
+}
+
+/**
+ * Like Void++'s retryFailedPlugins: Notion builds the AI view well after DOMContentLoaded, so a
+ * plugin that failed to start then gets a few more tries as the page fills in.
+ */
+export const RETRY_DELAYS_MS = [1500, 4000, 10000];
+let retryTimers: number[] = [];
+
+function scheduleRetries() {
+    for (const timer of retryTimers) clearTimeout(timer);
+    retryTimers = RETRY_DELAYS_MS.map(delay => setTimeout(retryFailed, delay) as unknown as number);
+}
+
+export function retryFailed() {
+    for (const plugin of plugins.values()) {
+        if (plugin.started || !isEnabled(plugin) || errors.get(plugin.name)?.stage !== "start") continue;
+        logger.info(`Retrying ${plugin.name}`);
+        // Undo whatever the failed start got done before trying again.
+        try {
+            plugin.stop();
+        } catch {}
+        startPlugin(plugin);
     }
 }
 

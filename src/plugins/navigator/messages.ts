@@ -44,6 +44,19 @@ function readText(element: Element, skip: Element[] = []): string {
     return cleanLines(parts.join("\n")).join("\n");
 }
 
+const FILE = "a[href][download], [data-testid*='attachment' i], [data-testid*='file' i], [class*='attachment' i]";
+
+/** What a prompt with no text carried instead, so the outline does not drop it or show it blank. */
+export function attachmentLabel(step: Element): string {
+    const images = [...step.querySelectorAll("img")].filter(img => !img.closest("button, [role='button']") || img.width > 24).length;
+    const files = step.querySelectorAll(FILE).length;
+    if (!images && !files) return "";
+    const parts: string[] = [];
+    if (images) parts.push(images > 1 ? t(`图片 ×${images}`, `${images} images`) : t("图片", "Image"));
+    if (files) parts.push(files > 1 ? t(`附件 ×${files}`, `${files} attachments`) : t("附件", "Attachment"));
+    return `[${parts.join(" · ")}]`;
+}
+
 function turnOf(step: Element): Element {
     let turn = step;
     while (turn.parentElement && turn.parentElement !== document.body && turn.parentElement.querySelectorAll(`[${USER_STEP}]`).length === 1) {
@@ -118,7 +131,7 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
     steps.forEach((step, index) => {
         const id = step.getAttribute(USER_STEP) || `user-${index}`;
         const answer = answers[index];
-        const text = answer?.textContent?.trim() || userText(step);
+        const text = answer?.textContent?.trim() || userText(step) || attachmentLabel(step);
         if (text) messages.push({ id, role: "user", element: answer ?? userBubble(step), text });
         const nextAnswer = answers[index + 1];
         for (const sibling of replies[index]) {

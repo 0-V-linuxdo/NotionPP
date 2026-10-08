@@ -64,7 +64,7 @@ describe("usage widget on AI pages", () => {
             onChange: () => () => {},
             refreshNow() {},
         };
-        const stats = { space: () => "", enabled: () => false, setEnabled() {}, retain: () => 90, refresh() {}, hoverDelay: () => 1, showPlan: () => false };
+        const stats = { space: () => "", enabled: () => false, setEnabled() {}, retain: () => 90, refresh() {}, hoverDelay: () => 1, showPlan: () => false, showPercent: () => false };
         const widget = new UsageWidget(service as any, stats);
         expect(location.pathname).toMatch(/^\/(ai|chat)/);
         expect(widget.host.hidden).toBe(true);

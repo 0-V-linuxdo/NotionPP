@@ -8,12 +8,12 @@ import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
 import { definePlugin } from "@api/PluginManager";
 import { definePluginSettings } from "@api/Settings";
-import { currentChatId } from "@api/Reply";
+import { currentChatId, currentChatTitle } from "@api/Reply";
 import { Icons, svgIcon } from "@utils/icons";
 import { pageWindow, t } from "@utils/page";
 import { debounce } from "@utils/time";
 
-import { copyRole, USER_STEP } from "../navigator/messages";
+import { collectMessages, copyRole, USER_STEP } from "../navigator/messages";
 import { startList, stopList } from "./list";
 import { setStarsActive, STARS_KEY, starsOf, toggleStar } from "./store";
 
@@ -117,7 +117,8 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
     button.addEventListener("click", event => {
         event.preventDefault();
         event.stopPropagation();
-        paint(button, toggleStar(currentChatId(), id));
+        const message = collectMessages().find(m => m.id === id);
+        paint(button, toggleStar(currentChatId(), id, message && { role: message.role, text: message.text, title: currentChatTitle() }));
     });
     button.addEventListener("keydown", event => {
         if (event.key !== "Enter" && event.key !== " ") return;
@@ -189,6 +190,7 @@ export default definePlugin({
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     start() {
         setStarsActive(true);
         const rescan = debounce(scan, RESCAN_MS, RESCAN_MS * 4);

@@ -41,6 +41,8 @@ function readAnchor(): Anchor | null {
 export interface WidgetStats extends StatsContext {
     hoverDelay: () => number;
     showPlan: () => boolean;
+    /** Show the percentages next to the rings all the time, not only on hover. */
+    showPercent: () => boolean;
 }
 
 /**
@@ -180,6 +182,9 @@ export class UsageWidget {
         const monthly = applicable ? activeMonthly(snapshot, now) : null;
         const rollingText = formatPercent(views.rolling.percent);
         const monthlyText = formatPercent(views.monthly.percent);
+        const showPercent = this.stats.showPercent() && applicable;
+        this.setText(".pct-rolling", showPercent ? rollingText : "");
+        this.setText(".pct-monthly", showPercent ? monthlyText : "");
         // Stacked label / value / reset blocks like Void++'s UsagePanel: one meter per column, so
         // no column is stretched by the longest free text of another row.
         const used = (text: string) => text === "—" ? text : t(`已用 ${text}`, `${text} used`);

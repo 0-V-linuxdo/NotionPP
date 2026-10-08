@@ -27,6 +27,12 @@ export const settings = definePluginSettings({
         description: { zh: "在悬停提示里显示套餐和周期截止日期", en: "Show the plan and its period end date in the hover tooltip" },
         default: false,
     },
+    showPercent: {
+        type: "boolean",
+        label: { zh: "圆环旁常驻显示百分比", en: "Always show percentages" },
+        description: { zh: "不用悬停也能看到 6 小时和月度用量的百分比", en: "See the 6-hour and monthly percentages without hovering" },
+        default: false,
+    },
     hoverStatsDelay: {
         type: "number",
         label: { zh: "悬停显示今日用量的延迟（秒）", en: "Delay before showing today on hover, in seconds" },
@@ -75,6 +81,7 @@ const stats: WidgetStats = {
     retain: () => settings.store.retainDays,
     hoverDelay: () => settings.store.hoverStatsDelay,
     showPlan: () => settings.store.showPlan,
+    showPercent: () => settings.store.showPercent,
     refresh: record,
 };
 
@@ -93,6 +100,7 @@ export default definePlugin({
     icon: Icons.gauge,
     tags: ["composer"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     startAt: StartAt.DocumentStart,
     settings,
     start() {

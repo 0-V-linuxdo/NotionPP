@@ -7,17 +7,17 @@
 import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { currentChatId } from "@api/Reply";
+import { currentChatId, currentChatTitle } from "@api/Reply";
 import { onRouteChange } from "@api/Router";
 import { scrollParentOf } from "@utils/dom";
 import { Icons, svgIcon } from "@utils/icons";
-import { t } from "@utils/page";
+import { pageWindow, t } from "@utils/page";
 import { debounce } from "@utils/time";
 
 import { CHAT_SHARE } from "../hideShare";
 import { jumpTo } from "../navigator";
 import { type ChatMessage, collectMessages, summarize } from "../navigator/messages";
-import { starsOf, toggleStar } from "./store";
+import { allStarredChats, noteStar, readMeta, type StarMeta, starsOf, toggleStar } from "./store";
 
 /*
  * Like Void++'s starred list: a star button in the chat's top-right controls. Hovering it (or
@@ -65,6 +65,10 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 .unstar { display: flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 5px; color: ${STAR_COLOR}; }
 .unstar:hover { background: var(--hover); }
 .unstar svg { width: 14px; height: 14px; fill: currentColor; }
+.switch-view { flex: none; margin-left: 4px; padding: 1px 6px; border-radius: 5px; color: var(--subtle); font-size: 12px; }
+.switch-view:hover { background: var(--hover); color: var(--text); }
+.chat { padding: 8px 8px 2px; color: var(--subtle); font-size: 11.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat.current::after { content: " ·"; }
 .empty { padding: 6px 8px 8px; color: var(--subtle); font-size: 13px; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
 `;
@@ -72,6 +76,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 let overlay: Overlay | null = null;
 let button: HTMLElement | null = null;
 let pinned = false;
+/** Which stars the panel lists: this chat's, or every chat's. */
+let view: "chat" | "all" = "chat";
+/** A star to reach once its chat is open and the message has loaded. */
+let pending: { chatId: string; id: string; until: number } | null = null;
+let pendingTimer = 0;
 let hovering = false;
 let hoverTimer = 0;
 let cleanups: (() => void)[] = [];
@@ -79,14 +88,22 @@ let cleanups: (() => void)[] = [];
 export interface StarEntry {
     id: string;
     role: "user" | "assistant";
+    /** The message's text, or the snippet saved when it was starred; null when neither is known. */
     text: string | null;
+    /** On screen now, so a click jumps straight there. */
+    loaded: boolean;
 }
 
-/** This chat's stars in conversation order; stars on messages not rendered right now go last. */
-export function starEntries(ids: Set<string>, messages: ChatMessage[]): StarEntry[] {
-    const shown = messages.filter(m => ids.has(m.id)).map(m => ({ id: m.id, role: m.role, text: m.text }));
+/** This chat's stars in conversation order; stars on messages not rendered right now go last, with their saved snippet. */
+export function starEntries(ids: Set<string>, messages: ChatMessage[], saved: Record<string, StarMeta> = {}): StarEntry[] {
+    const shown = messages.filter(m => ids.has(m.id)).map(m => ({ id: m.id, role: m.role, text: m.text, loaded: true }));
     const seen = new Set(shown.map(entry => entry.id));
-    const rest = [...ids].filter(id => !seen.has(id)).map(id => ({ id, role: id.endsWith(":assistant") ? "assistant" as const : "user" as const, text: null }));
+    const rest = [...ids].filter(id => !seen.has(id)).map(id => ({
+        id,
+        role: saved[id]?.role ?? (id.endsWith(":assistant") ? "assistant" as const : "user" as const),
+        text: saved[id]?.text ?? null,
+        loaded: false,
+    }));
     return [...shown, ...rest];
 }
 
@@ -189,14 +206,65 @@ function close() {
     render();
 }
 
-function scrollToMessage(id: string) {
-    if (jumpTo(id)) return;
+function scrollToMessage(id: string): boolean {
+    if (jumpTo(id)) return true;
     const target = collectMessages().find(m => m.id === id)?.element;
-    if (!target) return;
+    if (!target) return false;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
     const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
     scroller.scrollTo({ top, behavior: "smooth" });
+    return true;
+}
+
+/** How long to keep trying to reach a star whose message has not loaded yet. */
+export const SEEK_MS = 8000;
+const SEEK_STEP_MS = 400;
+
+/**
+ * Like Void++'s seek: keep trying until the message is there. Notion loads a long chat's older
+ * messages as you scroll up, so each miss scrolls to the top to pull in the next batch.
+ */
+function seek(chatId: string, id: string) {
+    clearTimeout(pendingTimer);
+    pending = { chatId, id, until: Date.now() + SEEK_MS };
+    const step = () => {
+        if (!pending) return;
+        if (currentChatId() === pending.chatId && scrollToMessage(pending.id)) {
+            pending = null;
+            return;
+        }
+        if (Date.now() > pending.until) {
+            pending = null;
+            return;
+        }
+        if (currentChatId() === pending.chatId) {
+            const first = collectMessages()[0]?.element;
+            if (first) scrollParentOf(first).scrollTo({ top: 0 });
+        }
+        pendingTimer = window.setTimeout(step, SEEK_STEP_MS);
+    };
+    step();
+}
+
+/** Opens another chat the way Notion's own links do, without reloading the page. */
+export function chatUrl(chatId: string, href = location.href): string {
+    const url = new URL(href);
+    url.searchParams.set("t", chatId);
+    return url.toString();
+}
+
+function openChat(chatId: string, id: string) {
+    if (currentChatId() !== chatId) {
+        const url = chatUrl(chatId);
+        pageWindow.history.pushState(pageWindow.history.state, "", url);
+        pageWindow.dispatchEvent(new PopStateEvent("popstate", { state: pageWindow.history.state }));
+        // Notion's router did not pick the change up: load the chat the plain way.
+        window.setTimeout(() => {
+            if (currentChatId() === chatId && !collectMessages().length && !document.querySelector("[data-agent-chat-user-step-id]")) pageWindow.location.assign(url);
+        }, 2500);
+    }
+    seek(chatId, id);
 }
 
 function ensureOverlay(): Overlay {
@@ -208,48 +276,92 @@ function ensureOverlay(): Overlay {
     return overlay;
 }
 
+function starRow(role: "user" | "assistant", text: string | null, loaded: boolean, onJump: () => void, onUnstar: () => void) {
+    const row = document.createElement("li");
+    row.className = loaded ? "row" : "row missing";
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "jump";
+    const roleTag = document.createElement("span");
+    roleTag.className = "role";
+    roleTag.textContent = role === "user" ? t("你", "You") : "AI";
+    const snip = document.createElement("span");
+    snip.className = "snip";
+    snip.textContent = text === null ? t("（未加载，点击后自动查找）", "(not loaded; click to find it)") : summarize(text, 80);
+    if (text) jump.title = summarize(text, 400);
+    jump.append(roleTag, snip);
+    jump.addEventListener("click", onJump);
+    const unstar = document.createElement("button");
+    unstar.type = "button";
+    unstar.className = "unstar";
+    unstar.title = t("取消星标", "Unstar");
+    unstar.setAttribute("aria-label", unstar.title);
+    unstar.append(svgIcon(Icons.star));
+    unstar.addEventListener("click", onUnstar);
+    row.append(jump, unstar);
+    return row;
+}
+
+function viewSwitch() {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "switch-view";
+    toggle.textContent = view === "chat" ? t("全部对话", "All chats") : t("本对话", "This chat");
+    toggle.addEventListener("click", event => {
+        event.stopPropagation();
+        view = view === "chat" ? "all" : "chat";
+        render();
+    });
+    return toggle;
+}
+
 function fillPanel(panel: HTMLElement) {
-    const entries = starEntries(starsOf(currentChatId()), collectMessages());
+    const chatId = currentChatId();
+    const messages = collectMessages();
+    const saved = readMeta()[chatId]?.items ?? {};
+    const entries = starEntries(starsOf(chatId), messages, saved);
+    // Stars set before snippets were saved pick theirs up the first time their message is seen.
+    const title = currentChatTitle();
+    for (const entry of entries) if (entry.loaded && entry.text) noteStar(chatId, entry.id, { role: entry.role, text: entry.text, title });
     const head = document.createElement("div");
     head.className = "head";
     const count = document.createElement("span");
     count.className = "count";
-    count.textContent = String(entries.length);
-    head.append(svgIcon(Icons.star), document.createTextNode(t("已加星标", "Starred")), count);
+    head.append(svgIcon(Icons.star), document.createTextNode(view === "chat" ? t("已加星标", "Starred") : t("全部星标", "All stars")), count, viewSwitch());
     const list = document.createElement("ul");
-    for (const entry of entries) {
-        const row = document.createElement("li");
-        row.className = entry.text === null ? "row missing" : "row";
-        const jump = document.createElement("button");
-        jump.type = "button";
-        jump.className = "jump";
-        const role = document.createElement("span");
-        role.className = "role";
-        role.textContent = entry.role === "user" ? t("你", "You") : "AI";
-        const snip = document.createElement("span");
-        snip.className = "snip";
-        snip.textContent = entry.text === null ? t("（未加载，向上滚动后可跳转）", "(not loaded yet; scroll up to reach it)") : summarize(entry.text, 80);
-        if (entry.text) jump.title = summarize(entry.text, 400);
-        jump.append(role, snip);
-        jump.addEventListener("click", () => {
-            scrollToMessage(entry.id);
-            close();
-        });
-        const unstar = document.createElement("button");
-        unstar.type = "button";
-        unstar.className = "unstar";
-        unstar.title = t("取消星标", "Unstar");
-        unstar.setAttribute("aria-label", unstar.title);
-        unstar.append(svgIcon(Icons.star));
-        unstar.addEventListener("click", () => toggleStar(currentChatId(), entry.id));
-        row.append(jump, unstar);
-        list.append(row);
+    if (view === "chat") {
+        count.textContent = String(entries.length);
+        for (const entry of entries) {
+            list.append(starRow(entry.role, entry.text, entry.loaded, () => {
+                seek(chatId, entry.id);
+                close();
+            }, () => toggleStar(chatId, entry.id)));
+        }
+    } else {
+        const chats = allStarredChats();
+        count.textContent = String(chats.reduce((sum, chat) => sum + chat.stars.length, 0));
+        for (const chat of chats) {
+            const group = document.createElement("li");
+            group.className = chat.chatId === chatId ? "chat current" : "chat";
+            group.textContent = chat.title || t("未命名对话", "Untitled chat");
+            list.append(group);
+            for (const star of chat.stars) {
+                const here = chat.chatId === chatId ? entries.find(entry => entry.id === star.id) : undefined;
+                const role = here?.role ?? star.meta?.role ?? (star.id.endsWith(":assistant") ? "assistant" : "user");
+                list.append(starRow(role, here?.text ?? star.meta?.text ?? null, !!here?.loaded, () => {
+                    openChat(chat.chatId, star.id);
+                    close();
+                }, () => toggleStar(chat.chatId, star.id)));
+            }
+        }
     }
-    if (entries.length) panel.replaceChildren(head, list);
+    if (list.children.length) panel.replaceChildren(head, list);
     else {
         const empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.");
+        empty.textContent = view === "chat"
+            ? t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.")
+            : t("还没有任何星标。", "No stars yet.");
         panel.replaceChildren(head, empty);
     }
 }
@@ -322,6 +434,9 @@ export function startList() {
 
 export function stopList() {
     for (const cleanup of cleanups.splice(0)) cleanup();
+    clearTimeout(pendingTimer);
+    pending = null;
+    view = "chat";
     clearTimeout(hoverTimer);
     pinned = false;
     hovering = false;

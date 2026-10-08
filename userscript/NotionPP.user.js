@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.9.1
+// @version      20261007.1.10.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -137,9 +137,30 @@
   }
   function reloadFromStorage(raw) {
     const parsed = safeJson(raw ?? "");
-    bag = isRecord(parsed) ? parsed : {};
-    for (const listener of [...listeners])
-      listener("*", "*");
+    const next = isRecord(parsed) ? parsed : {};
+    const changed = diffBags(bag, next);
+    bag = next;
+    for (const [plugin, key] of changed) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(plugin, key);
+        } catch (error) {
+          logger.error("Settings listener failed:", error);
+        }
+      }
+    }
+  }
+  function diffBags(before, after) {
+    const out = [];
+    for (const plugin of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      const a = isRecord(before[plugin]) ? before[plugin] : {};
+      const b = isRecord(after[plugin]) ? after[plugin] : {};
+      const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((key) => a[key] !== b[key]);
+      keys.sort((x, y) => Number(y === "enabled") - Number(x === "enabled"));
+      for (const key of keys)
+        out.push([plugin, key]);
+    }
+    return out;
   }
   function definePluginSettings(def) {
     let owner = "";
@@ -567,7 +588,42 @@
     for (const plugin of list) {
       plugin.settings?.bind(plugin.name);
       plugins.set(plugin.name, plugin);
+      bootEnabled.set(plugin.name, isEnabled(plugin));
     }
+    trackNewPlugins();
+  }
+  var bootEnabled = new Map;
+  var pendingRestart = () => allPlugins().filter((p) => p.restartNeeded && bootEnabled.has(p.name) && bootEnabled.get(p.name) !== isEnabled(p));
+  var SEEN_KEY = "notionai-pp:plugins-seen:v1";
+  var NEW_FOR_MS = 2 * 24 * 60 * 60 * 1000;
+  var UPDATED_FOR_MS = 7 * 24 * 60 * 60 * 1000;
+  var seen = {};
+  function trackNewPlugins(now = Date.now()) {
+    let stored = null;
+    try {
+      stored = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "null");
+    } catch {}
+    const first = !stored || typeof stored !== "object";
+    seen = first ? {} : { ...stored };
+    let changed = first;
+    for (const name of plugins.keys()) {
+      if (typeof seen[name] === "number")
+        continue;
+      seen[name] = first ? 0 : now;
+      changed = true;
+    }
+    if (!changed)
+      return;
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+    } catch {}
+  }
+  var isNewPlugin = (name, now = Date.now()) => (seen[name] ?? 0) > 0 && now - seen[name] < NEW_FOR_MS;
+  function isRecentlyUpdated(plugin, now = Date.now()) {
+    if (isNewPlugin(plugin.name, now))
+      return true;
+    const at = plugin.updatedAt ? Date.parse(plugin.updatedAt) : NaN;
+    return Number.isFinite(at) && now - at < UPDATED_FOR_MS && now >= at;
   }
   var phase = null;
   function startPlugins(at) {
@@ -577,6 +633,26 @@
         continue;
       if (isEnabled(plugin))
         startPlugin(plugin);
+    }
+    if (at === "DomReady" /* DomReady */)
+      scheduleRetries();
+  }
+  var RETRY_DELAYS_MS = [1500, 4000, 1e4];
+  var retryTimers = [];
+  function scheduleRetries() {
+    for (const timer of retryTimers)
+      clearTimeout(timer);
+    retryTimers = RETRY_DELAYS_MS.map((delay) => setTimeout(retryFailed, delay));
+  }
+  function retryFailed() {
+    for (const plugin of plugins.values()) {
+      if (plugin.started || !isEnabled(plugin) || errors.get(plugin.name)?.stage !== "start")
+        continue;
+      logger3.info(`Retrying ${plugin.name}`);
+      try {
+        plugin.stop();
+      } catch {}
+      startPlugin(plugin);
     }
   }
   onSettingsChange((name, key) => {
@@ -671,6 +747,7 @@
     quote: `<path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12v6"/>`,
     shield: `<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m4.243 5.21 14.39 12.472"/>`,
     music: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
+    code: `<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -1388,11 +1465,374 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     }
   });
 
-  // src/plugins/composerLook/index.ts
-  var STYLE_ID2 = "notionai-pp-composer-look";
-  var MARK = "data-npp-composer-box";
+  // src/utils/time.ts
+  function debounce(fn, wait, maxWait = Infinity) {
+    let timer;
+    let firstAt = 0;
+    const run = (...args) => {
+      clearTimeout(timer);
+      const now = Date.now();
+      if (!firstAt)
+        firstAt = now;
+      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
+      timer = setTimeout(() => {
+        firstAt = 0;
+        fn(...args);
+      }, delay);
+    };
+    run.cancel = () => {
+      clearTimeout(timer);
+      firstAt = 0;
+    };
+    return run;
+  }
+  function frameThrottle(fn) {
+    let pending = false;
+    return () => {
+      if (pending)
+        return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        fn();
+      });
+    };
+  }
+
+  // src/plugins/navigator/messages.ts
+  var USER_STEP = "data-agent-chat-user-step-id";
+  var LEAF = "[data-content-editable-leaf]";
+  var TOGGLE2 = "[role='button'][aria-expanded]";
+  var COPY_ASSISTANT = /\bcopy\s+(?:response|answer)\b|复制(?:回复|回答|响应)/i;
+  var COPY_USER = /\bcopy\s+(?:text|message|prompt)\b|复制(?:文本|消息|提示词|问题)/i;
+  var MONTHS = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December";
+  var DATE_RE = new RegExp(`^(?:Today|Yesterday|(?:${MONTHS})\\s+\\d{1,2}(?:,\\s*\\d{4})?(?:\\s+at\\s+\\d{1,2}:\\d{2}\\s*(?:AM|PM)?)?|\\d{1,2}:\\d{2}\\s*(?:AM|PM)?|\\d{4}[-/年]\\d{1,2}[-/月]\\d{1,2}日?(?:\\s+\\d{1,2}:\\d{2})?|\\d{1,2}月\\d{1,2}日(?:\\s+\\d{1,2}:\\d{2})?|今天|昨天)$`, "i");
+  var NOISE_RE = /^(?:\d+\s*steps?|thought(?:\s+for\s+.*)?|思考.*|noodling|contemplating|thinking|found\s+\d+\s+results?|searched the web|searching the web|loaded .*(?:skill|tools?)|loading web page:.*|updated to-dos|copy(?: text| response)?|undo|show changes|response copied to clipboard|copied to clipboard)$/i;
+  function cleanLines(raw) {
+    return raw.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => line && !DATE_RE.test(line) && !NOISE_RE.test(line));
+  }
+  var isDateText = (text) => DATE_RE.test(text.replace(/\s+/g, " ").trim());
+  function readText(element, skip = []) {
+    if (!skip.length)
+      return cleanLines(element.innerText ?? element.textContent ?? "").join(`
+`);
+    const parts = [];
+    for (const child of element.children) {
+      if (skip.some((node) => node === child || node.contains(child)))
+        continue;
+      if (skip.some((node) => child.contains(node)))
+        parts.push(readText(child, skip));
+      else
+        parts.push(child.innerText ?? child.textContent ?? "");
+    }
+    return cleanLines(parts.join(`
+`)).join(`
+`);
+  }
+  var FILE = "a[href][download], [data-testid*='attachment' i], [data-testid*='file' i], [class*='attachment' i]";
+  function attachmentLabel(step) {
+    const images = [...step.querySelectorAll("img")].filter((img) => !img.closest("button, [role='button']") || img.width > 24).length;
+    const files = step.querySelectorAll(FILE).length;
+    if (!images && !files)
+      return "";
+    const parts = [];
+    if (images)
+      parts.push(images > 1 ? t(`图片 ×${images}`, `${images} images`) : t("图片", "Image"));
+    if (files)
+      parts.push(files > 1 ? t(`附件 ×${files}`, `${files} attachments`) : t("附件", "Attachment"));
+    return `[${parts.join(" · ")}]`;
+  }
+  function turnOf(step) {
+    let turn = step;
+    while (turn.parentElement && turn.parentElement !== document.body && turn.parentElement.querySelectorAll(`[${USER_STEP}]`).length === 1) {
+      turn = turn.parentElement;
+    }
+    return turn;
+  }
+  function userBubble(step) {
+    const leaf = step.querySelector(LEAF);
+    if (!leaf)
+      return step;
+    let node = leaf;
+    while (node.parentElement && node.parentElement !== step && !node.parentElement.querySelector("button, [role='button']")) {
+      node = node.parentElement;
+    }
+    return node;
+  }
+  function userText(step) {
+    const leaves = [...step.querySelectorAll(LEAF)].map((leaf) => leaf.textContent?.trim() ?? "").filter(Boolean);
+    return leaves.length ? leaves.join(`
+`) : readText(step);
+  }
+  function assistantBody(turn) {
+    const toggles = turn.querySelectorAll(TOGGLE2);
+    const column = toggles.length ? toggles[toggles.length - 1].parentElement?.parentElement : null;
+    if (column && turn.contains(column)) {
+      const bodies = [...column.children].filter((child) => child instanceof HTMLElement && !child.querySelector(TOGGLE2) && !child.matches(TOGGLE2) && readText(child).length > 1);
+      if (bodies.length)
+        return bodies[bodies.length - 1];
+    }
+    return turn;
+  }
+  function regionsOf(turn) {
+    return [...turn.querySelectorAll(TOGGLE2)].map((toggle) => toggle.getAttribute("aria-controls")).map((id) => id ? document.getElementById(id) : null).filter((node) => !!node && turn.contains(node));
+  }
+  function assistantTurns(turn, turnSet) {
+    const out = [];
+    for (let sibling = turn.nextElementSibling;sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
+      if (sibling instanceof HTMLElement)
+        out.push(sibling);
+    }
+    return out;
+  }
+  function pickedOption(turns) {
+    for (let i = turns.length - 1;i >= 0; i--) {
+      const leaves = turns[i].querySelectorAll(LEAF);
+      const last = leaves[leaves.length - 1];
+      if (last?.textContent?.trim())
+        return last;
+    }
+    return null;
+  }
+  function fromUserSteps(root) {
+    const steps = [...root.querySelectorAll(`[${USER_STEP}]`)].filter((step) => !step.parentElement?.closest(`[${USER_STEP}]`));
+    if (!steps.length)
+      return [];
+    const turns = steps.map(turnOf);
+    const turnSet = new Set(turns);
+    const replies = turns.map((turn) => assistantTurns(turn, turnSet));
+    const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
+    const messages = [];
+    steps.forEach((step, index) => {
+      const id = step.getAttribute(USER_STEP) || `user-${index}`;
+      const answer = answers[index];
+      const text = answer?.textContent?.trim() || userText(step) || attachmentLabel(step);
+      if (text)
+        messages.push({ id, role: "user", element: answer ?? userBubble(step), text });
+      const nextAnswer = answers[index + 1];
+      for (const sibling of replies[index]) {
+        const skip = [...sibling.querySelectorAll(TOGGLE2), ...regionsOf(sibling), ...nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : []];
+        const body = assistantBody(sibling);
+        const bodyText = readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
+        const reply = bodyText || readText(sibling, skip);
+        if (reply) {
+          messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
+          break;
+        }
+        const steps = [...sibling.querySelectorAll(TOGGLE2)].map((toggle) => toggle.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
+        if (steps.length) {
+          messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text: t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`) });
+          break;
+        }
+      }
+    });
+    return messages;
+  }
+  function copyRole(button) {
+    const label = [button.getAttribute("aria-label"), button.getAttribute("title"), button.getAttribute("data-testid")].filter(Boolean).join(" ");
+    if (COPY_ASSISTANT.test(label))
+      return "assistant";
+    if (COPY_USER.test(label))
+      return "user";
+    return null;
+  }
+  function fromCopyButtons(root) {
+    const messages = [];
+    const seen = new Set;
+    root.querySelectorAll("button, [role='button']").forEach((button, index) => {
+      if (button.closest("nav, aside, header, footer, form, pre, code"))
+        return;
+      const role = copyRole(button);
+      if (!role)
+        return;
+      let target = null;
+      if (role === "user") {
+        for (let node = button;node && !target; node = node.parentElement) {
+          const prev = node.previousElementSibling;
+          if (prev instanceof HTMLElement && !prev.contains(button) && !prev.querySelector("button, [role='button']")) {
+            const text = readText(prev);
+            if (text.length >= 2 && !isDateText(text))
+              target = prev;
+          }
+          if (node === document.body)
+            break;
+        }
+      } else {
+        for (let node = button.parentElement;node && node !== document.body && !target; node = node.parentElement) {
+          const content = [...node.children].find((child) => !child.contains(button));
+          if (!(content instanceof HTMLElement))
+            continue;
+          const parts = [...content.children].filter((child) => child instanceof HTMLElement && readText(child).length >= 8);
+          const body = parts[parts.length - 1];
+          if (body && ![...body.querySelectorAll("button, [role='button']")].some(copyRole))
+            target = body;
+        }
+      }
+      if (!target || seen.has(target))
+        return;
+      seen.add(target);
+      const text = readText(target);
+      if (text)
+        messages.push({ id: `copy-${role}-${index}`, role, element: target, text });
+    });
+    return messages.sort((a, b) => a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
+  }
+  function collectMessages(root = document) {
+    const primary = fromUserSteps(root);
+    return primary.length ? primary : fromCopyButtons(root);
+  }
+  function summarize(text, max = 60) {
+    const line = text.replace(/\s+/g, " ").trim();
+    return line.length > max ? `${line.slice(0, max)}…` : line;
+  }
+  var SHARED_PREFIX_MIN = 16;
+  var LABEL_HEAD = 8;
+  function outlineLabels(messages, max = 60) {
+    const flat = messages.map((message) => message.text.replace(/\s+/g, " ").trim());
+    return flat.map((text, index) => {
+      let shared = 0;
+      for (let j = 0;j < index; j++) {
+        if (messages[j].role !== messages[index].role)
+          continue;
+        const other = flat[j];
+        let k = 0;
+        while (k < text.length && k < other.length && text[k] === other[k])
+          k++;
+        shared = Math.max(shared, k);
+      }
+      if (shared < SHARED_PREFIX_MIN || shared >= text.length)
+        return summarize(text, max);
+      const cut = Math.max(LABEL_HEAD, text.lastIndexOf(" ", shared) + 1);
+      return summarize(`${text.slice(0, LABEL_HEAD)}… ${text.slice(cut)}`, max);
+    });
+  }
+
+  // src/plugins/codeFold/index.ts
+  var STYLE_ID2 = "notionai-pp-code-fold";
+  var MARK = "data-npp-fold";
+  var BAR = "data-npp-fold-bar";
+  var CODE = ".notion-code-block, pre";
   var COMPOSER = "[data-notion-chat-input-container]";
   var settings3 = definePluginSettings({
+    height: {
+      type: "number",
+      label: { zh: "折叠后的高度（像素）", en: "Folded height (px)" },
+      description: { zh: "比这更高的代码块默认折叠", en: "Code blocks taller than this start folded" },
+      default: 320,
+      min: 120,
+      max: 1200
+    }
+  });
+  function chatCodeBlocks(root = document) {
+    if (!root.querySelector(`[${USER_STEP}]`))
+      return [];
+    const blocks = [...root.querySelectorAll(CODE)].filter((block) => !block.closest(COMPOSER) && !block.parentElement?.closest(CODE));
+    return blocks;
+  }
+  var lineCount = (block) => (block.innerText ?? "").replace(/\n$/, "").split(`
+`).length;
+  function css(height) {
+    return `[${MARK}="folded"] { max-height: ${height}px !important; overflow: hidden !important; position: relative;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 56px), transparent); mask-image: linear-gradient(#000 calc(100% - 56px), transparent); }
+[${BAR}] { display: flex; align-items: center; justify-content: center; width: 100%; margin: 2px 0 6px; padding: 4px 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--c-texSec, rgba(120,119,116,1)); font: inherit; font-size: 12.5px; cursor: pointer; }
+[${BAR}]:hover { background: var(--ca-bacHov, rgba(55,53,47,.06)); color: var(--c-texPri, inherit); }`;
+  }
+  function makeBar(block) {
+    const bar = document.createElement("button");
+    bar.type = "button";
+    bar.setAttribute(BAR, "");
+    bar.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const folded = block.getAttribute(MARK) === "folded";
+      block.setAttribute(MARK, folded ? "open" : "folded");
+      label(bar, block);
+      if (!folded)
+        block.scrollIntoView({ block: "nearest" });
+    });
+    return bar;
+  }
+  function label(bar, block) {
+    const folded = block.getAttribute(MARK) === "folded";
+    const lines = lineCount(block);
+    bar.textContent = folded ? t(`展开全部代码（${lines} 行）`, `Show all ${lines} lines`) : t("收起代码", "Fold code");
+    bar.setAttribute("aria-expanded", String(!folded));
+  }
+  function scan3() {
+    const limit = settings3.store.height;
+    for (const block of chatCodeBlocks()) {
+      let bar = block.nextElementSibling?.hasAttribute(BAR) ? block.nextElementSibling : null;
+      if (!block.hasAttribute(MARK)) {
+        if (block.scrollHeight <= limit + 40)
+          continue;
+        block.setAttribute(MARK, "folded");
+      }
+      if (!bar) {
+        bar = makeBar(block);
+        block.after(bar);
+      }
+      label(bar, block);
+    }
+  }
+  function removeAll() {
+    for (const bar of document.querySelectorAll(`[${BAR}]`))
+      bar.remove();
+    for (const block of document.querySelectorAll(`[${MARK}]`))
+      block.removeAttribute(MARK);
+  }
+  function applyStyle() {
+    let style = document.getElementById(STYLE_ID2);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID2;
+      (document.head ?? document.documentElement).append(style);
+    }
+    style.textContent = css(settings3.store.height);
+  }
+  var cleanups2 = [];
+  var codeFold_default = definePlugin({
+    name: "codeFold",
+    title: { zh: "长代码块折叠", en: "Fold long code" },
+    description: {
+      zh: "Notion AI 回复里很长的代码块默认折叠到设定高度，底部有「展开全部代码」按钮，看完可以再收起。",
+      en: "Long code blocks in Notion AI replies start folded to a set height, with a bar to show all of it and fold it again."
+    },
+    icon: Icons.code,
+    tags: ["chat"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-08",
+    settings: settings3,
+    start() {
+      applyStyle();
+      const rescan = debounce(scan3, 250, 1000);
+      cleanups2 = [
+        onDomChange((mutations) => {
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(BAR))))
+            return;
+          rescan();
+        }),
+        () => rescan.cancel()
+      ];
+      scan3();
+    },
+    stop() {
+      for (const cleanup of cleanups2.splice(0))
+        cleanup();
+      removeAll();
+      document.getElementById(STYLE_ID2)?.remove();
+    },
+    onSettingsChange() {
+      applyStyle();
+      scan3();
+    }
+  });
+
+  // src/plugins/composerLook/index.ts
+  var STYLE_ID3 = "notionai-pp-composer-look";
+  var MARK2 = "data-npp-composer-box";
+  var COMPOSER2 = "[data-notion-chat-input-container]";
+  var settings4 = definePluginSettings({
     opacity: {
       type: "number",
       label: { zh: "背景不透明度（%）", en: "Background opacity (%)" },
@@ -1408,8 +1848,23 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       default: 8,
       min: 0,
       max: 30
+    },
+    noFade: {
+      type: "boolean",
+      label: { zh: "去掉对话区上下的渐隐", en: "No fade at the chat's edges" },
+      description: { zh: "Notion 会让对话区顶部和贴近输入框的 32 像素逐渐变淡，关掉后文字到边缘都清晰", en: "Notion fades the top of the chat and the 32px next to the composer; turn the fade off to keep text crisp to the edge" },
+      default: true
     }
   });
+  var FADE_MARK = "data-npp-chat-scroller";
+  function chatScroller() {
+    const step = document.querySelector("[data-agent-chat-user-step-id]");
+    for (let node = step?.parentElement;node && node !== document.body; node = node.parentElement) {
+      if (/gradient/.test(getComputedStyle(node).maskImage ?? ""))
+        return node;
+    }
+    return null;
+  }
   function composerBox(container) {
     for (const node of [container, ...container.querySelectorAll("div")]) {
       if (node instanceof HTMLElement && /--c-bacSec/.test(node.style.backgroundColor))
@@ -1418,29 +1873,37 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     return null;
   }
   function mark() {
-    for (const container of document.querySelectorAll(COMPOSER)) {
+    for (const container of document.querySelectorAll(COMPOSER2)) {
       const box = composerBox(container);
-      if (box && !box.hasAttribute(MARK))
-        box.setAttribute(MARK, "");
+      if (box && !box.hasAttribute(MARK2))
+        box.setAttribute(MARK2, "");
     }
+    if (settings4.store.noFade && !document.querySelector(`[${FADE_MARK}]`))
+      chatScroller()?.setAttribute(FADE_MARK, "");
   }
-  function css(opacity, blur) {
+  function css2(opacity, blur, noFade = false) {
     const pct = Math.max(0, Math.min(100, Math.round(opacity)));
     const px = Math.max(0, Math.min(30, Math.round(blur)));
     const rules = [`background-color: color-mix(in srgb, var(--c-bacSec) ${pct}%, transparent) !important;`];
-    if (px)
+    if (px && pct < 100)
       rules.push(`backdrop-filter: blur(${px}px) saturate(1.2);`, `-webkit-backdrop-filter: blur(${px}px) saturate(1.2);`);
-    return `[${MARK}] { ${rules.join(" ")} }`;
+    const fade = noFade ? `
+[${FADE_MARK}] { mask-image: none !important; -webkit-mask-image: none !important; }` : "";
+    return `[${MARK2}] { ${rules.join(" ")} }${fade}`;
   }
   var stopDom2 = null;
   function apply() {
-    let style = document.getElementById(STYLE_ID2);
+    let style = document.getElementById(STYLE_ID3);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID2;
+      style.id = STYLE_ID3;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css(settings3.store.opacity, settings3.store.blur);
+    style.textContent = css2(settings4.store.opacity, settings4.store.blur, settings4.store.noFade);
+    if (!settings4.store.noFade)
+      for (const node of document.querySelectorAll(`[${FADE_MARK}]`))
+        node.removeAttribute(FADE_MARK);
+    mark();
   }
   var composerLook_default = definePlugin({
     name: "composerLook",
@@ -1452,18 +1915,18 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     icon: Icons.droplet,
     tags: ["composer", "appearance"],
     enabledByDefault: false,
-    settings: settings3,
+    updatedAt: "2026-10-08",
+    settings: settings4,
     start() {
       apply();
-      mark();
       stopDom2 = onDomChange(mark);
     },
     stop() {
       stopDom2?.();
       stopDom2 = null;
-      document.getElementById(STYLE_ID2)?.remove();
-      for (const node of document.querySelectorAll(`[${MARK}]`))
-        node.removeAttribute(MARK);
+      document.getElementById(STYLE_ID3)?.remove();
+      for (const node of document.querySelectorAll(`[${MARK2}], [${FADE_MARK}]`))
+        node.removeAttribute(MARK2), node.removeAttribute(FADE_MARK);
     },
     onSettingsChange() {
       apply();
@@ -1692,6 +2155,11 @@ button { font: inherit; color: inherit; }
 .card-title { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; }
 .badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
 .badge.danger { color: var(--fg-danger); }
+.badge-new { flex-shrink: 0; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; line-height: 16px; color: #fff; background: #2383e2; }
+.notice { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; padding: .5rem .75rem; border-radius: 8px; font-size: 13px; line-height: 1.45;
+  color: var(--fg-primary, inherit); background: rgba(35,131,226,.08); border: 1px solid rgba(35,131,226,.25); }
+.notice > span { flex: 1; min-width: 0; }
+.notice .btn { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12.5px; }
 .card-controls { display: flex; align-items: center; gap: .375rem; flex-shrink: 0; }
 .card-controls .icon-btn { width: 1.5rem; height: 1.5rem; } .card-controls .icon-btn svg { width: .875rem; height: .875rem; }
 
@@ -1879,7 +2347,7 @@ button { font: inherit; color: inherit; }
     const top = below + menu.offsetHeight > window.innerHeight - 8 ? Math.max(8, anchor.top - MENU_GAP - menu.offsetHeight) : below;
     Object.assign(menu.style, { left: `${left}px`, top: `${top}px`, minWidth: `${anchor.width}px` });
   }
-  function optionRow(def, value, set) {
+  function optionRow(def, value, set, confirm) {
     const title = tr(def.label);
     const description = def.description && tr(def.description);
     switch (def.type) {
@@ -1906,7 +2374,12 @@ button { font: inherit; color: inherit; }
         return row(title, description, input);
       }
       case "action":
-        return row(title, description, button("secondary", tr(def.button), () => def.run()));
+        return row(title, description, button("secondary", tr(def.button), () => {
+          if (def.confirm && confirm)
+            confirm(tr(def.confirm), () => def.run());
+          else
+            def.run();
+        }));
     }
   }
 
@@ -2122,9 +2595,9 @@ button { font: inherit; color: inherit; }
   }
 
   // src/plugins/greetingCustomizer/index.ts
-  var STYLE_ID3 = "notionai-pp-greeting-style";
+  var STYLE_ID4 = "notionai-pp-greeting-style";
   var RIGHT_DOUBLE_MS = 400;
-  var settings4 = definePluginSettings({
+  var settings5 = definePluginSettings({
     manage: {
       type: "action",
       label: { zh: "问候语列表", en: "Greetings" },
@@ -2168,12 +2641,12 @@ button { font: inherit; color: inherit; }
   var lastRightClick = 0;
   var running = false;
   function upsertStyle(css) {
-    let style = document.getElementById(STYLE_ID3);
+    let style = document.getElementById(STYLE_ID4);
     if (style?.textContent === css)
       return;
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID3;
+      style.id = STYLE_ID4;
       (document.head ?? document.documentElement).append(style);
     }
     style.textContent = css;
@@ -2193,10 +2666,10 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function apply2(advance = false) {
     const greetings = loadGreetings();
     const current = loadIndex();
-    const index = pickIndex(greetings.length, settings4.store.order, current, advance);
+    const index = pickIndex(greetings.length, settings5.store.order, current, advance);
     if (index !== current)
       saveIndex(index);
-    const clickable = settings4.store.mode === "manual" && greetings.length > 1;
+    const clickable = settings5.store.mode === "manual" && greetings.length > 1;
     upsertStyle(buildCss(greetings[index] ?? greetings[0], clickable));
     syncTitle();
   }
@@ -2204,14 +2677,14 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const target = document.querySelector(TARGET_SELECTOR);
     if (!target)
       return;
-    const want = settings4.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
+    const want = settings5.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
     if (want)
       target.title = want;
     else
       target.removeAttribute("title");
   }
   function syncTimer() {
-    const want = running && settings4.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
+    const want = running && settings5.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
     if (!want) {
       if (timer)
         clearInterval(timer);
@@ -2220,7 +2693,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
     if (timer)
       return;
-    timer = setInterval(() => apply2(true), settings4.store.intervalSec * 1000);
+    timer = setInterval(() => apply2(true), settings5.store.intervalSec * 1000);
   }
   function restartTimer() {
     if (timer)
@@ -2232,7 +2705,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const home = isHomePath();
     const marked = syncMark();
     if (home && !wasHome)
-      apply2(settings4.store.mode === "refresh");
+      apply2(settings5.store.mode === "refresh");
     else if (marked)
       syncTitle();
     wasHome = home;
@@ -2242,7 +2715,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function onClick(event) {
     if (event.button !== 0 || !targetOf(event))
       return;
-    if (settings4.store.mode !== "manual" || loadGreetings().length <= 1)
+    if (settings5.store.mode !== "manual" || loadGreetings().length <= 1)
       return;
     if (String(window.getSelection?.() ?? "").trim())
       return;
@@ -2262,9 +2735,9 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   }
   function openGreetingManager() {
-    const store = settings4.store;
+    const store = settings5.store;
     openManager({
-      defs: { mode: settings4.def.mode, order: settings4.def.order, intervalSec: settings4.def.intervalSec },
+      defs: { mode: settings5.def.mode, order: settings5.def.order, intervalSec: settings5.def.intervalSec },
       get: (key) => store[key],
       set: (key, value) => void (store[key] = value)
     }, loadIndex);
@@ -2279,7 +2752,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,
-    settings: settings4,
+    settings: settings5,
     start() {
       running = true;
       wasHome = false;
@@ -2299,7 +2772,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       stopDom3 = stopRoute = null;
       syncTimer();
       clearMarks();
-      document.getElementById(STYLE_ID3)?.remove();
+      document.getElementById(STYLE_ID4)?.remove();
       closeManager();
     },
     onSettingsChange(key) {
@@ -2326,25 +2799,45 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   // src/api/Reply.ts
   var STOP_BUTTON = "[data-testid='agent-stop-inference-button']";
   var INFERENCE_PATH = /\/api\/v3\/runInferenceTranscript$/;
+  var END_GRACE_MS = 400;
   var state = "idle";
   var failed = false;
+  var stopped = false;
   var chatId = "";
+  var endTimer = 0;
   var users = 0;
   var stopDom4 = null;
   var stopNet = null;
   var currentChatId = () => new URL(pageWindow.location.href).searchParams.get("t") ?? "";
   var replyState = () => state;
+  var currentChatTitle = () => document.title.replace(/\s*\|\s*Notion\s*$/, "").trim();
   function check3() {
     const streaming = !!document.querySelector(STOP_BUTTON);
-    if (streaming && state === "idle") {
-      state = "streaming";
-      failed = false;
-      chatId = currentChatId();
-      emit("replyStart", { chatId });
-    } else if (!streaming && state === "streaming") {
-      state = "idle";
-      emit("replyEnd", { chatId: currentChatId() || chatId, error: failed });
+    if (streaming) {
+      clearTimeout(endTimer);
+      endTimer = 0;
+      if (state === "idle") {
+        state = "streaming";
+        failed = false;
+        stopped = false;
+        chatId = currentChatId();
+        emit("replyStart", { chatId });
+      }
+    } else if (state === "streaming" && !endTimer) {
+      endTimer = setTimeout(finish, END_GRACE_MS);
     }
+  }
+  function finish() {
+    endTimer = 0;
+    if (state !== "streaming" || document.querySelector(STOP_BUTTON))
+      return;
+    state = "idle";
+    const now = currentChatId();
+    emit("replyEnd", { chatId: now || chatId, error: failed, stopped, left: !!chatId && !!now && now !== chatId });
+  }
+  function onPress(event) {
+    if (event.target?.closest?.(STOP_BUTTON))
+      stopped = true;
   }
   function watchReplies() {
     if (users++ === 0) {
@@ -2358,6 +2851,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
           });
         }
       });
+      document.addEventListener("click", onPress, true);
       check3();
     }
     let released = false;
@@ -2370,15 +2864,18 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       stopDom4?.();
       stopNet?.();
       stopDom4 = stopNet = null;
+      document.removeEventListener("click", onPress, true);
+      clearTimeout(endTimer);
+      endTimer = 0;
       state = "idle";
     };
   }
 
   // src/plugins/hideShare/index.ts
-  var STYLE_ID4 = "notionai-pp-hide-share";
+  var STYLE_ID5 = "notionai-pp-hide-share";
   var CHAT_SHARE = "[data-testid='share-chat-button']";
   var PAGE_SHARE = ".notion-topbar-share-menu";
-  var settings5 = definePluginSettings({
+  var settings6 = definePluginSettings({
     pages: {
       type: "boolean",
       label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
@@ -2386,18 +2883,18 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       default: false
     }
   });
-  function css2(pages) {
+  function css3(pages) {
     const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
     return `${selectors.join(", ")} { display: none !important; }`;
   }
   function apply3() {
-    let style = document.getElementById(STYLE_ID4);
+    let style = document.getElementById(STYLE_ID5);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID4;
+      style.id = STYLE_ID5;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css2(settings5.store.pages);
+    style.textContent = css3(settings6.store.pages);
   }
   var hideShare_default = definePlugin({
     name: "hideShare",
@@ -2409,212 +2906,17 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.shareOff,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings5,
+    settings: settings6,
     start() {
       apply3();
     },
     stop() {
-      document.getElementById(STYLE_ID4)?.remove();
+      document.getElementById(STYLE_ID5)?.remove();
     },
     onSettingsChange() {
       apply3();
     }
   });
-
-  // src/plugins/navigator/messages.ts
-  var USER_STEP = "data-agent-chat-user-step-id";
-  var LEAF = "[data-content-editable-leaf]";
-  var TOGGLE2 = "[role='button'][aria-expanded]";
-  var COPY_ASSISTANT = /\bcopy\s+(?:response|answer)\b|复制(?:回复|回答|响应)/i;
-  var COPY_USER = /\bcopy\s+(?:text|message|prompt)\b|复制(?:文本|消息|提示词|问题)/i;
-  var MONTHS = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December";
-  var DATE_RE = new RegExp(`^(?:Today|Yesterday|(?:${MONTHS})\\s+\\d{1,2}(?:,\\s*\\d{4})?(?:\\s+at\\s+\\d{1,2}:\\d{2}\\s*(?:AM|PM)?)?|\\d{1,2}:\\d{2}\\s*(?:AM|PM)?|\\d{4}[-/年]\\d{1,2}[-/月]\\d{1,2}日?(?:\\s+\\d{1,2}:\\d{2})?|\\d{1,2}月\\d{1,2}日(?:\\s+\\d{1,2}:\\d{2})?|今天|昨天)$`, "i");
-  var NOISE_RE = /^(?:\d+\s*steps?|thought(?:\s+for\s+.*)?|思考.*|noodling|contemplating|thinking|found\s+\d+\s+results?|searched the web|searching the web|loaded .*(?:skill|tools?)|loading web page:.*|updated to-dos|copy(?: text| response)?|undo|show changes|response copied to clipboard|copied to clipboard)$/i;
-  function cleanLines(raw) {
-    return raw.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => line && !DATE_RE.test(line) && !NOISE_RE.test(line));
-  }
-  var isDateText = (text) => DATE_RE.test(text.replace(/\s+/g, " ").trim());
-  function readText(element, skip = []) {
-    if (!skip.length)
-      return cleanLines(element.innerText ?? element.textContent ?? "").join(`
-`);
-    const parts = [];
-    for (const child of element.children) {
-      if (skip.some((node) => node === child || node.contains(child)))
-        continue;
-      if (skip.some((node) => child.contains(node)))
-        parts.push(readText(child, skip));
-      else
-        parts.push(child.innerText ?? child.textContent ?? "");
-    }
-    return cleanLines(parts.join(`
-`)).join(`
-`);
-  }
-  function turnOf(step) {
-    let turn = step;
-    while (turn.parentElement && turn.parentElement !== document.body && turn.parentElement.querySelectorAll(`[${USER_STEP}]`).length === 1) {
-      turn = turn.parentElement;
-    }
-    return turn;
-  }
-  function userBubble(step) {
-    const leaf = step.querySelector(LEAF);
-    if (!leaf)
-      return step;
-    let node = leaf;
-    while (node.parentElement && node.parentElement !== step && !node.parentElement.querySelector("button, [role='button']")) {
-      node = node.parentElement;
-    }
-    return node;
-  }
-  function userText(step) {
-    const leaves = [...step.querySelectorAll(LEAF)].map((leaf) => leaf.textContent?.trim() ?? "").filter(Boolean);
-    return leaves.length ? leaves.join(`
-`) : readText(step);
-  }
-  function assistantBody(turn) {
-    const toggles = turn.querySelectorAll(TOGGLE2);
-    const column = toggles.length ? toggles[toggles.length - 1].parentElement?.parentElement : null;
-    if (column && turn.contains(column)) {
-      const bodies = [...column.children].filter((child) => child instanceof HTMLElement && !child.querySelector(TOGGLE2) && !child.matches(TOGGLE2) && readText(child).length > 1);
-      if (bodies.length)
-        return bodies[bodies.length - 1];
-    }
-    return turn;
-  }
-  function regionsOf(turn) {
-    return [...turn.querySelectorAll(TOGGLE2)].map((toggle) => toggle.getAttribute("aria-controls")).map((id) => id ? document.getElementById(id) : null).filter((node) => !!node && turn.contains(node));
-  }
-  function assistantTurns(turn, turnSet) {
-    const out = [];
-    for (let sibling = turn.nextElementSibling;sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
-      if (sibling instanceof HTMLElement)
-        out.push(sibling);
-    }
-    return out;
-  }
-  function pickedOption(turns) {
-    for (let i = turns.length - 1;i >= 0; i--) {
-      const leaves = turns[i].querySelectorAll(LEAF);
-      const last = leaves[leaves.length - 1];
-      if (last?.textContent?.trim())
-        return last;
-    }
-    return null;
-  }
-  function fromUserSteps(root) {
-    const steps = [...root.querySelectorAll(`[${USER_STEP}]`)].filter((step) => !step.parentElement?.closest(`[${USER_STEP}]`));
-    if (!steps.length)
-      return [];
-    const turns = steps.map(turnOf);
-    const turnSet = new Set(turns);
-    const replies = turns.map((turn) => assistantTurns(turn, turnSet));
-    const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
-    const messages = [];
-    steps.forEach((step, index) => {
-      const id = step.getAttribute(USER_STEP) || `user-${index}`;
-      const answer = answers[index];
-      const text = answer?.textContent?.trim() || userText(step);
-      if (text)
-        messages.push({ id, role: "user", element: answer ?? userBubble(step), text });
-      const nextAnswer = answers[index + 1];
-      for (const sibling of replies[index]) {
-        const skip = [...sibling.querySelectorAll(TOGGLE2), ...regionsOf(sibling), ...nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : []];
-        const body = assistantBody(sibling);
-        const bodyText = readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
-        const reply = bodyText || readText(sibling, skip);
-        if (reply) {
-          messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
-          break;
-        }
-        const steps = [...sibling.querySelectorAll(TOGGLE2)].map((toggle) => toggle.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
-        if (steps.length) {
-          messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text: t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`) });
-          break;
-        }
-      }
-    });
-    return messages;
-  }
-  function copyRole(button) {
-    const label = [button.getAttribute("aria-label"), button.getAttribute("title"), button.getAttribute("data-testid")].filter(Boolean).join(" ");
-    if (COPY_ASSISTANT.test(label))
-      return "assistant";
-    if (COPY_USER.test(label))
-      return "user";
-    return null;
-  }
-  function fromCopyButtons(root) {
-    const messages = [];
-    const seen = new Set;
-    root.querySelectorAll("button, [role='button']").forEach((button, index) => {
-      if (button.closest("nav, aside, header, footer, form, pre, code"))
-        return;
-      const role = copyRole(button);
-      if (!role)
-        return;
-      let target = null;
-      if (role === "user") {
-        for (let node = button;node && !target; node = node.parentElement) {
-          const prev = node.previousElementSibling;
-          if (prev instanceof HTMLElement && !prev.contains(button) && !prev.querySelector("button, [role='button']")) {
-            const text = readText(prev);
-            if (text.length >= 2 && !isDateText(text))
-              target = prev;
-          }
-          if (node === document.body)
-            break;
-        }
-      } else {
-        for (let node = button.parentElement;node && node !== document.body && !target; node = node.parentElement) {
-          const content = [...node.children].find((child) => !child.contains(button));
-          if (!(content instanceof HTMLElement))
-            continue;
-          const parts = [...content.children].filter((child) => child instanceof HTMLElement && readText(child).length >= 8);
-          const body = parts[parts.length - 1];
-          if (body && ![...body.querySelectorAll("button, [role='button']")].some(copyRole))
-            target = body;
-        }
-      }
-      if (!target || seen.has(target))
-        return;
-      seen.add(target);
-      const text = readText(target);
-      if (text)
-        messages.push({ id: `copy-${role}-${index}`, role, element: target, text });
-    });
-    return messages.sort((a, b) => a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1);
-  }
-  function collectMessages(root = document) {
-    const primary = fromUserSteps(root);
-    return primary.length ? primary : fromCopyButtons(root);
-  }
-  function summarize(text, max = 60) {
-    const line = text.replace(/\s+/g, " ").trim();
-    return line.length > max ? `${line.slice(0, max)}…` : line;
-  }
-  var SHARED_PREFIX_MIN = 16;
-  var LABEL_HEAD = 8;
-  function outlineLabels(messages, max = 60) {
-    const flat = messages.map((message) => message.text.replace(/\s+/g, " ").trim());
-    return flat.map((text, index) => {
-      let shared = 0;
-      for (let j = 0;j < index; j++) {
-        if (messages[j].role !== messages[index].role)
-          continue;
-        const other = flat[j];
-        let k = 0;
-        while (k < text.length && k < other.length && text[k] === other[k])
-          k++;
-        shared = Math.max(shared, k);
-      }
-      if (shared < SHARED_PREFIX_MIN || shared >= text.length)
-        return summarize(text, max);
-      const cut = Math.max(LABEL_HEAD, text.lastIndexOf(" ", shared) + 1);
-      return summarize(`${text.slice(0, LABEL_HEAD)}… ${text.slice(cut)}`, max);
-    });
-  }
 
   // src/plugins/healthCheck/index.ts
   var STORE_KEY = "notionai-pp:health:v1";
@@ -2772,7 +3074,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     writeStored({ version, failed, at: Date.now() });
     showNote(failed, version);
   }
-  var settings6 = definePluginSettings({
+  var settings7 = definePluginSettings({
     runNow: {
       type: "action",
       label: { zh: "立即自检", en: "Check now" },
@@ -2790,7 +3092,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     },
     icon: Icons.activity,
     enabledByDefault: true,
-    settings: settings6,
+    settings: settings7,
     start() {
       schedule3();
       stopRoute2 = onRouteChange(() => schedule3());
@@ -2807,11 +3109,11 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
 
   // src/plugins/inputHistory/index.ts
   var STORE_KEY2 = "notionai-pp:input-history:v1";
-  var COMPOSER2 = "[data-notion-chat-input-container]";
-  var EDITOR2 = `${COMPOSER2} [contenteditable='true']`;
+  var COMPOSER3 = "[data-notion-chat-input-container]";
+  var EDITOR2 = `${COMPOSER3} [contenteditable='true']`;
   var SEND = "[data-testid='agent-send-message-button']";
   var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
-  var settings7 = definePluginSettings({
+  var settings8 = definePluginSettings({
     max: {
       type: "number",
       label: { zh: "最多保存条数", en: "Prompts to keep" },
@@ -2830,6 +3132,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       type: "action",
       label: { zh: "清空输入历史", en: "Clear prompt history" },
       button: { zh: "清空", en: "Clear" },
+      confirm: { zh: "所有保存的提问都会删除，无法恢复。", en: "Every saved prompt will be deleted. This cannot be undone." },
       run: () => save([])
     }
   });
@@ -2866,7 +3169,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       range.setStart(caret.endContainer, caret.endOffset);
     return range.toString().length === 0;
   }
-  function fill(editor, text) {
+  function fill(editor, text, caret = "end") {
     editor.focus();
     const selection = document.getSelection();
     const range = document.createRange();
@@ -2877,25 +3180,34 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       document.execCommand("insertText", false, text);
     else
       document.execCommand("delete");
-    const end = document.createRange();
-    end.selectNodeContents(editor);
-    end.collapse(false);
+    const edge = document.createRange();
+    edge.selectNodeContents(editor);
+    edge.collapse(caret === "start");
     selection?.removeAllRanges();
-    selection?.addRange(end);
+    selection?.addRange(edge);
   }
   var browsing = -1;
   var draft = "";
+  var shown = "";
   var browsingEditor = null;
+  var composing = false;
   function reset() {
     browsing = -1;
     draft = "";
+    shown = "";
     browsingEditor = null;
     hideCounter();
   }
+  function show(editor, text, caret) {
+    fill(editor, text, caret);
+    shown = textOf(editor);
+  }
+  var imeKey = (event) => composing || event.isComposing || event.keyCode === 229;
+  var capHistory = (list, max) => list.length > max ? list.slice(-max) : list;
   function record(editor) {
     if (!editor)
       return;
-    save(remember(load(), textOf(editor), settings7.store.max));
+    save(remember(load(), textOf(editor), settings8.store.max));
     reset();
   }
   function consume(event) {
@@ -2905,16 +3217,18 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   var popupOpen = () => [...document.querySelectorAll(POPUP)].some((node) => node.getClientRects().length > 0);
   function onKeyDown(event) {
     const editor = event.target?.closest?.(EDITOR2);
-    if (!editor || event.isComposing || event.altKey || event.ctrlKey || event.metaKey)
+    if (!editor || imeKey(event) || event.altKey)
       return;
     if (event.key === "Enter" && !event.shiftKey) {
       if (!popupOpen())
         record(editor);
       return;
     }
-    if (event.shiftKey || popupOpen())
+    if (event.shiftKey || event.ctrlKey || event.metaKey || popupOpen())
       return;
     if (browsingEditor && browsingEditor !== editor)
+      reset();
+    if (browsing !== -1 && textOf(editor) !== shown)
       reset();
     const list = load();
     if (event.key === "ArrowUp") {
@@ -2930,10 +3244,12 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       if (browsing === 0)
         return;
       browsing--;
-      fill(editor, list[browsing]);
+      show(editor, list[browsing], "start");
       showCounter(editor, browsing, list.length);
     } else if (event.key === "ArrowDown" && browsing !== -1) {
-      if (!caretAt(editor, "end"))
+      const oneLine = !textOf(editor).includes(`
+`);
+      if (!caretAt(editor, "end") && !(oneLine && caretAt(editor, "start")))
         return;
       consume(event);
       browsing++;
@@ -2941,7 +3257,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
         fill(editor, draft);
         reset();
       } else {
-        fill(editor, list[browsing]);
+        show(editor, list[browsing], "end");
         showCounter(editor, browsing, list.length);
       }
     } else if (event.key === "Escape" && browsing !== -1) {
@@ -2949,6 +3265,14 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       fill(editor, draft);
       reset();
     }
+  }
+  function onComposition(event) {
+    if (!event.target?.closest?.(EDITOR2))
+      return;
+    if (event.type === "compositionstart")
+      composing = true;
+    else
+      setTimeout(() => composing = false);
   }
   function onFocusOut(event) {
     if (event.target?.closest?.(EDITOR2))
@@ -2958,7 +3282,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     const send = event.target?.closest?.(SEND);
     if (!send || send.getAttribute("aria-disabled") === "true")
       return;
-    record(send.closest(COMPOSER2)?.querySelector("[contenteditable='true']") ?? null);
+    record(send.closest(COMPOSER3)?.querySelector("[contenteditable='true']") ?? null);
   }
   var COUNTER_CSS = `
 :host { all: initial; }
@@ -2973,11 +3297,11 @@ button:hover { color: #37352f; border-color: rgba(55,53,47,.3); }
   var counter = null;
   var counterText = (index, total) => `${index + 1} / ${total}`;
   function showCounter(editor, index, total) {
-    const box = editor.closest(COMPOSER2)?.getBoundingClientRect();
+    const box = editor.closest(COMPOSER3)?.getBoundingClientRect();
     if (!box)
       return;
     if (!counter) {
-      counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button"></button>`);
+      counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button" aria-live="polite"></button>`);
       const button = counter.root.querySelector("button");
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", () => openBrowser());
@@ -3099,6 +3423,7 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
     render();
     input.focus();
   }
+  var unroute = null;
   var inputHistory_default = definePlugin({
     name: "inputHistory",
     title: { zh: "输入历史", en: "Prompt history" },
@@ -3109,54 +3434,40 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
     icon: Icons.history,
     tags: ["composer"],
     enabledByDefault: true,
-    settings: settings7,
+    updatedAt: "2026-10-08",
+    settings: settings8,
     start() {
       document.addEventListener("keydown", onKeyDown, true);
       document.addEventListener("click", onClick2, true);
       document.addEventListener("focusout", onFocusOut, true);
+      document.addEventListener("compositionstart", onComposition, true);
+      document.addEventListener("compositionend", onComposition, true);
+      unroute = onRouteChange(() => {
+        reset();
+        closeBrowser();
+      });
     },
     stop() {
       document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("click", onClick2, true);
       document.removeEventListener("focusout", onFocusOut, true);
+      document.removeEventListener("compositionstart", onComposition, true);
+      document.removeEventListener("compositionend", onComposition, true);
+      unroute?.();
+      unroute = null;
+      composing = false;
       reset();
       closeBrowser();
+    },
+    onSettingsChange(key) {
+      if (key !== "max")
+        return;
+      const list = load();
+      const capped = capHistory(list, settings8.store.max);
+      if (capped.length !== list.length)
+        save(capped);
     }
   });
-
-  // src/utils/time.ts
-  function debounce(fn, wait, maxWait = Infinity) {
-    let timer;
-    let firstAt = 0;
-    const run = (...args) => {
-      clearTimeout(timer);
-      const now = Date.now();
-      if (!firstAt)
-        firstAt = now;
-      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
-      timer = setTimeout(() => {
-        firstAt = 0;
-        fn(...args);
-      }, delay);
-    };
-    run.cancel = () => {
-      clearTimeout(timer);
-      firstAt = 0;
-    };
-    return run;
-  }
-  function frameThrottle(fn) {
-    let pending = false;
-    return () => {
-      if (pending)
-        return;
-      pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        fn();
-      });
-    };
-  }
 
   // src/plugins/navigator/effects.ts
   var EFFECTS = [
@@ -3307,6 +3618,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
 
   // src/plugins/messageStars/store.ts
   var STARS_KEY = "notionai-pp:stars:v1";
+  var STAR_META_KEY = "notionai-pp:star-meta:v1";
   var active = false;
   var starsActive = () => active;
   function setStarsActive(value) {
@@ -3315,23 +3627,69 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     active = value;
     emit("starsChanged", undefined);
   }
-  function readAll() {
+  function readJson(key) {
     try {
-      const data = safeJson(pageWindow.localStorage.getItem(STARS_KEY) ?? "");
-      if (!isRecord(data))
-        return {};
-      const out = {};
-      for (const [chat, ids] of Object.entries(data)) {
-        if (Array.isArray(ids))
-          out[chat] = ids.filter((id) => typeof id === "string");
-      }
-      return out;
+      const data = safeJson(pageWindow.localStorage.getItem(key) ?? "");
+      return isRecord(data) ? data : {};
     } catch {
       return {};
     }
   }
+  function writeJson(key, value) {
+    try {
+      pageWindow.localStorage.setItem(key, JSON.stringify(value));
+    } catch {}
+  }
+  function readAll() {
+    const out = {};
+    for (const [chat, ids] of Object.entries(readJson(STARS_KEY))) {
+      if (Array.isArray(ids))
+        out[chat] = ids.filter((id) => typeof id === "string");
+    }
+    return out;
+  }
+  function readMeta() {
+    const out = {};
+    for (const [chat, value] of Object.entries(readJson(STAR_META_KEY))) {
+      if (!isRecord(value) || !isRecord(value.items))
+        continue;
+      const items = {};
+      for (const [id, item] of Object.entries(value.items)) {
+        if (isRecord(item) && typeof item.text === "string") {
+          items[id] = { role: item.role === "assistant" ? "assistant" : "user", text: item.text, at: typeof item.at === "number" ? item.at : 0 };
+        }
+      }
+      out[chat] = { title: typeof value.title === "string" ? value.title : "", items };
+    }
+    return out;
+  }
   var starsOf = (chatId) => new Set(chatId ? readAll()[chatId] ?? [] : []);
-  function toggleStar(chatId, id) {
+  var SNIPPET_MAX = 200;
+  function noteStar(chatId, id, info) {
+    if (!chatId)
+      return;
+    const meta = readMeta();
+    const chat = meta[chatId] ?? { title: "", items: {} };
+    const text = info.text.replace(/\s+/g, " ").trim().slice(0, SNIPPET_MAX);
+    const old = chat.items[id];
+    if (old && old.text === text && (!info.title || chat.title === info.title))
+      return;
+    chat.items[id] = { role: info.role, text, at: old?.at || Date.now() };
+    if (info.title)
+      chat.title = info.title;
+    meta[chatId] = chat;
+    writeJson(STAR_META_KEY, meta);
+  }
+  function dropMeta(chatId, id) {
+    const meta = readMeta();
+    if (!meta[chatId]?.items[id])
+      return;
+    delete meta[chatId].items[id];
+    if (!Object.keys(meta[chatId].items).length)
+      delete meta[chatId];
+    writeJson(STAR_META_KEY, meta);
+  }
+  function toggleStar(chatId, id, info) {
     if (!chatId)
       return false;
     const all = readAll();
@@ -3343,12 +3701,23 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       all[chatId] = [...ids];
     else
       delete all[chatId];
-    try {
-      pageWindow.localStorage.setItem(STARS_KEY, JSON.stringify(all));
-    } catch {}
+    writeJson(STARS_KEY, all);
+    if (starred && info)
+      noteStar(chatId, id, info);
+    if (!starred)
+      dropMeta(chatId, id);
     emit("starsChanged", undefined);
     return starred;
   }
+  function allStarredChats() {
+    const meta = readMeta();
+    return Object.entries(readAll()).map(([chatId, ids]) => ({
+      chatId,
+      title: meta[chatId]?.title ?? "",
+      stars: ids.map((id) => ({ id, meta: meta[chatId]?.items[id] ?? null }))
+    })).filter((chat) => chat.stars.length).sort((a, b) => latest(b) - latest(a));
+  }
+  var latest = (chat) => Math.max(0, ...chat.stars.map((star) => star.meta?.at ?? 0));
 
   // src/plugins/navigator/index.ts
   var NAV_HOST_ID = "notionai-pp-navigator";
@@ -3359,10 +3728,10 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var SETTLE_MS2 = 150;
   var RAIL_MARGIN = 20;
   var SIDE_PANELS = "[role='complementary'], aside";
-  var COMPOSER3 = "[data-notion-chat-input-container]";
+  var COMPOSER4 = "[data-notion-chat-input-container]";
   var SPAN_GAP = 12;
   var MIN_SPAN = 120;
-  var settings8 = definePluginSettings({
+  var settings9 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     keyboard: {
       type: "boolean",
@@ -3384,7 +3753,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       type: "action",
       label: { zh: "预览效果", en: "Preview effect" },
       button: { zh: "预览", en: "Preview" },
-      run: () => previewEffect(settings8.store.effect)
+      run: () => previewEffect(settings9.store.effect)
     }
   });
   var overlay2 = null;
@@ -3392,12 +3761,12 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var signature = "";
   var activeId = "";
   var pinnedId = "";
-  var cleanups2 = [];
+  var cleanups3 = [];
   var panelObserver = null;
   var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
   function visibleMessages(all) {
-    return settings8.store.showAssistant ? all : all.filter((message) => message.role === "user");
+    return settings9.store.showAssistant ? all : all.filter((message) => message.role === "user");
   }
   function placeRail() {
     if (!overlay2)
@@ -3436,13 +3805,13 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     const pane = scrollParentOf(first);
     const isRoot = pane === document.scrollingElement || pane === document.documentElement;
     const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
-    const composer = document.querySelector(COMPOSER3)?.getBoundingClientRect();
+    const composer = document.querySelector(COMPOSER4)?.getBoundingClientRect();
     const top = Math.max(0, paneBox.top) + SPAN_GAP;
     const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
     return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
   }
   function streamingState(list, streaming = replyState() === "streaming") {
-    if (!streaming || !settings8.store.showAssistant)
+    if (!streaming || !settings9.store.showAssistant)
       return { id: "", pending: false };
     const last = list[list.length - 1];
     if (last?.role === "assistant")
@@ -3489,7 +3858,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
   }
   function onKeyDown2(event) {
-    if (!settings8.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
+    if (!settings9.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
       return;
     if (event.defaultPrevented || event.altKey || event.shiftKey)
       return;
@@ -3639,26 +4008,57 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     jump(id);
     return true;
   }
+  var ALIGN_SLACK = 4;
+  var ALIGN_TRIES = 3;
+  var cancelJump = null;
   function jump(id) {
     const message = messages.find((m) => m.id === id);
     if (!message?.element.isConnected)
       return;
+    cancelJump?.();
     const target = message.element;
     pinnedId = id;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
-    const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
+    const scrollTarget = isRoot ? window : scroller;
+    const destination = () => target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
     setActive(id);
     let timer = 0;
-    const settle = () => {
+    let tries = 0;
+    const cleanup = () => {
+      clearTimeout(timer);
+      scrollTarget.removeEventListener("scroll", settle);
+      for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+        window.removeEventListener(type, userTookOver, true);
+      if (cancelJump === cleanup)
+        cancelJump = null;
+    };
+    function settle() {
       clearTimeout(timer);
       timer = window.setTimeout(() => {
-        (isRoot ? window : scroller).removeEventListener("scroll", settle);
-        playEffect(target, settings8.store.effect);
+        if (!target.isConnected)
+          return cleanup();
+        const goal = Math.max(0, Math.min(destination(), scroller.scrollHeight - scroller.clientHeight));
+        if (Math.abs(goal - scroller.scrollTop) > ALIGN_SLACK && tries++ < ALIGN_TRIES) {
+          scroller.scrollTo({ top: goal, behavior: "instant" });
+          return settle();
+        }
+        cleanup();
+        playEffect(target, settings9.store.effect);
       }, SETTLE_MS2);
-    };
-    (isRoot ? window : scroller).addEventListener("scroll", settle, { passive: true });
-    scroller.scrollTo({ top, behavior: "smooth" });
+    }
+    function userTookOver(event) {
+      if (event.type === "keydown" && !event.key.startsWith("Arrow") && !["PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+        return;
+      if (event.type === "pointerdown" && overlay2?.host.contains(event.target))
+        return;
+      cleanup();
+    }
+    scrollTarget.addEventListener("scroll", settle, { passive: true });
+    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+      window.addEventListener(type, userTookOver, { capture: true, passive: true });
+    cancelJump = cleanup;
+    scroller.scrollTo({ top: destination(), behavior: "smooth" });
     settle();
   }
   var navigator_default = definePlugin({
@@ -3671,7 +4071,8 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings8,
+    updatedAt: "2026-10-08",
+    settings: settings9,
     start() {
       overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
       overlay2.host.hidden = true;
@@ -3694,7 +4095,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       const unpin = () => void (pinnedId = "");
       for (const type of ["wheel", "touchmove", "pointerdown"])
         window.addEventListener(type, unpin, { capture: true, passive: true });
-      cleanups2 = [
+      cleanups3 = [
         watchReplies(),
         on("replyStart", () => rescan()),
         on("replyEnd", () => rescan()),
@@ -3728,7 +4129,8 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       build();
     },
     stop() {
-      for (const cleanup of cleanups2.splice(0))
+      cancelJump?.();
+      for (const cleanup of cleanups3.splice(0))
         cleanup();
       overlay2?.destroy();
       overlay2 = null;
@@ -3784,19 +4186,31 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 .unstar { display: flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 5px; color: ${STAR_COLOR}; }
 .unstar:hover { background: var(--hover); }
 .unstar svg { width: 14px; height: 14px; fill: currentColor; }
+.switch-view { flex: none; margin-left: 4px; padding: 1px 6px; border-radius: 5px; color: var(--subtle); font-size: 12px; }
+.switch-view:hover { background: var(--hover); color: var(--text); }
+.chat { padding: 8px 8px 2px; color: var(--subtle); font-size: 11.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat.current::after { content: " ·"; }
 .empty { padding: 6px 8px 8px; color: var(--subtle); font-size: 13px; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
 `;
   var overlay3 = null;
   var button2 = null;
   var pinned = false;
+  var view = "chat";
+  var pending = null;
+  var pendingTimer = 0;
   var hovering = false;
   var hoverTimer = 0;
-  var cleanups3 = [];
-  function starEntries(ids, messages) {
-    const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text }));
+  var cleanups4 = [];
+  function starEntries(ids, messages, saved = {}) {
+    const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text, loaded: true }));
     const seen = new Set(shown.map((entry) => entry.id));
-    const rest = [...ids].filter((id) => !seen.has(id)).map((id) => ({ id, role: id.endsWith(":assistant") ? "assistant" : "user", text: null }));
+    const rest = [...ids].filter((id) => !seen.has(id)).map((id) => ({
+      id,
+      role: saved[id]?.role ?? (id.endsWith(":assistant") ? "assistant" : "user"),
+      text: saved[id]?.text ?? null,
+      loaded: false
+    }));
     return [...shown, ...rest];
   }
   function controlRow(root = document) {
@@ -3891,14 +4305,57 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   function scrollToMessage(id) {
     if (jumpTo(id))
-      return;
+      return true;
     const target = collectMessages().find((m) => m.id === id)?.element;
     if (!target)
-      return;
+      return false;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
     const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET2;
     scroller.scrollTo({ top, behavior: "smooth" });
+    return true;
+  }
+  var SEEK_MS = 8000;
+  var SEEK_STEP_MS = 400;
+  function seek(chatId, id) {
+    clearTimeout(pendingTimer);
+    pending = { chatId, id, until: Date.now() + SEEK_MS };
+    const step = () => {
+      if (!pending)
+        return;
+      if (currentChatId() === pending.chatId && scrollToMessage(pending.id)) {
+        pending = null;
+        return;
+      }
+      if (Date.now() > pending.until) {
+        pending = null;
+        return;
+      }
+      if (currentChatId() === pending.chatId) {
+        const first = collectMessages()[0]?.element;
+        if (first)
+          scrollParentOf(first).scrollTo({ top: 0 });
+      }
+      pendingTimer = window.setTimeout(step, SEEK_STEP_MS);
+    };
+    step();
+  }
+  function chatUrl(chatId, href = location.href) {
+    const url = new URL(href);
+    url.searchParams.set("t", chatId);
+    return url.toString();
+  }
+  function openChat(chatId, id) {
+    if (currentChatId() !== chatId) {
+      const url = chatUrl(chatId);
+      pageWindow.history.pushState(pageWindow.history.state, "", url);
+      pageWindow.dispatchEvent(new PopStateEvent("popstate", { state: pageWindow.history.state }));
+      window.setTimeout(() => {
+        if (currentChatId() === chatId && !collectMessages().length && !document.querySelector("[data-agent-chat-user-step-id]"))
+          pageWindow.location.assign(url);
+      }, 2500);
+    }
+    seek(chatId, id);
   }
   function ensureOverlay() {
     if (overlay3)
@@ -3909,50 +4366,91 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     overlay3.host.addEventListener("pointerleave", () => hoverSoon(false));
     return overlay3;
   }
+  function starRow(role, text, loaded, onJump, onUnstar) {
+    const row = document.createElement("li");
+    row.className = loaded ? "row" : "row missing";
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "jump";
+    const roleTag = document.createElement("span");
+    roleTag.className = "role";
+    roleTag.textContent = role === "user" ? t("你", "You") : "AI";
+    const snip = document.createElement("span");
+    snip.className = "snip";
+    snip.textContent = text === null ? t("（未加载，点击后自动查找）", "(not loaded; click to find it)") : summarize(text, 80);
+    if (text)
+      jump.title = summarize(text, 400);
+    jump.append(roleTag, snip);
+    jump.addEventListener("click", onJump);
+    const unstar = document.createElement("button");
+    unstar.type = "button";
+    unstar.className = "unstar";
+    unstar.title = t("取消星标", "Unstar");
+    unstar.setAttribute("aria-label", unstar.title);
+    unstar.append(svgIcon(Icons.star));
+    unstar.addEventListener("click", onUnstar);
+    row.append(jump, unstar);
+    return row;
+  }
+  function viewSwitch() {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "switch-view";
+    toggle.textContent = view === "chat" ? t("全部对话", "All chats") : t("本对话", "This chat");
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      view = view === "chat" ? "all" : "chat";
+      render();
+    });
+    return toggle;
+  }
   function fillPanel(panel) {
-    const entries = starEntries(starsOf(currentChatId()), collectMessages());
+    const chatId = currentChatId();
+    const messages = collectMessages();
+    const saved = readMeta()[chatId]?.items ?? {};
+    const entries = starEntries(starsOf(chatId), messages, saved);
+    const title = currentChatTitle();
+    for (const entry of entries)
+      if (entry.loaded && entry.text)
+        noteStar(chatId, entry.id, { role: entry.role, text: entry.text, title });
     const head = document.createElement("div");
     head.className = "head";
     const count = document.createElement("span");
     count.className = "count";
-    count.textContent = String(entries.length);
-    head.append(svgIcon(Icons.star), document.createTextNode(t("已加星标", "Starred")), count);
+    head.append(svgIcon(Icons.star), document.createTextNode(view === "chat" ? t("已加星标", "Starred") : t("全部星标", "All stars")), count, viewSwitch());
     const list = document.createElement("ul");
-    for (const entry of entries) {
-      const row = document.createElement("li");
-      row.className = entry.text === null ? "row missing" : "row";
-      const jump = document.createElement("button");
-      jump.type = "button";
-      jump.className = "jump";
-      const role = document.createElement("span");
-      role.className = "role";
-      role.textContent = entry.role === "user" ? t("你", "You") : "AI";
-      const snip = document.createElement("span");
-      snip.className = "snip";
-      snip.textContent = entry.text === null ? t("（未加载，向上滚动后可跳转）", "(not loaded yet; scroll up to reach it)") : summarize(entry.text, 80);
-      if (entry.text)
-        jump.title = summarize(entry.text, 400);
-      jump.append(role, snip);
-      jump.addEventListener("click", () => {
-        scrollToMessage(entry.id);
-        close();
-      });
-      const unstar = document.createElement("button");
-      unstar.type = "button";
-      unstar.className = "unstar";
-      unstar.title = t("取消星标", "Unstar");
-      unstar.setAttribute("aria-label", unstar.title);
-      unstar.append(svgIcon(Icons.star));
-      unstar.addEventListener("click", () => toggleStar(currentChatId(), entry.id));
-      row.append(jump, unstar);
-      list.append(row);
+    if (view === "chat") {
+      count.textContent = String(entries.length);
+      for (const entry of entries) {
+        list.append(starRow(entry.role, entry.text, entry.loaded, () => {
+          seek(chatId, entry.id);
+          close();
+        }, () => toggleStar(chatId, entry.id)));
+      }
+    } else {
+      const chats = allStarredChats();
+      count.textContent = String(chats.reduce((sum, chat) => sum + chat.stars.length, 0));
+      for (const chat of chats) {
+        const group = document.createElement("li");
+        group.className = chat.chatId === chatId ? "chat current" : "chat";
+        group.textContent = chat.title || t("未命名对话", "Untitled chat");
+        list.append(group);
+        for (const star of chat.stars) {
+          const here = chat.chatId === chatId ? entries.find((entry) => entry.id === star.id) : undefined;
+          const role = here?.role ?? star.meta?.role ?? (star.id.endsWith(":assistant") ? "assistant" : "user");
+          list.append(starRow(role, here?.text ?? star.meta?.text ?? null, !!here?.loaded, () => {
+            openChat(chat.chatId, star.id);
+            close();
+          }, () => toggleStar(chat.chatId, star.id)));
+        }
+      }
     }
-    if (entries.length)
+    if (list.children.length)
       panel.replaceChildren(head, list);
     else {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.");
+      empty.textContent = view === "chat" ? t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.") : t("还没有任何星标。", "No stars yet.");
       panel.replaceChildren(head, empty);
     }
   }
@@ -4007,7 +4505,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     };
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown, true);
-    cleanups3 = [
+    cleanups4 = [
       onDomChange((mutations) => {
         if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(LIST_MARK) || node.id === HOST_ID))))
           return;
@@ -4025,8 +4523,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     sync();
   }
   function stopList() {
-    for (const cleanup of cleanups3.splice(0))
+    for (const cleanup of cleanups4.splice(0))
       cleanup();
+    clearTimeout(pendingTimer);
+    pending = null;
+    view = "chat";
     clearTimeout(hoverTimer);
     pinned = false;
     hovering = false;
@@ -4037,11 +4538,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
 
   // src/plugins/messageStars/index.ts
-  var MARK2 = "data-npp-star";
+  var MARK3 = "data-npp-star";
   var STAR_COLOR2 = "#d9730d";
   var RESCAN_MS2 = 200;
-  var cleanups4 = [];
-  var settings9 = definePluginSettings({
+  var cleanups5 = [];
+  var settings10 = definePluginSettings({
     headerList: {
       type: "boolean",
       label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
@@ -4112,14 +4613,15 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function makeButton2(copy, id) {
     const wrapper = copy.parentElement?.cloneNode(false) ?? document.createElement("div");
     wrapper.removeAttribute("data-popup-origin");
-    wrapper.setAttribute(MARK2, id);
+    wrapper.setAttribute(MARK3, id);
     const button = copy.cloneNode(false);
     button.removeAttribute("id");
     button.append(starIcon(copy.querySelector("svg")));
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      paint(button, toggleStar(currentChatId(), id));
+      const message = collectMessages().find((m) => m.id === id);
+      paint(button, toggleStar(currentChatId(), id, message && { role: message.role, text: message.text, title: currentChatTitle() }));
     });
     button.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ")
@@ -4144,19 +4646,19 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       row.style.width = "auto";
   }
   var isIconWrapper = (node) => !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? "")) && !!node.querySelector("[role='button'][aria-label], button[aria-label]") && !node.textContent?.trim();
-  function scan3() {
+  function scan4() {
     const chatId = currentChatId();
     const stars = starsOf(chatId);
     const steps = topSteps();
     for (const copy of document.querySelectorAll("[role='button'][aria-label], button[aria-label]")) {
-      if (copy.closest(`[${MARK2}]`))
+      if (copy.closest(`[${MARK3}]`))
         continue;
       const row = copy.parentElement?.parentElement;
       if (!row || !copyRole(copy))
         continue;
       const id = chatId ? messageIdFor(copy, steps) : null;
-      let ours = [...row.children].find((child) => child.hasAttribute(MARK2)) ?? null;
-      if (ours && (!id || ours.getAttribute(MARK2) !== id)) {
+      let ours = [...row.children].find((child) => child.hasAttribute(MARK3)) ?? null;
+      if (ours && (!id || ours.getAttribute(MARK3) !== id)) {
         ours.remove();
         ours = null;
       }
@@ -4172,8 +4674,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       paint(ours.firstElementChild, stars.has(id));
     }
   }
-  function removeAll() {
-    for (const node of document.querySelectorAll(`[${MARK2}]`))
+  function removeAll2() {
+    for (const node of document.querySelectorAll(`[${MARK3}]`))
       node.remove();
   }
   var messageStars_default = definePlugin({
@@ -4183,46 +4685,47 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
       en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back."
     },
-    settings: settings9,
+    settings: settings10,
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     start() {
       setStarsActive(true);
-      const rescan = debounce(scan3, RESCAN_MS2, RESCAN_MS2 * 4);
-      const onStorage = (event) => event.key === STARS_KEY && scan3();
+      const rescan = debounce(scan4, RESCAN_MS2, RESCAN_MS2 * 4);
+      const onStorage = (event) => event.key === STARS_KEY && scan4();
       pageWindow.addEventListener("storage", onStorage);
-      cleanups4 = [
+      cleanups5 = [
         onDomChange((mutations) => {
-          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK2))))
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK3))))
             return;
           rescan();
         }),
-        on("starsChanged", scan3),
+        on("starsChanged", scan4),
         () => rescan.cancel(),
         () => pageWindow.removeEventListener("storage", onStorage)
       ];
-      scan3();
-      if (settings9.store.headerList)
+      scan4();
+      if (settings10.store.headerList)
         startList();
     },
     stop() {
       stopList();
-      for (const cleanup of cleanups4.splice(0))
+      for (const cleanup of cleanups5.splice(0))
         cleanup();
-      removeAll();
+      removeAll2();
       setStarsActive(false);
     },
     onSettingsChange() {
       stopList();
-      if (settings9.store.headerList)
+      if (settings10.store.headerList)
         startList();
     }
   });
 
   // src/plugins/noTelemetry/index.ts
   var logger4 = new Logger("NoTelemetry");
-  var settings10 = definePluginSettings({
+  var settings11 = definePluginSettings({
     events: {
       type: "boolean",
       label: { zh: "Notion 事件统计", en: "Notion event tracking" },
@@ -4244,8 +4747,27 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       type: "boolean",
       label: { zh: "错误上报（Sentry）", en: "Error reports (Sentry)" },
       default: true
+    },
+    stats: {
+      type: "action",
+      label: { zh: "本页已拦截", en: "Blocked on this page" },
+      description: { zh: "从打开这个页面起，各类上报被拦下的次数", en: "How many reports of each kind were dropped since this page loaded" },
+      button: { zh: "查看", en: "Show" },
+      run: () => pageWindow.alert(blockedSummary(blockedCounts()))
     }
   });
+  var LABELS = {
+    events: ["事件统计", "Event tracking"],
+    experiments: ["实验数据", "Experiments"],
+    logs: ["日志收集", "Logs"],
+    errors: ["错误上报", "Errors"]
+  };
+  function blockedSummary(current) {
+    const total = Object.values(current).reduce((sum, n) => sum + n, 0);
+    const lines = Object.keys(LABELS).map((key) => `${t(...LABELS[key])}: ${current[key]}`);
+    return [t(`本页共拦截 ${total} 条上报`, `${total} reports blocked on this page`), "", ...lines].join(`
+`);
+  }
   function categoryOf(url) {
     const host = url.hostname;
     if (/(^|\.)notion\.(so|com)$/.test(host) && /^\/api\/v3\/etClient\b/.test(url.pathname))
@@ -4259,6 +4781,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return null;
   }
   var counts = { events: 0, experiments: 0, logs: 0, errors: 0 };
+  var blockedCounts = () => ({ ...counts });
   var stopBlocking = null;
   var noTelemetry_default = definePlugin({
     name: "noTelemetry",
@@ -4269,12 +4792,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     },
     icon: Icons.shield,
     enabledByDefault: false,
+    updatedAt: "2026-10-08",
+    restartNeeded: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings10,
+    settings: settings11,
     start() {
       stopBlocking = blockRequests((url) => {
         const category = categoryOf(url);
-        if (!category || !settings10.store[category])
+        if (!category || !settings11.store[category])
           return false;
         if (!counts[category]++)
           logger4.info(`blocking ${category} reports (${url.hostname})`);
@@ -4288,7 +4813,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   });
 
   // src/plugins/replyNotification/index.ts
-  var settings11 = definePluginSettings({
+  var settings12 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -4354,19 +4879,29 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       audio.resume();
     return audio;
   }
-  async function playFile(volume) {
+  async function decodeFile() {
     const sound = storedSound();
     if (!sound)
+      return null;
+    try {
+      if (decoded?.data !== sound.data) {
+        const bytes = Uint8Array.from(atob(sound.data), (char) => char.charCodeAt(0));
+        decoded = { data: sound.data, buffer: await context().decodeAudioData(bytes.buffer) };
+      }
+      return decoded.buffer;
+    } catch {
+      return null;
+    }
+  }
+  async function playFile(volume) {
+    const buffer = await decodeFile();
+    if (!buffer)
       return false;
     try {
       const ctx = context();
-      if (decoded?.data !== sound.data) {
-        const bytes = Uint8Array.from(atob(sound.data), (char) => char.charCodeAt(0));
-        decoded = { data: sound.data, buffer: await ctx.decodeAudioData(bytes.buffer) };
-      }
       const source = ctx.createBufferSource();
       const gain = ctx.createGain();
-      source.buffer = decoded.buffer;
+      source.buffer = buffer;
       gain.gain.value = Math.max(0, Math.min(100, volume)) / 100;
       source.connect(gain).connect(ctx.destination);
       source.start();
@@ -4376,8 +4911,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   }
   function play() {
-    const volume = settings11.store.volume;
-    if (settings11.store.source !== "file")
+    const volume = settings12.store.volume;
+    if (settings12.store.source !== "file")
       return chime(volume);
     playFile(volume).then((ok) => ok || chime(volume));
   }
@@ -4401,7 +4936,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
           return;
         }
         setValue("replyNotification", "source", "file");
-        playFile(settings11.store.volume).then((ok) => {
+        playFile(settings12.store.volume).then((ok) => {
           if (!ok)
             pageWindow.alert(t("这个文件无法播放，已改回内置提示音。", "This file can't be played; switched back to the built-in chime."));
           if (!ok)
@@ -4412,8 +4947,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     });
     input.click();
   }
-  var cleanups5 = [];
-  function chime(volume = settings11.store.volume) {
+  var cleanups6 = [];
+  function chime(volume = settings12.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -4435,7 +4970,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       });
     } catch {}
   }
-  var chatTitle = () => document.title.replace(/\s*\|\s*Notion\s*$/, "").trim() || "Notion AI";
+  var chatTitle = () => currentChatTitle() || "Notion AI";
   function lastReply() {
     const messages = collectMessages();
     const reply = [...messages].reverse().find((message) => message.role === "assistant");
@@ -4448,7 +4983,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings11.store.sound
+        silent: settings12.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -4456,21 +4991,29 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       };
     } catch {}
   }
-  function notify2({ error }) {
-    if (settings11.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+  var REPEAT_MS = 2000;
+  var last3 = { chatId: "", at: -Infinity };
+  function notify2({ chatId, error, stopped, left }) {
+    if (stopped || left)
       return;
-    if (settings11.store.sound)
+    const now = performance.now();
+    if (chatId === last3.chatId && now - last3.at < REPEAT_MS)
+      return;
+    last3 = { chatId, at: now };
+    if (settings12.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+      return;
+    if (settings12.store.sound)
       play();
-    if (settings11.store.desktop)
+    if (settings12.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings11.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings12.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings11.store.sound)
+    if (settings12.store.sound)
       play();
-    if (settings11.store.desktop)
+    if (settings12.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -4483,23 +5026,83 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings11,
+    updatedAt: "2026-10-08",
+    settings: settings12,
     start() {
-      cleanups5 = [watchReplies(), on("replyEnd", notify2)];
+      const prime = () => {
+        if (!settings12.store.sound)
+          return;
+        context();
+        if (settings12.store.source === "file")
+          decodeFile();
+        document.removeEventListener("pointerdown", prime, true);
+        document.removeEventListener("keydown", prime, true);
+      };
+      document.addEventListener("pointerdown", prime, true);
+      document.addEventListener("keydown", prime, true);
+      cleanups6 = [
+        watchReplies(),
+        on("replyEnd", notify2),
+        () => document.removeEventListener("pointerdown", prime, true),
+        () => document.removeEventListener("keydown", prime, true)
+      ];
     },
     stop() {
-      for (const cleanup of cleanups5.splice(0))
+      for (const cleanup of cleanups6.splice(0))
         cleanup();
       audio?.close();
       audio = null;
       decoded = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings11.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings12.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
   });
+
+  // src/api/Backup.ts
+  var PREFIX = "notionai-pp:";
+  var SKIP = new Set(["notionai-pp:health:v1"]);
+  var FORMAT = "notionai-pp-backup";
+  var storage = () => pageWindow.localStorage;
+  function collectBackup(version = "") {
+    const data = {};
+    const store = storage();
+    for (let i = 0;i < store.length; i++) {
+      const key = store.key(i);
+      if (!key?.startsWith(PREFIX) || SKIP.has(key))
+        continue;
+      const value = store.getItem(key);
+      if (value !== null)
+        data[key] = value;
+    }
+    return { format: FORMAT, version, exportedAt: new Date().toISOString(), data };
+  }
+  function parseBackup(text) {
+    const parsed = safeJson(text);
+    if (!isRecord(parsed) || parsed.format !== FORMAT || !isRecord(parsed.data))
+      return null;
+    const entries = Object.entries(parsed.data).filter((entry) => entry[0].startsWith(PREFIX) && !SKIP.has(entry[0]) && typeof entry[1] === "string");
+    return Object.fromEntries(entries);
+  }
+  function restoreBackup(data) {
+    const store = storage();
+    let written = 0;
+    for (const [key, value] of Object.entries(data)) {
+      try {
+        store.setItem(key, value);
+        written++;
+      } catch {}
+    }
+    if (SETTINGS_KEY in data)
+      reloadFromStorage(data[SETTINGS_KEY]);
+    return written;
+  }
+  function backupFileName(date = new Date) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `NotionAI++-backup-${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}.json`;
+  }
 
   // src/plugins/settings/notionSettings.ts
   var logger5 = new Logger("NotionSettings");
@@ -4665,6 +5268,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   var CATEGORY_LABELS = {
     favorites: () => t("收藏", "Favorites"),
+    recent: () => t("最近更新", "Recently updated"),
     all: () => t("全部", "All"),
     composer: () => t("输入框", "Composer"),
     chat: () => t("对话", "Chat"),
@@ -4673,7 +5277,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   };
   var overlay4 = null;
   var layers = [];
-  var cleanups6 = [];
+  var cleanups7 = [];
   var settingKeys = (plugin) => Object.entries(plugin.settings?.def ?? {});
   var hasSettings = (plugin) => settingKeys(plugin).length > 0;
   function pushLayer(kind, content, onClose) {
@@ -4700,11 +5304,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     node.prepend(close);
     return node;
   }
-  function confirmDialog(title, description, confirmText, onConfirm) {
+  function confirmDialog(title, description, confirmText, onConfirm, variant = "danger") {
     let layer;
     const node = sheet(title, description, () => layer.close(), "sm");
     const cancel = button("secondary", t("取消", "Cancel"), () => layer.close());
-    node.append(h("div", { class: "footer" }, cancel, button("danger", confirmText, () => {
+    node.append(h("div", { class: "footer" }, cancel, button(variant, confirmText, () => {
       layer.close();
       onConfirm();
     })));
@@ -4714,7 +5318,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   function settingField(plugin, key, def) {
     const store = plugin.settings.store;
-    return optionRow(def, store[key], (value) => setValue(plugin.name, key, value));
+    return optionRow(def, store[key], (value) => setValue(plugin.name, key, value), (question, run) => confirmDialog(tr(def.label), question, tr(def.button), run));
   }
   function openPluginDialog(plugin) {
     let layer;
@@ -4764,14 +5368,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       setEnabled(plugin, false);
       refresh();
     }));
-    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title }, title), crashed && h("span", { class: "badge danger", title: t("此插件出错了", "This plugin ran into an error") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), actions), reason || h("div", { class: "card-desc", title: description }, description)), h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title }, title), isNewPlugin(plugin.name) && h("span", { class: "badge-new", title: t("这次更新新增的插件", "Added in a recent update") }, t("新", "New")), crashed && h("span", { class: "badge danger", title: t("此插件出错了", "This plugin ran into an error") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), actions), reason || h("div", { class: "card-desc", title: description }, description)), h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
   }
   function pluginsTab() {
     const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
     const user = all.filter((p) => !p.required);
     const required = all.filter((p) => p.required);
     const state = { category: readList("starred").length ? "favorites" : "all", search: "", filter: "all" };
-    const categories = Object.keys(CATEGORY_LABELS).filter((c) => c === "favorites" || c === "all" || all.some((p) => p.tags?.includes(c)));
+    const categories = Object.keys(CATEGORY_LABELS).filter((c) => c === "favorites" || c === "all" || (c === "recent" ? all.some((p) => isRecentlyUpdated(p)) : all.some((p) => p.tags?.includes(c))));
     const tabs = h("div", { class: "tabs", role: "tablist" });
     const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
     const filter = selectControl(t("筛选", "Filter"), [
@@ -4809,7 +5413,9 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       else if (state.category === "all") {
         top = user;
         bottom = required;
-      } else
+      } else if (state.category === "recent")
+        top = all.filter((p) => isRecentlyUpdated(p));
+      else
         top = all.filter((p) => p.tags?.includes(state.category));
       top = top.filter(matches);
       bottom = bottom.filter(matches);
@@ -4818,8 +5424,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         top = top.slice().sort((a, b) => rank(a) - rank(b));
       }
       search.placeholder = t(`搜索 ${user.length + required.length} 个插件…`, `Search ${user.length + required.length} plugins...`);
-      const grid = (items) => h("div", { class: "grid" }, ...items.map((p) => pluginCard(p, render)));
+      const card = (p) => {
+        try {
+          return pluginCard(p, render);
+        } catch (error) {
+          console.error("[NotionAI++] settings card failed:", p.name, error);
+          return null;
+        }
+      };
+      const grid = (items) => h("div", { class: "grid" }, ...items.map(card));
+      const restart = pendingRestart();
       const children = [];
+      if (restart.length) {
+        children.push(h("div", { class: "notice" }, h("span", {}, t(`「${restart.map((p) => tr(p.title)).join("」「")}」刷新页面后才会完全生效。`, `${restart.map((p) => tr(p.title)).join(", ")}: reload the page for the change to fully apply.`)), button("primary", t("刷新页面", "Reload"), () => pageWindow.location.reload(), "small")));
+      }
       if (top.length)
         children.push(grid(top));
       if (bottom.length)
@@ -4847,10 +5465,38 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       setValue(SELF2, LANGUAGE_KEY, value);
       openSettings("preferences");
     });
-    return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
+    return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
+  }
+  function exportBackup() {
+    const backup = collectBackup("[20261007] v1.10.0");
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
+    const link = h("a", { href: url, download: backupFileName() });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1e4);
+  }
+  function importBackup() {
+    const input = h("input", { type: "file", accept: ".json,application/json" });
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (!file)
+        return;
+      const data = parseBackup(await file.text());
+      const count = data ? Object.keys(data).length : 0;
+      if (!data || !count) {
+        confirmDialog(t("无法恢复", "Cannot restore"), t("这个文件不是 NotionAI++ 的备份，或者里面没有内容。", "This file is not a NotionAI++ backup, or it is empty."), t("好", "OK"), () => {}, "primary");
+        return;
+      }
+      confirmDialog(t("从备份恢复", "Restore from a backup"), t(`将用「${file.name}」里的 ${count} 项数据覆盖当前的对应数据，无法撤销。`, `${count} entries from "${file.name}" will replace the current ones. This cannot be undone.`), t("恢复", "Restore"), () => {
+        restoreBackup(data);
+        confirmDialog(t("已恢复", "Restored"), t("刷新页面后全部生效。", "Reload the page for everything to take effect."), t("刷新页面", "Reload"), () => pageWindow.location.reload(), "primary");
+      });
+    });
+    input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.9.1";
+    const version = "[20261007] v1.10.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4885,7 +5531,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.9.1";
+    const version = "[20261007] v1.10.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4917,7 +5563,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups6.push(on("openSettings", () => openSettings()), startQuickCss());
+      cleanups7.push(on("openSettings", () => openSettings()), startQuickCss());
       if (typeof GM_registerMenuCommand === "function") {
         try {
           GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -4925,7 +5571,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       }
     },
     stop() {
-      for (const cleanup of cleanups6.splice(0))
+      for (const cleanup of cleanups7.splice(0))
         cleanup();
       stopQuickCss();
       close2();
@@ -4939,7 +5585,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var INTERACTIVE2 = "a, button, input, textarea, select, label, [contenteditable=''], [contenteditable='true'], " + "[role='button'], [role='link'], [role='menuitem'], [role='treeitem'], [role='option'], [role='tab'], [role='checkbox'], [role='switch'], [draggable='true']";
   var ACTIVE_CURSORS = new Set(["pointer", "text", "col-resize", "ew-resize", "row-resize", "grab", "grabbing", "move"]);
   var SLOP = 6;
-  var settings12 = definePluginSettings({
+  var settings13 = definePluginSettings({
     clickToToggle: {
       type: "boolean",
       label: { zh: "点击侧栏空白处收起/固定", en: "Click empty sidebar space to toggle" },
@@ -4992,7 +5638,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return true;
   }
   function onClick3(event) {
-    if (!settings12.store.clickToToggle)
+    if (!settings13.store.clickToToggle)
       return;
     const target = event.target instanceof Element ? event.target : null;
     const sidebar = target?.closest(SIDEBAR);
@@ -5008,7 +5654,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var stopWait = null;
   var collapsedOnce = false;
   function collapseOnLoad() {
-    if (collapsedOnce || !settings12.store.defaultCollapsed)
+    if (collapsedOnce || !settings13.store.defaultCollapsed)
       return;
     const attempt = () => {
       const sidebar = document.querySelector(SIDEBAR);
@@ -5044,7 +5690,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.sidebar,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings12,
+    settings: settings13,
     start() {
       document.addEventListener("click", onClick3, true);
       collapseOnLoad();
@@ -5058,38 +5704,49 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   // src/plugins/tabStatus/index.ts
   var SIZE = 32;
   var SPIN_MS = 120;
-  var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" };
-  var settings13 = definePluginSettings({
+  var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2", draft: "#9b9a97" };
+  var EDITOR3 = "[data-notion-chat-input-container] [contenteditable='true']";
+  var settings14 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
       description: { zh: "回到这个标签页后自动消失", en: "Clears when you come back to the tab" },
       default: true
+    },
+    showDraft: {
+      type: "boolean",
+      label: { zh: "有没发出的草稿时显示灰圈", en: "Grey ring for an unsent draft" },
+      description: { zh: "离开标签页时，如果输入框里还有没发出的文字，图标上显示一个灰色圆圈提醒你", en: "When you leave the tab with text still in the composer, the icon shows a grey ring" },
+      default: false
     }
   });
   var state2 = "idle";
-  var original2 = null;
+  var originals = new Map;
   var base = null;
   var ours = "";
   var angle = 0;
   var timer3 = 0;
-  var cleanups7 = [];
-  var iconLink = () => document.querySelector("link[rel~='icon']");
+  var cleanups8 = [];
+  var iconLinks = () => [...document.querySelectorAll("link[rel~='icon']")];
   function remember2() {
-    const link = iconLink();
-    if (!link || link.href === ours)
-      return;
-    original2 = { link, href: link.href };
-    base = null;
+    for (const link of iconLinks()) {
+      if (link.href === ours)
+        continue;
+      originals.set(link, link.href);
+    }
+    for (const link of originals.keys())
+      if (!link.isConnected)
+        originals.delete(link);
   }
   function loadBase() {
-    if (base?.complete)
-      return Promise.resolve(base);
-    if (!original2)
+    const href = originals.values().next().value;
+    if (!href)
       return Promise.resolve(null);
+    if (base?.href === href && base.image.complete)
+      return Promise.resolve(base.image);
     const image = new Image;
-    image.src = original2.href;
-    base = image;
+    image.src = href;
+    base = { href, image };
     return new Promise((resolve) => {
       image.onload = () => resolve(image);
       image.onerror = () => resolve(null);
@@ -5114,6 +5771,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       ctx.stroke();
       return;
     }
+    if (kind === "draft") {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 1.5, 0, Math.PI * 2);
+      ctx.strokeStyle = COLORS.draft;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      return;
+    }
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = COLORS[kind];
@@ -5121,12 +5786,12 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
   async function paint2() {
     remember2();
-    const link = original2?.link;
-    if (!link)
+    if (!originals.size)
       return;
     if (state2 === "idle") {
-      if (original2 && link.href !== original2.href)
-        link.href = original2.href;
+      for (const [link, href] of originals)
+        if (link.href !== href)
+          link.href = href;
       return;
     }
     const image = await loadBase();
@@ -5140,7 +5805,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     drawBadge(ctx, state2, angle);
     try {
       ours = canvas.toDataURL("image/png");
-      link.href = ours;
+      for (const link of originals.keys())
+        link.href = ours;
     } catch {}
   }
   function setState(next) {
@@ -5154,9 +5820,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
     paint2();
   }
-  function seen() {
-    if (document.visibilityState === "visible" && (state2 === "done" || state2 === "error"))
-      setState("idle");
+  var hasDraft = () => [...document.querySelectorAll(EDITOR3)].some((editor) => !!editor.innerText?.trim());
+  function seen2() {
+    if (document.visibilityState === "visible") {
+      if (state2 === "done" || state2 === "error" || state2 === "draft")
+        setState("idle");
+    } else if (state2 === "idle" && settings14.store.showDraft && hasDraft()) {
+      setState("draft");
+    }
   }
   var tabStatus_default = definePlugin({
     name: "tabStatus",
@@ -5168,22 +5839,28 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings13,
+    updatedAt: "2026-10-08",
+    settings: settings14,
     start() {
       remember2();
-      const onVisible = () => seen();
+      const onVisible = () => seen2();
       document.addEventListener("visibilitychange", onVisible);
       window.addEventListener("focus", onVisible);
-      cleanups7 = [
+      cleanups8 = [
         watchReplies(),
         on("replyStart", () => setState("streaming")),
-        on("replyEnd", ({ error }) => {
+        on("replyEnd", ({ error, stopped, left }) => {
+          if (stopped || left)
+            return setState("idle");
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings13.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings14.store.showDone ? "done" : "idle");
+        }),
+        onRouteChange(() => {
+          if (state2 === "done" || state2 === "error" || state2 === "draft")
+            setState("idle");
         }),
         onDomChange(() => {
-          const link = iconLink();
-          if (state2 !== "idle" && link && link.href !== ours)
+          if (state2 !== "idle" && iconLinks().some((link) => link.href !== ours))
             paint2();
         }),
         () => document.removeEventListener("visibilitychange", onVisible),
@@ -5191,10 +5868,10 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       ];
     },
     stop() {
-      for (const cleanup of cleanups7.splice(0))
+      for (const cleanup of cleanups8.splice(0))
         cleanup();
       setState("idle");
-      original2 = null;
+      originals = new Map;
       base = null;
     }
   });
@@ -6343,6 +7020,8 @@ button { font: inherit; }
   transition: background .1s ease;
 }
 .orb:hover, .orb:focus-visible { background: var(--orb-hover); }
+.pct { font-size: 11.5px; line-height: 1; font-variant-numeric: tabular-nums; color: inherit; margin-inline: -1px 2px; }
+.pct:last-child { margin-inline-end: 0; }
 .ring { display: block; width: 18px; height: 18px; color: inherit; overflow: visible; }
 .ring-track { fill: none; stroke: currentColor; stroke-opacity: .28; stroke-width: 2; }
 .ring-fill { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
@@ -6377,7 +7056,7 @@ button { font: inherit; }
   var RING = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle class="ring-track" cx="9" cy="9" r="${RING_RADIUS}"/><circle class="ring-fill" cx="9" cy="9" r="${RING_RADIUS}" transform="rotate(-90 9 9)" stroke-dasharray="${RING_CIRCUMFERENCE}" stroke-dashoffset="${RING_CIRCUMFERENCE}"/></svg>`;
   var USAGE_HTML = `
 <div class="shell">
-  <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
+  <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}<span class="pct pct-rolling" hidden></span>${RING.replace("ring", "ring r-monthly")}<span class="pct pct-monthly" hidden></span></button>
   <span class="tip" role="tooltip">
     <div class="blk today" hidden><div class="lbl tip-l-today"></div><div class="val tip-v-today"></div></div>
     <div class="meters">
@@ -6537,6 +7216,9 @@ button { font: inherit; }
       const monthly = applicable ? activeMonthly(snapshot, now) : null;
       const rollingText = formatPercent(views.rolling.percent);
       const monthlyText = formatPercent(views.monthly.percent);
+      const showPercent = this.stats.showPercent() && applicable;
+      this.setText(".pct-rolling", showPercent ? rollingText : "");
+      this.setText(".pct-monthly", showPercent ? monthlyText : "");
       const used = (text) => text === "—" ? text : t(`已用 ${text}`, `${text} used`);
       this.q(".tip-l-rolling").textContent = t("6 小时", "6-hour");
       this.q(".tip-v-rolling").textContent = used(rollingText);
@@ -6578,7 +7260,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings14 = definePluginSettings({
+  var settings15 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -6589,6 +7271,12 @@ button { font: inherit; }
       type: "boolean",
       label: { zh: "悬停时显示套餐", en: "Show plan on hover" },
       description: { zh: "在悬停提示里显示套餐和周期截止日期", en: "Show the plan and its period end date in the hover tooltip" },
+      default: false
+    },
+    showPercent: {
+      type: "boolean",
+      label: { zh: "圆环旁常驻显示百分比", en: "Always show percentages" },
+      description: { zh: "不用悬停也能看到 6 小时和月度用量的百分比", en: "See the 6-hour and monthly percentages without hovering" },
       default: false
     },
     hoverStatsDelay: {
@@ -6625,19 +7313,20 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings14.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings15.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings14.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings15.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings14.store.usageStats,
-    setEnabled: (value) => void (settings14.store.usageStats = value),
-    retain: () => settings14.store.retainDays,
-    hoverDelay: () => settings14.store.hoverStatsDelay,
-    showPlan: () => settings14.store.showPlan,
+    enabled: () => settings15.store.usageStats,
+    setEnabled: (value) => void (settings15.store.usageStats = value),
+    retain: () => settings15.store.retainDays,
+    hoverDelay: () => settings15.store.hoverStatsDelay,
+    showPlan: () => settings15.store.showPlan,
+    showPercent: () => settings15.store.showPercent,
     refresh: record2
   };
   function mount() {
@@ -6655,8 +7344,9 @@ button { font: inherit; }
     icon: Icons.gauge,
     tags: ["composer"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings14,
+    settings: settings15,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -6683,13 +7373,24 @@ button { font: inherit; }
   });
 
   // src/plugins/userQuotes/index.ts
-  var STYLE_ID5 = "notionai-pp-user-quotes";
+  var STYLE_ID6 = "notionai-pp-user-quotes";
   var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]`;
-  var settings15 = definePluginSettings({
+  var settings16 = definePluginSettings({
     dim: {
       type: "boolean",
       label: { zh: "引用文字变淡", en: "Dim quoted text" },
       default: true
+    },
+    italic: {
+      type: "boolean",
+      label: { zh: "引用文字用斜体", en: "Italic quoted text" },
+      default: false
+    },
+    marks: {
+      type: "boolean",
+      label: { zh: "引用两侧加引号", en: "Quotation marks around quotes" },
+      description: { zh: "在每段引用的开头和结尾加上 “ ”", en: "Put “ ” at the start and end of each quote" },
+      default: false
     }
   });
   function quoteLines(text) {
@@ -6706,12 +7407,14 @@ button { font: inherit; }
   }
   var MIRROR = "data-npp-quote-mirror";
   var HIDDEN = "data-npp-quote-hidden";
-  function css3() {
+  function css4() {
     return `[${HIDDEN}] { display: none !important; }
 [${MIRROR}] > div:empty::after { content: "\\200b"; }
 [${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
 [${MIRROR}] .q > div:empty::after { content: "\\200b"; }
-${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
+${settings16.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
+${settings16.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
+${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
   }
   function buildMirror(text) {
     const fragment = document.createDocumentFragment();
@@ -6773,14 +7476,14 @@ ${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
   var schedule4 = debounce(render2, 120, 400);
   var stopDom5 = null;
   var textWatch = null;
-  function applyStyle() {
-    let style = document.getElementById(STYLE_ID5);
+  function applyStyle2() {
+    let style = document.getElementById(STYLE_ID6);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID5;
+      style.id = STYLE_ID6;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css3();
+    style.textContent = css4();
   }
   var userQuotes_default = definePlugin({
     name: "userQuotes",
@@ -6792,9 +7495,10 @@ ${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
     icon: Icons.quote,
     tags: ["chat", "appearance"],
     enabledByDefault: true,
-    settings: settings15,
+    updatedAt: "2026-10-08",
+    settings: settings16,
     start() {
-      applyStyle();
+      applyStyle2();
       render2();
       stopDom5 = onDomChange((mutations) => {
         if (mutations.every((m) => m.target.closest?.(`[${MIRROR}]`)))
@@ -6817,19 +7521,19 @@ ${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
         unmirror(leaf);
       for (const copy of document.querySelectorAll(`[${MIRROR}]`))
         copy.remove();
-      document.getElementById(STYLE_ID5)?.remove();
+      document.getElementById(STYLE_ID6)?.remove();
     },
     onSettingsChange() {
-      applyStyle();
+      applyStyle2();
     }
   });
 
   // src/plugins/widerChat/index.ts
-  var STYLE_ID6 = "notionai-pp-wider-chat";
-  var MARK3 = "data-npp-chat-column";
-  var COMPOSER4 = "[data-notion-chat-input-container]";
+  var STYLE_ID7 = "notionai-pp-wider-chat";
+  var MARK4 = "data-npp-chat-column";
+  var COMPOSER5 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings16 = definePluginSettings({
+  var settings17 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -6851,24 +7555,24 @@ ${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
   function mark2() {
     const step = document.querySelector(`[${USER_STEP}]`);
     const column = step ? columnOf(step) : null;
-    if (column && !column.hasAttribute(MARK3)) {
-      for (const old of document.querySelectorAll(`[${MARK3}]`))
-        old.removeAttribute(MARK3);
-      column.setAttribute(MARK3, "");
+    if (column && !column.hasAttribute(MARK4)) {
+      for (const old of document.querySelectorAll(`[${MARK4}]`))
+        old.removeAttribute(MARK4);
+      column.setAttribute(MARK4, "");
     }
   }
-  function css4(width) {
-    return `[${MARK3}] { max-width: ${width}px !important; }
-${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
+  function css5(width) {
+    return `[${MARK4}] { max-width: ${width}px !important; }
+${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
   }
   function apply4() {
-    let style = document.getElementById(STYLE_ID6);
+    let style = document.getElementById(STYLE_ID7);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID6;
+      style.id = STYLE_ID7;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css4(settings16.store.width);
+    style.textContent = css5(settings17.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -6880,7 +7584,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings16,
+    settings: settings17,
     start() {
       apply4();
       mark2();
@@ -6889,9 +7593,9 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     stop() {
       stopDom6?.();
       stopDom6 = null;
-      document.getElementById(STYLE_ID6)?.remove();
-      for (const node of document.querySelectorAll(`[${MARK3}]`))
-        node.removeAttribute(MARK3);
+      document.getElementById(STYLE_ID7)?.remove();
+      for (const node of document.querySelectorAll(`[${MARK4}]`))
+        node.removeAttribute(MARK4);
     },
     onSettingsChange() {
       apply4();
@@ -6905,7 +7609,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.9.1";
+    win[FLAG] = "[20261007] v1.10.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6924,7 +7628,8 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       sidebarTweaks_default,
       healthCheck_default,
       userQuotes_default,
-      noTelemetry_default
+      noTelemetry_default,
+      codeFold_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -6933,7 +7638,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger7.info(`NotionAI++ ${"[20261007] v1.9.1"} started`);
+    logger7.info(`NotionAI++ ${"[20261007] v1.10.0"} started`);
   }
   boot();
 })();

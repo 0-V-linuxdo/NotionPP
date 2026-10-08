@@ -151,6 +151,11 @@ button { font: inherit; color: inherit; }
 .card-title { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; }
 .badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
 .badge.danger { color: var(--fg-danger); }
+.badge-new { flex-shrink: 0; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 600; line-height: 16px; color: #fff; background: #2383e2; }
+.notice { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; padding: .5rem .75rem; border-radius: 8px; font-size: 13px; line-height: 1.45;
+  color: var(--fg-primary, inherit); background: rgba(35,131,226,.08); border: 1px solid rgba(35,131,226,.25); }
+.notice > span { flex: 1; min-width: 0; }
+.notice .btn { flex-shrink: 0; height: 26px; padding: 0 10px; font-size: 12.5px; }
 .card-controls { display: flex; align-items: center; gap: .375rem; flex-shrink: 0; }
 .card-controls .icon-btn { width: 1.5rem; height: 1.5rem; } .card-controls .icon-btn svg { width: .875rem; height: .875rem; }
 

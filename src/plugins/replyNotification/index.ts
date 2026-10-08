@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { on, type ReplyEvent } from "@api/Events";
+import { type EventMap, on } from "@api/Events";
 import { definePlugin } from "@api/PluginManager";
-import { watchReplies } from "@api/Reply";
+import { currentChatTitle, watchReplies } from "@api/Reply";
 import { definePluginSettings, setValue } from "@api/Settings";
 import { Icons } from "@utils/icons";
 import { pageWindow, t } from "@utils/page";
@@ -84,18 +84,28 @@ function context() {
 }
 
 /** Plays the chosen file through Web Audio (no media request, so the page's CSP has no say); false if it can't. */
-async function playFile(volume: number): Promise<boolean> {
+async function decodeFile(): Promise<AudioBuffer | null> {
     const sound = storedSound();
-    if (!sound) return false;
+    if (!sound) return null;
     try {
-        const ctx = context();
         if (decoded?.data !== sound.data) {
             const bytes = Uint8Array.from(atob(sound.data), char => char.charCodeAt(0));
-            decoded = { data: sound.data, buffer: await ctx.decodeAudioData(bytes.buffer) };
+            decoded = { data: sound.data, buffer: await context().decodeAudioData(bytes.buffer) };
         }
+        return decoded.buffer;
+    } catch {
+        return null;
+    }
+}
+
+async function playFile(volume: number): Promise<boolean> {
+    const buffer = await decodeFile();
+    if (!buffer) return false;
+    try {
+        const ctx = context();
         const source = ctx.createBufferSource();
         const gain = ctx.createGain();
-        source.buffer = decoded.buffer;
+        source.buffer = buffer;
         gain.gain.value = Math.max(0, Math.min(100, volume)) / 100;
         source.connect(gain).connect(ctx.destination);
         source.start();
@@ -164,7 +174,7 @@ export function chime(volume = settings.store.volume) {
     } catch {}
 }
 
-const chatTitle = () => document.title.replace(/\s*\|\s*Notion\s*$/, "").trim() || "Notion AI";
+const chatTitle = () => currentChatTitle() || "Notion AI";
 
 function lastReply(): string {
     const messages = collectMessages();
@@ -187,7 +197,16 @@ function desktop(error: boolean) {
     } catch {}
 }
 
-function notify({ error }: ReplyEvent & { error: boolean }) {
+/** The same reply announced twice (the composer re-rendering at the end) chimes once. */
+export const REPEAT_MS = 2000;
+let last = { chatId: "", at: -Infinity };
+
+function notify({ chatId, error, stopped, left }: EventMap["replyEnd"]) {
+    // Pressing stop, or leaving the chat mid-reply, is not a reply that finished.
+    if (stopped || left) return;
+    const now = performance.now();
+    if (chatId === last.chatId && now - last.at < REPEAT_MS) return;
+    last = { chatId, at: now };
     if (settings.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus()) return;
     if (settings.store.sound) play();
     if (settings.store.desktop) desktop(error);
@@ -211,9 +230,26 @@ export default definePlugin({
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     settings,
     start() {
-        cleanups = [watchReplies(), on("replyEnd", notify)];
+        // Browsers only let audio start after the page has been used; get it ready on the first
+        // click or key here, so a reply ending in a background tab is not silenced.
+        const prime = () => {
+            if (!settings.store.sound) return;
+            context();
+            if (settings.store.source === "file") void decodeFile();
+            document.removeEventListener("pointerdown", prime, true);
+            document.removeEventListener("keydown", prime, true);
+        };
+        document.addEventListener("pointerdown", prime, true);
+        document.addEventListener("keydown", prime, true);
+        cleanups = [
+            watchReplies(),
+            on("replyEnd", notify),
+            () => document.removeEventListener("pointerdown", prime, true),
+            () => document.removeEventListener("keydown", prime, true),
+        ];
     },
     stop() {
         for (const cleanup of cleanups.splice(0)) cleanup();

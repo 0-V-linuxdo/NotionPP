@@ -315,25 +315,55 @@ export function jumpTo(id: string): boolean {
     return true;
 }
 
+/** How far off a landed jump may be before it is corrected, and how many corrections to try. */
+const ALIGN_SLACK = 4;
+const ALIGN_TRIES = 3;
+let cancelJump: (() => void) | null = null;
+
 function jump(id: string) {
     const message = messages.find(m => m.id === id);
     if (!message?.element.isConnected) return;
+    cancelJump?.();
     const target = message.element;
     pinnedId = id;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
-    const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
+    const scrollTarget: Window | HTMLElement = isRoot ? window : scroller;
+    const destination = () => target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
     setActive(id);
     let timer = 0;
-    const settle = () => {
+    let tries = 0;
+    const cleanup = () => {
+        clearTimeout(timer);
+        scrollTarget.removeEventListener("scroll", settle);
+        for (const type of ["wheel", "touchstart", "keydown", "pointerdown"]) window.removeEventListener(type, userTookOver, true);
+        if (cancelJump === cleanup) cancelJump = null;
+    };
+    // Images loading or thinking blocks folding above the target move it while the smooth
+    // scroll runs. Once the scroll stops, check where the target ended up and correct it.
+    function settle() {
         clearTimeout(timer);
         timer = window.setTimeout(() => {
-            (isRoot ? window : scroller).removeEventListener("scroll", settle);
+            if (!target.isConnected) return cleanup();
+            const goal = Math.max(0, Math.min(destination(), scroller.scrollHeight - scroller.clientHeight));
+            if (Math.abs(goal - scroller.scrollTop) > ALIGN_SLACK && tries++ < ALIGN_TRIES) {
+                scroller.scrollTo({ top: goal, behavior: "instant" as ScrollBehavior });
+                return settle();
+            }
+            cleanup();
             playEffect(target, settings.store.effect as Effect);
         }, SETTLE_MS);
-    };
-    (isRoot ? window : scroller).addEventListener("scroll", settle, { passive: true });
-    scroller.scrollTo({ top, behavior: "smooth" });
+    }
+    // The reader scrolling or clicking takes over; stop correcting.
+    function userTookOver(event: Event) {
+        if (event.type === "keydown" && !(event as KeyboardEvent).key.startsWith("Arrow") && !["PageUp", "PageDown", "Home", "End", " "].includes((event as KeyboardEvent).key)) return;
+        if (event.type === "pointerdown" && overlay?.host.contains(event.target as Node)) return;
+        cleanup();
+    }
+    scrollTarget.addEventListener("scroll", settle, { passive: true });
+    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"]) window.addEventListener(type, userTookOver, { capture: true, passive: true });
+    cancelJump = cleanup;
+    scroller.scrollTo({ top: destination(), behavior: "smooth" });
     settle();
 }
 
@@ -347,6 +377,7 @@ export default definePlugin({
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     settings,
     start() {
         overlay = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
@@ -401,6 +432,7 @@ export default definePlugin({
         build();
     },
     stop() {
+        cancelJump?.();
         for (const cleanup of cleanups.splice(0)) cleanup();
         overlay?.destroy();
         overlay = null;

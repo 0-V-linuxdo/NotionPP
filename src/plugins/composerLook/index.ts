@@ -36,7 +36,24 @@ export const settings = definePluginSettings({
         min: 0,
         max: 30,
     },
+    noFade: {
+        type: "boolean",
+        label: { zh: "去掉对话区上下的渐隐", en: "No fade at the chat's edges" },
+        description: { zh: "Notion 会让对话区顶部和贴近输入框的 32 像素逐渐变淡，关掉后文字到边缘都清晰", en: "Notion fades the top of the chat and the 32px next to the composer; turn the fade off to keep text crisp to the edge" },
+        default: true,
+    },
 });
+
+const FADE_MARK = "data-npp-chat-scroller";
+
+/** The chat's scroll area, the element Notion gives its fading mask. */
+export function chatScroller(): HTMLElement | null {
+    const step = document.querySelector("[data-agent-chat-user-step-id]");
+    for (let node = step?.parentElement; node && node !== document.body; node = node.parentElement) {
+        if (/gradient/.test(getComputedStyle(node).maskImage ?? "")) return node;
+    }
+    return null;
+}
 
 /** The rounded box that paints the composer's background. */
 export function composerBox(container: Element): HTMLElement | null {
@@ -51,14 +68,17 @@ function mark() {
         const box = composerBox(container);
         if (box && !box.hasAttribute(MARK)) box.setAttribute(MARK, "");
     }
+    if (settings.store.noFade && !document.querySelector(`[${FADE_MARK}]`)) chatScroller()?.setAttribute(FADE_MARK, "");
 }
 
-export function css(opacity: number, blur: number) {
+export function css(opacity: number, blur: number, noFade = false) {
     const pct = Math.max(0, Math.min(100, Math.round(opacity)));
     const px = Math.max(0, Math.min(30, Math.round(blur)));
     const rules = [`background-color: color-mix(in srgb, var(--c-bacSec) ${pct}%, transparent) !important;`];
-    if (px) rules.push(`backdrop-filter: blur(${px}px) saturate(1.2);`, `-webkit-backdrop-filter: blur(${px}px) saturate(1.2);`);
-    return `[${MARK}] { ${rules.join(" ")} }`;
+    // Fully opaque needs no blur behind it; skip the filter so nothing is composited for nothing.
+    if (px && pct < 100) rules.push(`backdrop-filter: blur(${px}px) saturate(1.2);`, `-webkit-backdrop-filter: blur(${px}px) saturate(1.2);`);
+    const fade = noFade ? `\n[${FADE_MARK}] { mask-image: none !important; -webkit-mask-image: none !important; }` : "";
+    return `[${MARK}] { ${rules.join(" ")} }${fade}`;
 }
 
 let stopDom: (() => void) | null = null;
@@ -70,7 +90,9 @@ function apply() {
         style.id = STYLE_ID;
         (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css(settings.store.opacity, settings.store.blur);
+    style.textContent = css(settings.store.opacity, settings.store.blur, settings.store.noFade);
+    if (!settings.store.noFade) for (const node of document.querySelectorAll(`[${FADE_MARK}]`)) node.removeAttribute(FADE_MARK);
+    mark();
 }
 
 export default definePlugin({
@@ -83,17 +105,17 @@ export default definePlugin({
     icon: Icons.droplet,
     tags: ["composer", "appearance"],
     enabledByDefault: false,
+    updatedAt: "2026-10-08",
     settings,
     start() {
         apply();
-        mark();
         stopDom = onDomChange(mark);
     },
     stop() {
         stopDom?.();
         stopDom = null;
         document.getElementById(STYLE_ID)?.remove();
-        for (const node of document.querySelectorAll(`[${MARK}]`)) node.removeAttribute(MARK);
+        for (const node of document.querySelectorAll(`[${MARK}], [${FADE_MARK}]`)) node.removeAttribute(MARK), node.removeAttribute(FADE_MARK);
     },
     onSettingsChange() {
         apply();

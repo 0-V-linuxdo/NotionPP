@@ -54,6 +54,8 @@ export interface ActionOption {
     label: Text;
     description?: Text;
     button: Text;
+    /** When set, the button asks this question before running. */
+    confirm?: Text;
     run(): void;
 }
 
@@ -65,7 +67,7 @@ export type OptionValues<D extends OptionsDef> = {
     [K in keyof D]: D[K] extends BooleanOption ? boolean : D[K] extends NumberOption ? number : D[K] extends ActionOption ? undefined : string;
 };
 
-type Bag = Record<string, Record<string, OptionValue>>;
+export type Bag = Record<string, Record<string, OptionValue>>;
 
 type Listener = (plugin: string, key: string) => void;
 
@@ -131,10 +133,34 @@ export function onSettingsChange(listener: Listener) {
     return () => void listeners.delete(listener);
 }
 
+/** Another tab (or a restored backup) changed the stored bag: announce only what actually changed. */
 export function reloadFromStorage(raw: string | null) {
     const parsed = safeJson(raw ?? "");
-    bag = isRecord(parsed) ? (parsed as Bag) : {};
-    for (const listener of [...listeners]) listener("*", "*");
+    const next = isRecord(parsed) ? (parsed as Bag) : {};
+    const changed = diffBags(bag, next);
+    bag = next;
+    for (const [plugin, key] of changed) {
+        for (const listener of [...listeners]) {
+            try {
+                listener(plugin, key);
+            } catch (error) {
+                logger.error("Settings listener failed:", error);
+            }
+        }
+    }
+}
+
+/** Every [plugin, key] whose stored value differs between two bags; "enabled" first, so a plugin starts before it is tuned. */
+export function diffBags(before: Bag, after: Bag): [string, string][] {
+    const out: [string, string][] = [];
+    for (const plugin of new Set([...Object.keys(before), ...Object.keys(after)])) {
+        const a = isRecord(before[plugin]) ? before[plugin] : {};
+        const b = isRecord(after[plugin]) ? after[plugin] : {};
+        const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(key => a[key] !== b[key]);
+        keys.sort((x, y) => Number(y === "enabled") - Number(x === "enabled"));
+        for (const key of keys) out.push([plugin, key]);
+    }
+    return out;
 }
 
 export interface PluginSettings<D extends OptionsDef> {

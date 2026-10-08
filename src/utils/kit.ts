@@ -135,7 +135,7 @@ function placeMenu(menu: HTMLElement, anchor: DOMRect) {
 
 
 /** A settings row for one option definition, with the control its type calls for. */
-export function optionRow(def: OptionDef, value: unknown, set: (value: OptionValue) => void): HTMLElement {
+export function optionRow(def: OptionDef, value: unknown, set: (value: OptionValue) => void, confirm?: (question: string, run: () => void) => void): HTMLElement {
     const title = tr(def.label);
     const description = def.description && tr(def.description);
     switch (def.type) {
@@ -162,6 +162,9 @@ export function optionRow(def: OptionDef, value: unknown, set: (value: OptionVal
             return row(title, description, input);
         }
         case "action":
-            return row(title, description, button("secondary", tr(def.button), () => def.run()));
+            return row(title, description, button("secondary", tr(def.button), () => {
+                if (def.confirm && confirm) confirm(tr(def.confirm), () => def.run());
+                else def.run();
+            }));
     }
 }

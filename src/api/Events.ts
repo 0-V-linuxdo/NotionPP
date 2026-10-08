@@ -12,7 +12,13 @@ export interface ReplyEvent {
 export interface EventMap {
     openSettings: void;
     replyStart: ReplyEvent;
-    replyEnd: ReplyEvent & { error: boolean };
+    replyEnd: ReplyEvent & {
+        error: boolean;
+        /** The user pressed stop: not a finished reply. */
+        stopped: boolean;
+        /** The user opened another chat mid-reply; how that reply ends is not known here. */
+        left: boolean;
+    };
     starsChanged: void;
 }
 

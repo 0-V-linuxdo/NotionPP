@@ -27,6 +27,8 @@ button { font: inherit; }
   transition: background .1s ease;
 }
 .orb:hover, .orb:focus-visible { background: var(--orb-hover); }
+.pct { font-size: 11.5px; line-height: 1; font-variant-numeric: tabular-nums; color: inherit; margin-inline: -1px 2px; }
+.pct:last-child { margin-inline-end: 0; }
 .ring { display: block; width: 18px; height: 18px; color: inherit; overflow: visible; }
 .ring-track { fill: none; stroke: currentColor; stroke-opacity: .28; stroke-width: 2; }
 .ring-fill { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset .3s ease; }
@@ -63,7 +65,7 @@ const RING = `<svg class="ring" viewBox="0 0 18 18" aria-hidden="true"><circle c
 
 export const USAGE_HTML = `
 <div class="shell">
-  <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
+  <button class="orb" type="button">${RING.replace("ring", "ring r-rolling")}<span class="pct pct-rolling" hidden></span>${RING.replace("ring", "ring r-monthly")}<span class="pct pct-monthly" hidden></span></button>
   <span class="tip" role="tooltip">
     <div class="blk today" hidden><div class="lbl tip-l-today"></div><div class="val tip-v-today"></div></div>
     <div class="meters">

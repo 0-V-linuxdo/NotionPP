@@ -9,6 +9,7 @@ import { definePlugin, StartAt } from "@api/PluginManager";
 import { definePluginSettings } from "@api/Settings";
 import { Icons } from "@utils/icons";
 import { Logger } from "@utils/Logger";
+import { pageWindow, t } from "@utils/page";
 
 /*
  * Like Void++'s noTelemetry: drops the usage and error reports a Notion AI page sends, before
@@ -42,7 +43,27 @@ export const settings = definePluginSettings({
         label: { zh: "错误上报（Sentry）", en: "Error reports (Sentry)" },
         default: true,
     },
+    stats: {
+        type: "action",
+        label: { zh: "本页已拦截", en: "Blocked on this page" },
+        description: { zh: "从打开这个页面起，各类上报被拦下的次数", en: "How many reports of each kind were dropped since this page loaded" },
+        button: { zh: "查看", en: "Show" },
+        run: () => pageWindow.alert(blockedSummary(blockedCounts())),
+    },
 });
+
+const LABELS: Record<Category, [string, string]> = {
+    events: ["事件统计", "Event tracking"],
+    experiments: ["实验数据", "Experiments"],
+    logs: ["日志收集", "Logs"],
+    errors: ["错误上报", "Errors"],
+};
+
+export function blockedSummary(current: Record<Category, number>): string {
+    const total = Object.values(current).reduce((sum, n) => sum + n, 0);
+    const lines = (Object.keys(LABELS) as Category[]).map(key => `${t(...LABELS[key])}: ${current[key]}`);
+    return [t(`本页共拦截 ${total} 条上报`, `${total} reports blocked on this page`), "", ...lines].join("\n");
+}
 
 export type Category = "events" | "experiments" | "logs" | "errors";
 
@@ -70,6 +91,9 @@ export default definePlugin({
     },
     icon: Icons.shield,
     enabledByDefault: false,
+    updatedAt: "2026-10-08",
+    // Some reporters (Sentry) take their fetch when the page loads; switching takes a reload to reach them.
+    restartNeeded: true,
     // before Notion's first reports go out
     startAt: StartAt.DocumentStart,
     settings,

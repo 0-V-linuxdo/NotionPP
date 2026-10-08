@@ -28,6 +28,17 @@ export const settings = definePluginSettings({
         label: { zh: "引用文字变淡", en: "Dim quoted text" },
         default: true,
     },
+    italic: {
+        type: "boolean",
+        label: { zh: "引用文字用斜体", en: "Italic quoted text" },
+        default: false,
+    },
+    marks: {
+        type: "boolean",
+        label: { zh: "引用两侧加引号", en: "Quotation marks around quotes" },
+        description: { zh: "在每段引用的开头和结尾加上 “ ”", en: "Put “ ” at the start and end of each quote" },
+        default: false,
+    },
 });
 
 export interface QuoteLine {
@@ -59,7 +70,9 @@ function css() {
 [${MIRROR}] > div:empty::after { content: "\\200b"; }
 [${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
 [${MIRROR}] .q > div:empty::after { content: "\\200b"; }
-${settings.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
+${settings.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
+${settings.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
+${settings.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
 }
 
 /** The mirror's content: plain lines as rows, each run of quote lines as one indented block. */
@@ -144,6 +157,7 @@ export default definePlugin({
     icon: Icons.quote,
     tags: ["chat", "appearance"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     settings,
     start() {
         applyStyle();

@@ -6,6 +6,7 @@
 
 import { createOverlay, type Overlay } from "@api/Overlay";
 import { definePlugin } from "@api/PluginManager";
+import { onRouteChange } from "@api/Router";
 import { definePluginSettings } from "@api/Settings";
 import { safeJson } from "@utils/guards";
 import { Icons } from "@utils/icons";
@@ -43,6 +44,7 @@ export const settings = definePluginSettings({
         type: "action",
         label: { zh: "清空输入历史", en: "Clear prompt history" },
         button: { zh: "清空", en: "Clear" },
+        confirm: { zh: "所有保存的提问都会删除，无法恢复。", en: "Every saved prompt will be deleted. This cannot be undone." },
         run: () => save([]),
     },
 });
@@ -82,8 +84,11 @@ function caretAt(editor: HTMLElement, edge: "start" | "end"): boolean {
     return range.toString().length === 0;
 }
 
-/** Replaces the composer's text through the editing pipeline, so Notion's editor sees a normal edit. */
-export function fill(editor: HTMLElement, text: string) {
+/**
+ * Replaces the composer's text through the editing pipeline, so Notion's editor sees a normal edit.
+ * The caret lands at `caret`: the start when walking back, so the next ↑ goes on at once.
+ */
+export function fill(editor: HTMLElement, text: string, caret: "start" | "end" = "end") {
     editor.focus();
     const selection = document.getSelection();
     const range = document.createRange();
@@ -92,23 +97,37 @@ export function fill(editor: HTMLElement, text: string) {
     selection?.addRange(range);
     if (text) document.execCommand("insertText", false, text);
     else document.execCommand("delete");
-    const end = document.createRange();
-    end.selectNodeContents(editor);
-    end.collapse(false);
+    const edge = document.createRange();
+    edge.selectNodeContents(editor);
+    edge.collapse(caret === "start");
     selection?.removeAllRanges();
-    selection?.addRange(end);
+    selection?.addRange(edge);
 }
 
 let browsing = -1;
 let draft = "";
+let shown = "";
 let browsingEditor: HTMLElement | null = null;
+let composing = false;
 
 function reset() {
     browsing = -1;
     draft = "";
+    shown = "";
     browsingEditor = null;
     hideCounter();
 }
+
+function show(editor: HTMLElement, text: string, caret: "start" | "end") {
+    fill(editor, text, caret);
+    shown = textOf(editor);
+}
+
+/** An IME is still picking characters: Enter confirms the candidate and arrows move within it. */
+const imeKey = (event: KeyboardEvent) => composing || event.isComposing || event.keyCode === 229;
+
+/** The trim rule `remember` stores by: max can shrink below what is already kept. */
+export const capHistory = (list: string[], max: number) => list.length > max ? list.slice(-max) : list;
 
 function record(editor: HTMLElement | null) {
     if (!editor) return;
@@ -126,13 +145,16 @@ const popupOpen = () => [...document.querySelectorAll<HTMLElement>(POPUP)].some(
 
 function onKeyDown(event: KeyboardEvent) {
     const editor = (event.target as Element | null)?.closest?.<HTMLElement>(EDITOR);
-    if (!editor || event.isComposing || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!editor || imeKey(event) || event.altKey) return;
     if (event.key === "Enter" && !event.shiftKey) {
+        // Plain Enter and Ctrl/⌘+Enter both send.
         if (!popupOpen()) record(editor);
         return;
     }
-    if (event.shiftKey || popupOpen()) return;
+    if (event.shiftKey || event.ctrlKey || event.metaKey || popupOpen()) return;
     if (browsingEditor && browsingEditor !== editor) reset();
+    // Changing a recalled prompt makes it the new draft: arrows and Esc no longer take it away.
+    if (browsing !== -1 && textOf(editor) !== shown) reset();
     const list = load();
     if (event.key === "ArrowUp") {
         const empty = !textOf(editor).trim();
@@ -145,17 +167,19 @@ function onKeyDown(event: KeyboardEvent) {
         consume(event);
         if (browsing === 0) return;
         browsing--;
-        fill(editor, list[browsing]);
+        show(editor, list[browsing], "start");
         showCounter(editor, browsing, list.length);
     } else if (event.key === "ArrowDown" && browsing !== -1) {
-        if (!caretAt(editor, "end")) return;
+        // Right after ↑ the caret sits at the start; on a one-line prompt ↓ goes on from there too.
+        const oneLine = !textOf(editor).includes("\n");
+        if (!caretAt(editor, "end") && !(oneLine && caretAt(editor, "start"))) return;
         consume(event);
         browsing++;
         if (browsing >= list.length) {
             fill(editor, draft);
             reset();
         } else {
-            fill(editor, list[browsing]);
+            show(editor, list[browsing], "end");
             showCounter(editor, browsing, list.length);
         }
     } else if (event.key === "Escape" && browsing !== -1) {
@@ -163,6 +187,13 @@ function onKeyDown(event: KeyboardEvent) {
         fill(editor, draft);
         reset();
     }
+}
+
+function onComposition(event: CompositionEvent) {
+    if (!(event.target as Element | null)?.closest?.(EDITOR)) return;
+    // Safari fires compositionend before the Enter that confirmed it, so release a tick later.
+    if (event.type === "compositionstart") composing = true;
+    else setTimeout(() => composing = false);
 }
 
 /** The counter belongs to the focused composer; leaving it (another tab, a click elsewhere) hides it. */
@@ -198,7 +229,7 @@ function showCounter(editor: HTMLElement, index: number, total: number) {
     const box = editor.closest(COMPOSER)?.getBoundingClientRect();
     if (!box) return;
     if (!counter) {
-        counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button"></button>`);
+        counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button" aria-live="polite"></button>`);
         const button = counter.root.querySelector("button")!;
         button.addEventListener("mousedown", event => event.preventDefault());
         button.addEventListener("click", () => openBrowser());
@@ -325,6 +356,8 @@ export function openBrowser() {
     input.focus();
 }
 
+let unroute: (() => void) | null = null;
+
 export default definePlugin({
     name: "inputHistory",
     title: { zh: "输入历史", en: "Prompt history" },
@@ -335,17 +368,35 @@ export default definePlugin({
     icon: Icons.history,
     tags: ["composer"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     settings,
     start() {
         document.addEventListener("keydown", onKeyDown, true);
         document.addEventListener("click", onClick, true);
         document.addEventListener("focusout", onFocusOut, true);
+        document.addEventListener("compositionstart", onComposition, true);
+        document.addEventListener("compositionend", onComposition, true);
+        unroute = onRouteChange(() => {
+            reset();
+            closeBrowser();
+        });
     },
     stop() {
         document.removeEventListener("keydown", onKeyDown, true);
         document.removeEventListener("click", onClick, true);
         document.removeEventListener("focusout", onFocusOut, true);
+        document.removeEventListener("compositionstart", onComposition, true);
+        document.removeEventListener("compositionend", onComposition, true);
+        unroute?.();
+        unroute = null;
+        composing = false;
         reset();
         closeBrowser();
+    },
+    onSettingsChange(key) {
+        if (key !== "max") return;
+        const list = load();
+        const capped = capHistory(list, settings.store.max);
+        if (capped.length !== list.length) save(capped);
     },
 });

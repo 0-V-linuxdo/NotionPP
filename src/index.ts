@@ -12,6 +12,7 @@ import { isTopmostNotionDocument, pageWindow } from "@utils/page";
 
 import autoCollapseThinking from "@plugins/autoCollapseThinking/index";
 import focusHighlight from "@plugins/focusHighlight/index";
+import codeFold from "@plugins/codeFold/index";
 import composerLook from "@plugins/composerLook/index";
 import greetingCustomizer from "@plugins/greetingCustomizer/index";
 import healthCheck from "@plugins/healthCheck/index";
@@ -41,7 +42,7 @@ function boot() {
     registerPlugins([
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
         inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
-        composerLook, sidebarTweaks, healthCheck, userQuotes, noTelemetry,
+        composerLook, sidebarTweaks, healthCheck, userQuotes, noTelemetry, codeFold,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);

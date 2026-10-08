@@ -168,7 +168,9 @@ describe("starred list", () => {
         ];
         const entries = starEntries(new Set(["b", "gone:assistant", "a"]), msgs);
         expect(entries.map(e => e.id)).toEqual(["a", "b", "gone:assistant"]);
-        expect(entries[2]).toEqual({ id: "gone:assistant", role: "assistant", text: null });
+        expect(entries[2]).toEqual({ id: "gone:assistant", role: "assistant", text: null, loaded: false });
+        const saved = starEntries(new Set(["gone"]), msgs, { gone: { role: "user", text: "saved snippet", at: 1 } });
+        expect(saved[0]).toEqual({ id: "gone", role: "user", text: "saved snippet", loaded: false });
     });
 
     test("button goes left of the whole top-right cluster", async () => {

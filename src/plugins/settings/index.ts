@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { backupFileName, collectBackup, parseBackup, restoreBackup } from "@api/Backup";
 import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { allPlugins, definePlugin, isEnabled, type Plugin, pluginError, type PluginTag, setEnabled } from "@api/PluginManager";
+import { allPlugins, definePlugin, isEnabled, isNewPlugin, isRecentlyUpdated, pendingRestart, type Plugin, pluginError, type PluginTag, setEnabled } from "@api/PluginManager";
 import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
 import { Icons } from "@utils/icons";
 import { button, h, icon, iconButton, optionRow, row, section, selectControl, switchControl } from "@utils/kit";
-import { t, type Text, tr } from "@utils/page";
+import { pageWindow, t, type Text, tr } from "@utils/page";
 
 import { notionSettingsTab } from "./notionSettings";
 import { quickCssTab, startQuickCss, stopQuickCss } from "./quickCss";
@@ -42,11 +43,12 @@ function toggleInList(key: "starred" | "pinned", name: string) {
 
 /* ---------- dialog state ---------- */
 
-type Category = "favorites" | "all" | PluginTag;
+type Category = "favorites" | "recent" | "all" | PluginTag;
 type Filter = "all" | "enabled" | "disabled";
 
 const CATEGORY_LABELS: Record<Category, () => string> = {
     favorites: () => t("收藏", "Favorites"),
+    recent: () => t("最近更新", "Recently updated"),
     all: () => t("全部", "All"),
     composer: () => t("输入框", "Composer"),
     chat: () => t("对话", "Chat"),
@@ -90,11 +92,11 @@ function sheet(title: string, subtitle: string | undefined, onClose: () => void,
     return node;
 }
 
-function confirmDialog(title: string, description: string, confirmText: string, onConfirm: () => void) {
+function confirmDialog(title: string, description: string, confirmText: string, onConfirm: () => void, variant: "danger" | "primary" = "danger") {
     let layer: ReturnType<typeof pushLayer>;
     const node = sheet(title, description, () => layer.close(), "sm");
     const cancel = button("secondary", t("取消", "Cancel"), () => layer.close());
-    node.append(h("div", { class: "footer" }, cancel, button("danger", confirmText, () => {
+    node.append(h("div", { class: "footer" }, cancel, button(variant, confirmText, () => {
         layer.close();
         onConfirm();
     })));
@@ -107,7 +109,8 @@ function confirmDialog(title: string, description: string, confirmText: string, 
 
 function settingField(plugin: Plugin, key: string, def: OptionDef): HTMLElement {
     const store = plugin.settings!.store as Record<string, unknown>;
-    return optionRow(def, store[key], value => setValue(plugin.name, key, value));
+    return optionRow(def, store[key], value => setValue(plugin.name, key, value),
+        (question, run) => confirmDialog(tr(def.label), question, tr((def as { button: Text }).button), run));
 }
 
 function openPluginDialog(plugin: Plugin) {
@@ -185,6 +188,7 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
                 h("div", { class: "card-name" },
                     h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
                     h("span", { class: "card-title", title }, title),
+                    isNewPlugin(plugin.name) && h("span", { class: "badge-new", title: t("这次更新新增的插件", "Added in a recent update") }, t("新", "New")),
                     crashed && h("span", { class: "badge danger", title: t("此插件出错了", "This plugin ran into an error") }, icon(Icons.alert)),
                     plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
                 actions),
@@ -199,7 +203,7 @@ function pluginsTab() {
     const state = { category: (readList("starred").length ? "favorites" : "all") as Category, search: "", filter: "all" as Filter };
 
     const categories = (Object.keys(CATEGORY_LABELS) as Category[])
-        .filter(c => c === "favorites" || c === "all" || all.some(p => p.tags?.includes(c as PluginTag)));
+        .filter(c => c === "favorites" || c === "all" || (c === "recent" ? all.some(p => isRecentlyUpdated(p)) : all.some(p => p.tags?.includes(c as PluginTag))));
     const tabs = h("div", { class: "tabs", role: "tablist" });
     const search = h("input", { type: "search", class: "input", "aria-label": t("搜索插件", "Search plugins") });
     const filter = selectControl(t("筛选", "Filter"), [
@@ -229,6 +233,7 @@ function pluginsTab() {
         let bottom: Plugin[] = [];
         if (state.category === "favorites") top = all.filter(p => starred.includes(p.name));
         else if (state.category === "all") { top = user; bottom = required; }
+        else if (state.category === "recent") top = all.filter(p => isRecentlyUpdated(p));
         else top = all.filter(p => p.tags?.includes(state.category as PluginTag));
         top = top.filter(matches);
         bottom = bottom.filter(matches);
@@ -237,8 +242,23 @@ function pluginsTab() {
             top = top.slice().sort((a, b) => rank(a) - rank(b));
         }
         search.placeholder = t(`搜索 ${user.length + required.length} 个插件…`, `Search ${user.length + required.length} plugins...`);
-        const grid = (items: Plugin[]) => h("div", { class: "grid" }, ...items.map(p => pluginCard(p, render)));
+        // One plugin with a broken definition must not take the whole panel down with it.
+        const card = (p: Plugin) => {
+            try {
+                return pluginCard(p, render);
+            } catch (error) {
+                console.error("[NotionAI++] settings card failed:", p.name, error);
+                return null;
+            }
+        };
+        const grid = (items: Plugin[]) => h("div", { class: "grid" }, ...items.map(card));
+        const restart = pendingRestart();
         const children: HTMLElement[] = [];
+        if (restart.length) {
+            children.push(h("div", { class: "notice" },
+                h("span", {}, t(`「${restart.map(p => tr(p.title)).join("」「")}」刷新页面后才会完全生效。`, `${restart.map(p => tr(p.title)).join(", ")}: reload the page for the change to fully apply.`)),
+                button("primary", t("刷新页面", "Reload"), () => pageWindow.location.reload(), "small")));
+        }
         if (top.length) children.push(grid(top));
         if (bottom.length) children.push(h("div", { class: "separator" }), grid(bottom));
         if (!children.length) {
@@ -270,7 +290,45 @@ function preferencesTab() {
     });
     return h("div", { class: "tab-root prefs" },
         section(t("语言", "Language"),
-            row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
+            row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)),
+        section(t("备份与恢复", "Backup and restore"),
+            row(t("导出备份", "Export a backup"),
+                t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"),
+                button("secondary", t("导出", "Export"), exportBackup)),
+            row(t("从备份恢复", "Restore from a backup"),
+                t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"),
+                button("secondary", t("选择文件", "Choose file"), importBackup))));
+}
+
+function exportBackup() {
+    const backup = collectBackup(typeof VERSION === "string" ? VERSION : "");
+    const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
+    const link = h("a", { href: url, download: backupFileName() });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+function importBackup() {
+    const input = h("input", { type: "file", accept: ".json,application/json" });
+    input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const data = parseBackup(await file.text());
+        const count = data ? Object.keys(data).length : 0;
+        if (!data || !count) {
+            confirmDialog(t("无法恢复", "Cannot restore"), t("这个文件不是 NotionAI++ 的备份，或者里面没有内容。", "This file is not a NotionAI++ backup, or it is empty."), t("好", "OK"), () => {}, "primary");
+            return;
+        }
+        confirmDialog(t("从备份恢复", "Restore from a backup"),
+            t(`将用「${file.name}」里的 ${count} 项数据覆盖当前的对应数据，无法撤销。`, `${count} entries from "${file.name}" will replace the current ones. This cannot be undone.`),
+            t("恢复", "Restore"), () => {
+                restoreBackup(data);
+                confirmDialog(t("已恢复", "Restored"), t("刷新页面后全部生效。", "Reload the page for everything to take effect."), t("刷新页面", "Reload"), () => pageWindow.location.reload(), "primary");
+            });
+    });
+    input.click();
 }
 
 function aboutTab() {

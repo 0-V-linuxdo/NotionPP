@@ -8,6 +8,7 @@ import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
 import { definePlugin } from "@api/PluginManager";
 import { watchReplies } from "@api/Reply";
+import { onRouteChange } from "@api/Router";
 import { definePluginSettings } from "@api/Settings";
 import { Icons } from "@utils/icons";
 
@@ -17,11 +18,12 @@ import { Icons } from "@utils/icons";
  * the tab is looked at again.
  */
 
-export type TabState = "idle" | "streaming" | "done" | "error";
+export type TabState = "idle" | "streaming" | "done" | "error" | "draft";
 
 const SIZE = 32;
 const SPIN_MS = 120;
-const COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" } as const;
+const COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2", draft: "#9b9a97" } as const;
+const EDITOR = "[data-notion-chat-input-container] [contenteditable='true']";
 
 export const settings = definePluginSettings({
     showDone: {
@@ -30,32 +32,45 @@ export const settings = definePluginSettings({
         description: { zh: "回到这个标签页后自动消失", en: "Clears when you come back to the tab" },
         default: true,
     },
+    showDraft: {
+        type: "boolean",
+        label: { zh: "有没发出的草稿时显示灰圈", en: "Grey ring for an unsent draft" },
+        description: { zh: "离开标签页时，如果输入框里还有没发出的文字，图标上显示一个灰色圆圈提醒你", en: "When you leave the tab with text still in the composer, the icon shows a grey ring" },
+        default: false,
+    },
 });
 
 let state: TabState = "idle";
-let original: { link: HTMLLinkElement; href: string } | null = null;
-let base: HTMLImageElement | null = null;
+/** Notion's own icon links and their hrefs, put back when the badge goes. */
+let originals = new Map<HTMLLinkElement, string>();
+let base: { href: string; image: HTMLImageElement } | null = null;
 let ours = "";
 let angle = 0;
 let timer = 0;
 let cleanups: (() => void)[] = [];
 
-const iconLink = () => document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+const iconLinks = () => [...document.querySelectorAll<HTMLLinkElement>("link[rel~='icon']")];
 
+/**
+ * Notes every icon link that is not showing our badge. Notion can carry several (sizes, light
+ * and dark) and the browser picks any of them, so the badge has to go on all of them.
+ */
 function remember() {
-    const link = iconLink();
-    if (!link || link.href === ours) return;
-    // Notion swapped the icon itself (or this is the first look): that is the new original.
-    original = { link, href: link.href };
-    base = null;
+    for (const link of iconLinks()) {
+        if (link.href === ours) continue;
+        // Notion swapped the icon itself (or this is the first look): that is the new original.
+        originals.set(link, link.href);
+    }
+    for (const link of originals.keys()) if (!link.isConnected) originals.delete(link);
 }
 
 function loadBase(): Promise<HTMLImageElement | null> {
-    if (base?.complete) return Promise.resolve(base);
-    if (!original) return Promise.resolve(null);
+    const href = originals.values().next().value;
+    if (!href) return Promise.resolve(null);
+    if (base?.href === href && base.image.complete) return Promise.resolve(base.image);
     const image = new Image();
-    image.src = original.href;
-    base = image;
+    image.src = href;
+    base = { href, image };
     return new Promise(resolve => {
         image.onload = () => resolve(image);
         image.onerror = () => resolve(null);
@@ -80,6 +95,14 @@ export function drawBadge(ctx: CanvasRenderingContext2D, kind: TabState, turn = 
         ctx.stroke();
         return;
     }
+    if (kind === "draft") {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 1.5, 0, Math.PI * 2);
+        ctx.strokeStyle = COLORS.draft;
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        return;
+    }
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = COLORS[kind];
@@ -88,10 +111,9 @@ export function drawBadge(ctx: CanvasRenderingContext2D, kind: TabState, turn = 
 
 async function paint() {
     remember();
-    const link = original?.link;
-    if (!link) return;
+    if (!originals.size) return;
     if (state === "idle") {
-        if (original && link.href !== original.href) link.href = original.href;
+        for (const [link, href] of originals) if (link.href !== href) link.href = href;
         return;
     }
     const image = await loadBase();
@@ -103,7 +125,7 @@ async function paint() {
     drawBadge(ctx, state, angle);
     try {
         ours = canvas.toDataURL("image/png");
-        link.href = ours;
+        for (const link of originals.keys()) link.href = ours;
     } catch {}
 }
 
@@ -119,8 +141,14 @@ function setState(next: TabState) {
     void paint();
 }
 
+const hasDraft = () => [...document.querySelectorAll<HTMLElement>(EDITOR)].some(editor => !!editor.innerText?.trim());
+
 function seen() {
-    if (document.visibilityState === "visible" && (state === "done" || state === "error")) setState("idle");
+    if (document.visibilityState === "visible") {
+        if (state === "done" || state === "error" || state === "draft") setState("idle");
+    } else if (state === "idle" && settings.store.showDraft && hasDraft()) {
+        setState("draft");
+    }
 }
 
 export default definePlugin({
@@ -133,6 +161,7 @@ export default definePlugin({
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-08",
     settings,
     start() {
         remember();
@@ -142,14 +171,19 @@ export default definePlugin({
         cleanups = [
             watchReplies(),
             on("replyStart", () => setState("streaming")),
-            on("replyEnd", ({ error }) => {
+            on("replyEnd", ({ error, stopped, left }) => {
+                // Stopping a reply, or leaving its chat, is no news to show on the tab.
+                if (stopped || left) return setState("idle");
                 const away = document.visibilityState !== "visible" || !document.hasFocus();
                 setState(error ? (away ? "error" : "idle") : away && settings.store.showDone ? "done" : "idle");
             }),
-            // Notion may rewrite the icon link (route changes, theme); put our badge back on.
+            // A dot belongs to the chat it was earned in; opening another one clears it.
+            onRouteChange(() => {
+                if (state === "done" || state === "error" || state === "draft") setState("idle");
+            }),
+            // Notion may rewrite or add icon links (route changes, theme); put our badge back on.
             onDomChange(() => {
-                const link = iconLink();
-                if (state !== "idle" && link && link.href !== ours) void paint();
+                if (state !== "idle" && iconLinks().some(link => link.href !== ours)) void paint();
             }),
             () => document.removeEventListener("visibilitychange", onVisible),
             () => window.removeEventListener("focus", onVisible),
@@ -158,7 +192,7 @@ export default definePlugin({
     stop() {
         for (const cleanup of cleanups.splice(0)) cleanup();
         setState("idle");
-        original = null;
+        originals = new Map();
         base = null;
     },
 });
