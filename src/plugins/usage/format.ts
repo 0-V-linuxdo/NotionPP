@@ -56,6 +56,24 @@ export function formatReset(resetAt: number | null, now = Date.now(), used?: num
     return t(`${m} 分钟后重置`, `Resets in ${m}m`);
 }
 
+/** Countdown without the "Resets in" wording, for the rings' tooltip column. */
+export function formatCountdown(resetAt: number | null, now = Date.now(), used?: number) {
+    if (resetAt === null) return used === 0 ? t("未开始计时", "not started") : "—";
+    const diff = resetAt - now;
+    if (diff <= 0) return t("即将重置", "resetting");
+    const minutes = Math.max(1, Math.ceil(diff / 60_000));
+    const hours = Math.floor(minutes / 60);
+    if (minutes > 1440) {
+        const d = Math.floor(hours / 24);
+        const h = hours % 24;
+        return h ? t(`${d} 天 ${h} 小时后重置`, `resets in ${d}d ${h}h`) : t(`${d} 天后重置`, `resets in ${d}d`);
+    }
+    const m = minutes % 60;
+    if (hours && m) return t(`${hours} 小时 ${m} 分后重置`, `resets in ${hours}h ${m}m`);
+    if (hours) return t(`${hours} 小时后重置`, `resets in ${hours}h`);
+    return t(`${m} 分钟后重置`, `resets in ${m}m`);
+}
+
 export function formatUpdated(time: number | null, now = Date.now()) {
     if (time === null) return t("尚未更新", "Not updated yet");
     const s = Math.max(0, Math.floor((now - time) / 1000));

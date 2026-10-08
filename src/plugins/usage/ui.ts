@@ -13,8 +13,8 @@ import { isAiRoute, pageWindow, t } from "@utils/page";
 
 import { visibleBilling } from "./billing";
 import { ComposerTracker } from "./composer";
-import { billingRow, billingSummary, formatAbsolute, formatPercent, formatReset, formatUpdated, windowLabel } from "./format";
-import { type Anchor, anchorFromBox, dockPoint, dragDistanceReached, opensUpward, parseAnchor, type Point, pointFromAnchor } from "./geometry";
+import { billingRow, formatAbsolute, formatCountdown, formatPercent, formatReset, formatUpdated, windowLabel } from "./format";
+import { type Anchor, anchorFromBox, dockPoint, dragDistanceReached, parseAnchor, type Point, pointFromAnchor } from "./geometry";
 import type { UsageService } from "./service";
 import { readDay, statDelta, usedOn } from "./stats";
 import { openStats, type StatsContext } from "./statsDialog";
@@ -24,14 +24,11 @@ import { activeMonthly, type Meter, meterViews, toneOf } from "./verdict";
 export const HOST_ID = "notionai-pp-usage";
 export const KEYS = {
     anchor: "notionai-pp:usage:anchor:v1",
-    expanded: "notionai-pp:usage:expanded:v1",
     minimized: "notionai-pp:usage:minimized:v1",
     legacyAnchor: "notion-ai-usage:position:v2",
 } as const;
 const DEFAULT_ANCHOR: Anchor = { xEdge: "right", xOffset: 16, yEdge: "top", yOffset: 16 };
 const TIP_SPACE = 64;
-const CARD_MARGIN = 8;
-const CARD_GAP = 7;
 const CLICK_GUARD_MS = 500;
 const TICK_MS = 15_000;
 
@@ -65,7 +62,6 @@ export interface WidgetStats extends StatsContext {
 export class UsageWidget {
     private overlay: Overlay;
     private q: <T extends Element = HTMLElement>(selector: string) => T;
-    private expanded = readFlag(KEYS.expanded);
     private minimized = readFlag(KEYS.minimized);
     private anchor: Anchor = readAnchor() ?? DEFAULT_ANCHOR;
     private dragging = false;
@@ -109,18 +105,14 @@ export class UsageWidget {
     }
 
     private bind() {
-        const toggle = this.q(".toggle");
-        toggle.addEventListener("click", () => {
-            if (Date.now() < this.suppressClickUntil) return;
-            this.setExpanded(!this.expanded);
-        });
         this.q(".minimize").addEventListener("click", () => {
+            if (Date.now() < this.suppressClickUntil) return;
             this.setMinimized(true);
             this.q(".orb").focus({ preventScroll: true });
         });
         this.q(".orb").addEventListener("click", () => {
             this.setMinimized(false);
-            toggle.focus({ preventScroll: true });
+            this.q(".minimize").focus({ preventScroll: true });
         });
         const orb = this.q(".orb");
         const showToday = (value: boolean) => {
@@ -149,7 +141,6 @@ export class UsageWidget {
             url.searchParams.set("target", "aiusage");
             pageWindow.location.assign(url.href);
         });
-        this.installDrag(this.q(".summary"), ".minimize");
         this.installDrag(this.q(".header"), "button");
     }
 
@@ -166,12 +157,6 @@ export class UsageWidget {
         return day ? statDelta(usedOn(day) ?? 0) : null;
     }
 
-    private setExpanded(value: boolean) {
-        this.expanded = value;
-        writeFlag(KEYS.expanded, value);
-        this.applyMode();
-    }
-
     private setMinimized(value: boolean) {
         this.minimized = value;
         writeFlag(KEYS.minimized, value);
@@ -181,10 +166,8 @@ export class UsageWidget {
     private applyMode() {
         this.q(".orb").hidden = !this.minimized;
         this.q(".tip").hidden = !this.minimized;
-        this.q(".summary").hidden = this.minimized;
-        this.q(".card").hidden = this.minimized || !this.expanded;
-        const toggle = this.q(".toggle");
-        toggle.setAttribute("aria-expanded", String(this.expanded));
+        // Two forms only: the rings docked in the composer, or the full card.
+        this.q(".card").hidden = this.minimized;
         this.layout();
     }
 
@@ -207,7 +190,6 @@ export class UsageWidget {
             const orb = boxOf(this.q(".orb"));
             const point = composer ? dockPoint(composer, orb, vp) : null;
             host.toggleAttribute("data-docked", !!point);
-            host.removeAttribute("data-up");
             if (point) {
                 host.dataset.side = "left";
                 this.place(point);
@@ -217,31 +199,15 @@ export class UsageWidget {
         } else {
             host.removeAttribute("data-docked");
         }
-        const handle = this.q(this.minimized ? ".orb" : ".summary");
+        const handle = this.q(this.minimized ? ".orb" : ".card");
         host.dataset.side = this.anchor.xEdge;
-        const handleSize = boxOf(handle);
-        const target = pointFromAnchor(this.anchor, vp, handleSize);
-        const cardHeight = this.expanded && !this.minimized ? boxOf(this.q(".card")).height + CARD_GAP : 0;
-        const handleBox = { ...target, right: target.left + handleSize.width, bottom: target.top + handleSize.height, width: handleSize.width, height: handleSize.height };
-        host.toggleAttribute("data-up", cardHeight > 0 && opensUpward(handleBox, cardHeight, vp));
-        host.toggleAttribute("data-tip-up", vp.height - handleBox.bottom < TIP_SPACE);
+        const size = boxOf(handle);
+        const target = pointFromAnchor(this.anchor, vp, size);
+        host.toggleAttribute("data-tip-up", vp.height - (target.top + size.height) < TIP_SPACE);
         this.place({ left: 0, top: 0 });
         const hostBox = boxOf(host);
         const handleNow = boxOf(handle);
         this.place({ left: target.left - (handleNow.left - hostBox.left), top: target.top - (handleNow.top - hostBox.top) });
-        this.fitCard(vp);
-    }
-
-    /** Slides the open card sideways so it stays inside a narrow window; the pill stays put. */
-    private fitCard(vp: { width: number }) {
-        const card = this.q(".card");
-        card.style.translate = "";
-        if (card.hidden) return;
-        const box = boxOf(card);
-        let shift = 0;
-        if (box.right > vp.width - CARD_MARGIN) shift = vp.width - CARD_MARGIN - box.right;
-        if (box.left + shift < CARD_MARGIN) shift = CARD_MARGIN - box.left;
-        if (shift) card.style.translate = `${Math.round(shift)}px 0`;
     }
 
     private installDrag(handle: HTMLElement, ignore: string) {
@@ -277,7 +243,7 @@ export class UsageWidget {
                 if (!moved) return;
                 this.suppressClickUntil = Date.now() + CLICK_GUARD_MS;
                 if (e.type === "pointerup") {
-                    this.anchor = anchorFromBox(boxOf(this.q(".summary")), viewport());
+                    this.anchor = anchorFromBox(boxOf(this.q(".card")), viewport());
                     try {
                         pageWindow.localStorage.setItem(KEYS.anchor, JSON.stringify(this.anchor));
                     } catch {}
@@ -316,26 +282,10 @@ export class UsageWidget {
         );
     }
 
-    private renderSummary(parts: { text: string; sep?: "usage" | "billing" }[]) {
-        const container = this.q(".text");
-        const signature = parts.map(p => `${p.sep ?? ""}:${p.text}`).join("|");
-        if (container.dataset.signature === signature) return;
-        container.dataset.signature = signature;
-        container.replaceChildren(...parts.map(part => {
-            const span = document.createElement("span");
-            span.className = "part";
-            if (part.sep) span.dataset.sep = part.sep;
-            span.textContent = part.text;
-            return span;
-        }));
-        this.layout();
-    }
-
     render() {
         const now = Date.now();
         const { snapshot, loading, error, canRefresh, spaceId } = this.service.state;
         const billing = visibleBilling(this.service.state.billing, now);
-        const billingPart = billingSummary(billing, now);
         const views = meterViews(snapshot, now);
 
         this.q(".title-text").textContent = t("Notion AI 用量", "Notion AI Usage");
@@ -370,15 +320,18 @@ export class UsageWidget {
         const monthlyText = formatPercent(views.monthly.percent);
         const todayText = this.todayText();
         const showToday = this.tipToday && todayText !== null;
-        for (const [key, label, value] of [
-            ["rolling", t("6 小时", "6-hour"), rollingText],
-            ["monthly", t("月度", "Monthly"), monthlyText],
-            ["today", t("今天", "Today"), todayText === null ? "" : t(`月度的 ${todayText}`, `${todayText} of monthly`)],
+        const rolling = snapshot && snapshot.status !== "not_applicable" ? snapshot.rolling : null;
+        const monthly = snapshot && snapshot.status !== "not_applicable" ? activeMonthly(snapshot, now) : null;
+        for (const [key, label, value, when] of [
+            ["rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : ""],
+            ["monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : ""],
+            ["today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly")],
         ] as const) {
             this.q(`.tip-l-${key}`).textContent = label;
             this.q(`.tip-v-${key}`).textContent = value;
+            this.q(`.tip-w-${key}`).textContent = when;
         }
-        this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = !showToday;
+        this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = this.q(".tip-w-today").hidden = !showToday;
         const todayRow = this.q(".m-today");
         todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
         todayRow.querySelector(".label")!.textContent = t("今日用量", "Used today");
@@ -393,32 +346,19 @@ export class UsageWidget {
                     : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
 
         const notice = this.q(".notice");
-        const dot = this.q(".dot");
-        const billingPiece = billingPart ? [{ text: billingPart, sep: "billing" as const }] : [];
         let noticeText = "";
         let noticeKind: "info" | "error" = error ? "error" : "info";
         if (!snapshot) {
-            this.renderSummary([{ text: loading ? t("读取中", "Loading") : t("等待", "Waiting") }, ...billingPiece]);
-            dot.dataset.status = error ? "error" : "waiting";
             noticeText = error || (spaceId
                 ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…")
                 : t("等待 Notion 初始化当前工作区；也可以打开原生用量页触发读取。", "Waiting for Notion to initialize this workspace. You can also open the native Usage page."));
             this.renderMeter(".m-rolling", null, "", now);
             this.renderMeter(".m-monthly", null, "", now);
         } else if (snapshot.status === "not_applicable") {
-            this.renderSummary([{ text: t("不适用", "Not applicable") }, ...billingPiece]);
-            dot.dataset.status = "neutral";
             noticeText = error || t("Notion 返回 not_applicable：当前账户或套餐没有可展示的 AI 用量窗口。", "Notion returned not_applicable: this account or plan has no AI usage window to display.");
             this.renderMeter(".m-rolling", null, "", now);
             this.renderMeter(".m-monthly", null, "", now);
         } else {
-            const monthly = activeMonthly(snapshot, now);
-            this.renderSummary([
-                { text: formatPercent(snapshot.rolling.percent) },
-                ...(monthly ? [{ text: formatPercent(monthly.percent), sep: "usage" as const }] : []),
-                ...billingPiece,
-            ]);
-            dot.dataset.status = snapshot.status === "rate_limited" || error ? "error" : "ok";
             this.renderMeter(".m-rolling", snapshot.rolling, windowLabel(snapshot.rolling.window), now);
             this.renderMeter(".m-monthly", monthly, t("月度用量", "Monthly usage"), now);
             if (snapshot.status === "rate_limited") {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.9
+// @version      20261007.1.2.10
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2916,7 +2916,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.9";
+    const version = "[20261007] v1.2.10";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2949,7 +2949,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.9";
+    const version = "[20261007] v1.2.10";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4021,6 +4021,26 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       return t(`${h} 小时后重置`, `Resets in ${h}h`);
     return t(`${m} 分钟后重置`, `Resets in ${m}m`);
   }
+  function formatCountdown(resetAt, now = Date.now(), used) {
+    if (resetAt === null)
+      return used === 0 ? t("未开始计时", "not started") : "—";
+    const diff = resetAt - now;
+    if (diff <= 0)
+      return t("即将重置", "resetting");
+    const minutes = Math.max(1, Math.ceil(diff / 60000));
+    const hours = Math.floor(minutes / 60);
+    if (minutes > 1440) {
+      const d = Math.floor(hours / 24);
+      const h = hours % 24;
+      return h ? t(`${d} 天 ${h} 小时后重置`, `resets in ${d}d ${h}h`) : t(`${d} 天后重置`, `resets in ${d}d`);
+    }
+    const m = minutes % 60;
+    if (hours && m)
+      return t(`${hours} 小时 ${m} 分后重置`, `resets in ${hours}h ${m}m`);
+    if (hours)
+      return t(`${hours} 小时后重置`, `resets in ${hours}h`);
+    return t(`${m} 分钟后重置`, `resets in ${m}m`);
+  }
   function formatUpdated(time, now = Date.now()) {
     if (time === null)
       return t("尚未更新", "Not updated yet");
@@ -4075,14 +4095,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       case "unknown":
         return t("状态未知", "Status unavailable");
     }
-  }
-  function billingSummary(status, now = Date.now()) {
-    if (!status || status.kind === "none")
-      return null;
-    if (status.kind === "trial") {
-      return trialEndsToday(status, now) ? t("试用 今天结束", "Trial ends today") : t(`试用 ${trialDaysLeft(status, now)}天`, `Trial ${trialDaysLeft(status, now)}d`);
-    }
-    return `${planName(status.plan)} · ${statusName(status.status)}`;
   }
   function billingRow(status, now = Date.now()) {
     switch (status.kind) {
@@ -4155,15 +4167,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       top: clamp(composer.bottom - orb.height - bottomInset, minTop, maxTop)
     }, viewport, orb);
   }
-  function opensUpward(handle, required, viewport) {
-    const below = viewport.height - handle.bottom - VIEWPORT_INSET;
-    const above = handle.top - VIEWPORT_INSET;
-    if (required <= below)
-      return false;
-    if (required <= above)
-      return true;
-    return above > below;
-  }
   var dragDistanceReached = (dx, dy, threshold = 4) => dx * dx + dy * dy >= threshold * threshold;
 
   // src/plugins/usage/styles.ts
@@ -4195,32 +4198,9 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 * { box-sizing: border-box; }
 button { font: inherit; }
 [hidden] { display: none !important; }
-.shell { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+.shell { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
 :host([data-side="left"]) .shell { align-items: flex-start; }
-:host([data-up]) .shell { flex-direction: column-reverse; }
 :host([data-docked]) .shell { align-items: center; }
-.summary {
-  pointer-events: auto; display: inline-flex; align-items: center; min-height: 36px; padding-right: 5px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--pill);
-  box-shadow: 0 7px 24px rgba(0,0,0,.2); backdrop-filter: blur(14px); cursor: grab; touch-action: none; user-select: none;
-}
-.summary:hover { background: var(--pill-hover); }
-.toggle {
-  display: inline-flex; align-items: center; gap: 10px; min-height: 34px; padding: 7px 4px 7px 12px;
-  border: 0; border-radius: 999px; color: inherit; background: transparent; cursor: inherit;
-}
-.dot { width: 8px; height: 8px; border-radius: 50%; background: #808080; box-shadow: 0 0 0 3px rgba(128,128,128,.13); }
-.dot[data-status="ok"] { background: #35b46f; box-shadow: 0 0 0 3px rgba(53,180,111,.15); }
-.dot[data-status="error"] { background: #f05d5e; box-shadow: 0 0 0 3px rgba(240,93,94,.16); }
-.dot[data-status="waiting"] { background: #d3a832; box-shadow: 0 0 0 3px rgba(211,168,50,.16); }
-.text { display: inline-flex; align-items: center; white-space: nowrap; font-weight: 650; letter-spacing: .01em; }
-.part[data-sep="usage"]::before { content: "·"; margin: 0 10px; color: var(--muted); }
-.part[data-sep="billing"]::before {
-  content: ""; display: inline-block; width: 1px; height: 14px; margin: 0 10px; vertical-align: -2px; background: var(--divider);
-}
-.chevron { display: inline-flex; color: var(--muted); transition: transform .15s; }
-.chevron svg.i { width: 13px; height: 13px; }
-.toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
   border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer;
@@ -4233,7 +4213,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 @keyframes spin { to { transform: rotate(360deg); } }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
 .card {
-  pointer-events: auto; width: min(336px, calc(100vw - 24px)); max-height: calc(100vh - 70px); overflow: auto;
+  pointer-events: auto; width: min(336px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow: auto;
   border: 1px solid var(--border); border-radius: 14px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(18px);
 }
 .header { display: flex; align-items: center; justify-content: space-between; padding: 11px 10px 9px 14px; cursor: grab; touch-action: none; user-select: none; }
@@ -4283,9 +4263,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
-.tip-rows { display: grid; grid-template-columns: auto auto; row-gap: 2px; margin: 0; }
+.tip-rows { display: grid; grid-template-columns: auto auto auto; row-gap: 2px; margin: 0; }
 .tip-rows dt { color: #ada9a3; }
 .tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tip-rows dd.when { padding-left: 12px; text-align: left; font-weight: 400; color: #ada9a3; }
 .tip-rows .today { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
 .tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
@@ -4296,7 +4277,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var ICONS = {
     refresh: icon2('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
     stats: icon2('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
-    chevron: icon2('<path d="m6 9 6 6 6-6"/>'),
     minimize: icon2('<path d="M6 12h12"/>'),
     external: icon2('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon2('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>')
@@ -4308,14 +4288,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 <div class="shell">
   <button class="orb" type="button" hidden>${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
   <span class="tip" role="tooltip" hidden><dl class="tip-rows">
-    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd>
-    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd>
-    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd>
+    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd><dd class="when tip-w-rolling"></dd>
+    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd><dd class="when tip-w-monthly"></dd>
+    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd><dd class="today when tip-w-today" hidden></dd>
   </dl></span>
-  <div class="summary">
-    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">${ICONS.chevron}</span></button>
-    <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
-  </div>
   <section class="card" hidden>
     <div class="header">
       <div class="title"><span class="title-text"></span><span class="badge" hidden>preview</span></div>
@@ -4323,6 +4299,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         <button class="icon-btn stats" type="button">${ICONS.stats}</button>
         <button class="icon-btn settings" type="button">${ICONS.settings}</button>
         <button class="icon-btn refresh" type="button">${ICONS.refresh}</button>
+        <button class="icon-btn minimize" type="button">${ICONS.minimize}</button>
       </div>
     </div>
     <div class="notice" hidden></div>
@@ -4340,14 +4317,11 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var HOST_ID = "notionai-pp-usage";
   var KEYS = {
     anchor: "notionai-pp:usage:anchor:v1",
-    expanded: "notionai-pp:usage:expanded:v1",
     minimized: "notionai-pp:usage:minimized:v1",
     legacyAnchor: "notion-ai-usage:position:v2"
   };
   var DEFAULT_ANCHOR = { xEdge: "right", xOffset: 16, yEdge: "top", yOffset: 16 };
   var TIP_SPACE = 64;
-  var CARD_MARGIN = 8;
-  var CARD_GAP = 7;
   var CLICK_GUARD_MS = 500;
   var TICK_MS = 15000;
   function readFlag(key) {
@@ -4376,7 +4350,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     stats;
     overlay;
     q;
-    expanded = readFlag(KEYS.expanded);
     minimized = readFlag(KEYS.minimized);
     anchor = readAnchor() ?? DEFAULT_ANCHOR;
     dragging = false;
@@ -4419,19 +4392,15 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       return this.overlay.host;
     }
     bind() {
-      const toggle = this.q(".toggle");
-      toggle.addEventListener("click", () => {
+      this.q(".minimize").addEventListener("click", () => {
         if (Date.now() < this.suppressClickUntil)
           return;
-        this.setExpanded(!this.expanded);
-      });
-      this.q(".minimize").addEventListener("click", () => {
         this.setMinimized(true);
         this.q(".orb").focus({ preventScroll: true });
       });
       this.q(".orb").addEventListener("click", () => {
         this.setMinimized(false);
-        toggle.focus({ preventScroll: true });
+        this.q(".minimize").focus({ preventScroll: true });
       });
       const orb = this.q(".orb");
       const showToday = (value) => {
@@ -4464,7 +4433,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         url.searchParams.set("target", "aiusage");
         pageWindow.location.assign(url.href);
       });
-      this.installDrag(this.q(".summary"), ".minimize");
       this.installDrag(this.q(".header"), "button");
     }
     setTipToday(value) {
@@ -4479,11 +4447,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const day = readDay(this.stats.space());
       return day ? statDelta(usedOn(day) ?? 0) : null;
     }
-    setExpanded(value) {
-      this.expanded = value;
-      writeFlag(KEYS.expanded, value);
-      this.applyMode();
-    }
     setMinimized(value) {
       this.minimized = value;
       writeFlag(KEYS.minimized, value);
@@ -4492,10 +4455,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     applyMode() {
       this.q(".orb").hidden = !this.minimized;
       this.q(".tip").hidden = !this.minimized;
-      this.q(".summary").hidden = this.minimized;
-      this.q(".card").hidden = this.minimized || !this.expanded;
-      const toggle = this.q(".toggle");
-      toggle.setAttribute("aria-expanded", String(this.expanded));
+      this.q(".card").hidden = this.minimized;
       this.layout();
     }
     place(point) {
@@ -4516,7 +4476,6 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
         const orb = boxOf(this.q(".orb"));
         const point = composer ? dockPoint(composer, orb, vp) : null;
         host.toggleAttribute("data-docked", !!point);
-        host.removeAttribute("data-up");
         if (point) {
           host.dataset.side = "left";
           this.place(point);
@@ -4526,33 +4485,15 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       } else {
         host.removeAttribute("data-docked");
       }
-      const handle = this.q(this.minimized ? ".orb" : ".summary");
+      const handle = this.q(this.minimized ? ".orb" : ".card");
       host.dataset.side = this.anchor.xEdge;
-      const handleSize = boxOf(handle);
-      const target = pointFromAnchor(this.anchor, vp, handleSize);
-      const cardHeight = this.expanded && !this.minimized ? boxOf(this.q(".card")).height + CARD_GAP : 0;
-      const handleBox = { ...target, right: target.left + handleSize.width, bottom: target.top + handleSize.height, width: handleSize.width, height: handleSize.height };
-      host.toggleAttribute("data-up", cardHeight > 0 && opensUpward(handleBox, cardHeight, vp));
-      host.toggleAttribute("data-tip-up", vp.height - handleBox.bottom < TIP_SPACE);
+      const size = boxOf(handle);
+      const target = pointFromAnchor(this.anchor, vp, size);
+      host.toggleAttribute("data-tip-up", vp.height - (target.top + size.height) < TIP_SPACE);
       this.place({ left: 0, top: 0 });
       const hostBox = boxOf(host);
       const handleNow = boxOf(handle);
       this.place({ left: target.left - (handleNow.left - hostBox.left), top: target.top - (handleNow.top - hostBox.top) });
-      this.fitCard(vp);
-    }
-    fitCard(vp) {
-      const card = this.q(".card");
-      card.style.translate = "";
-      if (card.hidden)
-        return;
-      const box = boxOf(card);
-      let shift = 0;
-      if (box.right > vp.width - CARD_MARGIN)
-        shift = vp.width - CARD_MARGIN - box.right;
-      if (box.left + shift < CARD_MARGIN)
-        shift = CARD_MARGIN - box.left;
-      if (shift)
-        card.style.translate = `${Math.round(shift)}px 0`;
     }
     installDrag(handle, ignore) {
       handle.addEventListener("pointerdown", (event) => {
@@ -4593,7 +4534,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
             return;
           this.suppressClickUntil = Date.now() + CLICK_GUARD_MS;
           if (e.type === "pointerup") {
-            this.anchor = anchorFromBox(boxOf(this.q(".summary")), viewport());
+            this.anchor = anchorFromBox(boxOf(this.q(".card")), viewport());
             try {
               pageWindow.localStorage.setItem(KEYS.anchor, JSON.stringify(this.anchor));
             } catch {}
@@ -4627,27 +4568,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       fill.dataset.tone = toneOf(meter.percent);
       row.title = t(`${meter.used} / ${meter.limit}；重置时间：${formatAbsolute(meter.resetAt)}`, `${meter.used} / ${meter.limit}; resets: ${formatAbsolute(meter.resetAt)}`);
     }
-    renderSummary(parts) {
-      const container = this.q(".text");
-      const signature = parts.map((p) => `${p.sep ?? ""}:${p.text}`).join("|");
-      if (container.dataset.signature === signature)
-        return;
-      container.dataset.signature = signature;
-      container.replaceChildren(...parts.map((part) => {
-        const span = document.createElement("span");
-        span.className = "part";
-        if (part.sep)
-          span.dataset.sep = part.sep;
-        span.textContent = part.text;
-        return span;
-      }));
-      this.layout();
-    }
     render() {
       const now = Date.now();
       const { snapshot, loading, error, canRefresh, spaceId } = this.service.state;
       const billing = visibleBilling(this.service.state.billing, now);
-      const billingPart = billingSummary(billing, now);
       const views = meterViews(snapshot, now);
       this.q(".title-text").textContent = t("Notion AI 用量", "Notion AI Usage");
       const badge = this.q(".badge");
@@ -4679,15 +4603,18 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       const monthlyText = formatPercent(views.monthly.percent);
       const todayText = this.todayText();
       const showToday = this.tipToday && todayText !== null;
-      for (const [key, label, value] of [
-        ["rolling", t("6 小时", "6-hour"), rollingText],
-        ["monthly", t("月度", "Monthly"), monthlyText],
-        ["today", t("今天", "Today"), todayText === null ? "" : t(`月度的 ${todayText}`, `${todayText} of monthly`)]
+      const rolling = snapshot && snapshot.status !== "not_applicable" ? snapshot.rolling : null;
+      const monthly = snapshot && snapshot.status !== "not_applicable" ? activeMonthly(snapshot, now) : null;
+      for (const [key, label, value, when] of [
+        ["rolling", t("6 小时", "6-hour"), rollingText, rolling ? formatCountdown(rolling.resetAt, now, rolling.used) : ""],
+        ["monthly", t("月度", "Monthly"), monthlyText, monthly ? formatCountdown(monthly.resetAt, now, monthly.used) : ""],
+        ["today", t("今天", "Today"), todayText ?? "", t("占月度额度", "of monthly")]
       ]) {
         this.q(`.tip-l-${key}`).textContent = label;
         this.q(`.tip-v-${key}`).textContent = value;
+        this.q(`.tip-w-${key}`).textContent = when;
       }
-      this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = !showToday;
+      this.q(".tip-l-today").hidden = this.q(".tip-v-today").hidden = this.q(".tip-w-today").hidden = !showToday;
       const todayRow = this.q(".m-today");
       todayRow.hidden = todayText === null || !snapshot || snapshot.status === "not_applicable" || !activeMonthly(snapshot, now);
       todayRow.querySelector(".label").textContent = t("今日用量", "Used today");
@@ -4695,30 +4622,17 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
       todayRow.querySelector(".sub").textContent = t("点击按日期查看用量 →", "Click for usage by date →");
       this.q(".orb").setAttribute("aria-label", !snapshot ? t("AI 用量：6 小时与月度等待读取，点击恢复", "AI usage: 6h and Monthly waiting, click to restore") : snapshot.status === "not_applicable" ? t("AI 用量：6 小时与月度均不适用，点击恢复", "AI usage: 6h and Monthly are not applicable, click to restore") : snapshot.status === "rate_limited" ? t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，已达上限，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, limit reached, click to restore`) : t(`AI 用量：6 小时 ${rollingText}，月度 ${monthlyText}，点击恢复`, `AI usage: 6h ${rollingText}, Monthly ${monthlyText}, click to restore`));
       const notice = this.q(".notice");
-      const dot = this.q(".dot");
-      const billingPiece = billingPart ? [{ text: billingPart, sep: "billing" }] : [];
       let noticeText = "";
       let noticeKind = error ? "error" : "info";
       if (!snapshot) {
-        this.renderSummary([{ text: loading ? t("读取中", "Loading") : t("等待", "Waiting") }, ...billingPiece]);
-        dot.dataset.status = error ? "error" : "waiting";
         noticeText = error || (spaceId ? t("正在读取 Notion AI 用量…", "Loading Notion AI usage…") : t("等待 Notion 初始化当前工作区；也可以打开原生用量页触发读取。", "Waiting for Notion to initialize this workspace. You can also open the native Usage page."));
         this.renderMeter(".m-rolling", null, "", now);
         this.renderMeter(".m-monthly", null, "", now);
       } else if (snapshot.status === "not_applicable") {
-        this.renderSummary([{ text: t("不适用", "Not applicable") }, ...billingPiece]);
-        dot.dataset.status = "neutral";
         noticeText = error || t("Notion 返回 not_applicable：当前账户或套餐没有可展示的 AI 用量窗口。", "Notion returned not_applicable: this account or plan has no AI usage window to display.");
         this.renderMeter(".m-rolling", null, "", now);
         this.renderMeter(".m-monthly", null, "", now);
       } else {
-        const monthly = activeMonthly(snapshot, now);
-        this.renderSummary([
-          { text: formatPercent(snapshot.rolling.percent) },
-          ...monthly ? [{ text: formatPercent(monthly.percent), sep: "usage" }] : [],
-          ...billingPiece
-        ]);
-        dot.dataset.status = snapshot.status === "rate_limited" || error ? "error" : "ok";
         this.renderMeter(".m-rolling", snapshot.rolling, windowLabel(snapshot.rolling.window), now);
         this.renderMeter(".m-monthly", monthly, t("月度用量", "Monthly usage"), now);
         if (snapshot.status === "rate_limited") {
@@ -4857,7 +4771,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.9";
+    win[FLAG] = "[20261007] v1.2.10";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4867,7 +4781,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.9"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.10"} started`);
   }
   boot();
 })();

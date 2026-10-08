@@ -32,32 +32,9 @@ export const USAGE_CSS = `
 * { box-sizing: border-box; }
 button { font: inherit; }
 [hidden] { display: none !important; }
-.shell { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+.shell { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
 :host([data-side="left"]) .shell { align-items: flex-start; }
-:host([data-up]) .shell { flex-direction: column-reverse; }
 :host([data-docked]) .shell { align-items: center; }
-.summary {
-  pointer-events: auto; display: inline-flex; align-items: center; min-height: 36px; padding-right: 5px;
-  border: 1px solid var(--border); border-radius: 999px; background: var(--pill);
-  box-shadow: 0 7px 24px rgba(0,0,0,.2); backdrop-filter: blur(14px); cursor: grab; touch-action: none; user-select: none;
-}
-.summary:hover { background: var(--pill-hover); }
-.toggle {
-  display: inline-flex; align-items: center; gap: 10px; min-height: 34px; padding: 7px 4px 7px 12px;
-  border: 0; border-radius: 999px; color: inherit; background: transparent; cursor: inherit;
-}
-.dot { width: 8px; height: 8px; border-radius: 50%; background: #808080; box-shadow: 0 0 0 3px rgba(128,128,128,.13); }
-.dot[data-status="ok"] { background: #35b46f; box-shadow: 0 0 0 3px rgba(53,180,111,.15); }
-.dot[data-status="error"] { background: #f05d5e; box-shadow: 0 0 0 3px rgba(240,93,94,.16); }
-.dot[data-status="waiting"] { background: #d3a832; box-shadow: 0 0 0 3px rgba(211,168,50,.16); }
-.text { display: inline-flex; align-items: center; white-space: nowrap; font-weight: 650; letter-spacing: .01em; }
-.part[data-sep="usage"]::before { content: "·"; margin: 0 10px; color: var(--muted); }
-.part[data-sep="billing"]::before {
-  content: ""; display: inline-block; width: 1px; height: 14px; margin: 0 10px; vertical-align: -2px; background: var(--divider);
-}
-.chevron { display: inline-flex; color: var(--muted); transition: transform .15s; }
-.chevron svg.i { width: 13px; height: 13px; }
-.toggle[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 .icon-btn {
   display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0;
   border: 0; border-radius: 7px; color: var(--muted); background: transparent; cursor: pointer;
@@ -70,7 +47,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
 @keyframes spin { to { transform: rotate(360deg); } }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
 .card {
-  pointer-events: auto; width: min(336px, calc(100vw - 24px)); max-height: calc(100vh - 70px); overflow: auto;
+  pointer-events: auto; width: min(336px, calc(100vw - 24px)); max-height: calc(100vh - 16px); overflow: auto;
   border: 1px solid var(--border); border-radius: 14px; background: var(--card); box-shadow: var(--shadow); backdrop-filter: blur(18px);
 }
 .header { display: flex; align-items: center; justify-content: space-between; padding: 11px 10px 9px 14px; cursor: grab; touch-action: none; user-select: none; }
@@ -120,9 +97,10 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   opacity: 0; visibility: hidden; transform: translateX(-50%); transition: opacity 50ms ease-out, visibility 50ms;
 }
 :host([data-tip-up]) .tip { top: auto; bottom: calc(100% + 6px); }
-.tip-rows { display: grid; grid-template-columns: auto auto; row-gap: 2px; margin: 0; }
+.tip-rows { display: grid; grid-template-columns: auto auto auto; row-gap: 2px; margin: 0; }
 .tip-rows dt { color: #ada9a3; }
 .tip-rows dd { margin: 0; padding-left: 16px; text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.tip-rows dd.when { padding-left: 12px; text-align: left; font-weight: 400; color: #ada9a3; }
 .tip-rows .today { margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,.09); }
 .tip-rows [hidden] { display: none !important; }
 .orb:hover + .tip, .orb:focus-visible + .tip { opacity: 1; visibility: visible; }
@@ -135,7 +113,6 @@ const icon = (paths: string) => `<svg class="i" viewBox="0 0 24 24" aria-hidden=
 export const ICONS = {
     refresh: icon('<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'),
     stats: icon('<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>'),
-    chevron: icon('<path d="m6 9 6 6 6-6"/>'),
     minimize: icon('<path d="M6 12h12"/>'),
     external: icon('<path d="M14 4h6v6"/><path d="m20 4-9 9"/><path d="M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4"/>'),
     settings: icon('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
@@ -149,14 +126,10 @@ export const USAGE_HTML = `
 <div class="shell">
   <button class="orb" type="button" hidden>${RING.replace("ring", "ring r-rolling")}${RING.replace("ring", "ring r-monthly")}</button>
   <span class="tip" role="tooltip" hidden><dl class="tip-rows">
-    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd>
-    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd>
-    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd>
+    <dt class="tip-l-rolling"></dt><dd class="tip-v-rolling"></dd><dd class="when tip-w-rolling"></dd>
+    <dt class="tip-l-monthly"></dt><dd class="tip-v-monthly"></dd><dd class="when tip-w-monthly"></dd>
+    <dt class="today tip-l-today" hidden></dt><dd class="today tip-v-today" hidden></dd><dd class="today when tip-w-today" hidden></dd>
   </dl></span>
-  <div class="summary">
-    <button class="toggle" type="button" aria-expanded="false"><span class="dot" data-status="waiting"></span><span class="text"></span><span class="chevron">${ICONS.chevron}</span></button>
-    <button class="icon-btn round minimize" type="button">${ICONS.minimize}</button>
-  </div>
   <section class="card" hidden>
     <div class="header">
       <div class="title"><span class="title-text"></span><span class="badge" hidden>preview</span></div>
@@ -164,6 +137,7 @@ export const USAGE_HTML = `
         <button class="icon-btn stats" type="button">${ICONS.stats}</button>
         <button class="icon-btn settings" type="button">${ICONS.settings}</button>
         <button class="icon-btn refresh" type="button">${ICONS.refresh}</button>
+        <button class="icon-btn minimize" type="button">${ICONS.minimize}</button>
       </div>
     </div>
     <div class="notice" hidden></div>
