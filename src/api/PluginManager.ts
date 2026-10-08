@@ -43,6 +43,36 @@ export const definePlugin = (def: PluginDef): Plugin => ({ ...def, started: fals
 
 const plugins = new Map<string, Plugin>();
 
+export interface PluginError {
+    /** Where it was thrown: starting, stopping, or applying a settings change. */
+    stage: "start" | "stop" | "settings";
+    message: string;
+    at: number;
+}
+
+const errors = new Map<string, PluginError>();
+type ErrorListener = (name: string) => void;
+const errorListeners = new Set<ErrorListener>();
+
+/** The last error a plugin threw from start, stop or onSettingsChange, until it starts cleanly again. */
+export const pluginError = (name: string) => errors.get(name) ?? null;
+
+export function onPluginError(listener: ErrorListener) {
+    errorListeners.add(listener);
+    return () => void errorListeners.delete(listener);
+}
+
+function fail(plugin: Plugin, stage: PluginError["stage"], error: unknown) {
+    logger.error(`${plugin.name} failed to ${stage === "settings" ? "apply settings" : stage}:`, error);
+    const message = error instanceof Error ? error.message || error.name : String(error);
+    errors.set(plugin.name, { stage, message: message.slice(0, 300), at: Date.now() });
+    for (const listener of [...errorListeners]) {
+        try {
+            listener(plugin.name);
+        } catch {}
+    }
+}
+
 export const allPlugins = () => [...plugins.values()];
 
 export function isEnabled(plugin: Plugin) {
@@ -56,8 +86,9 @@ function startPlugin(plugin: Plugin) {
     try {
         plugin.start();
         plugin.started = true;
+        errors.delete(plugin.name);
     } catch (error) {
-        logger.error(`${plugin.name} failed to start:`, error);
+        fail(plugin, "start", error);
     }
 }
 
@@ -67,7 +98,7 @@ function stopPlugin(plugin: Plugin) {
     try {
         plugin.stop();
     } catch (error) {
-        logger.error(`${plugin.name} failed to stop:`, error);
+        fail(plugin, "stop", error);
     }
 }
 
@@ -100,6 +131,12 @@ onSettingsChange((name, key) => {
             if (isEnabled(plugin) && ready) startPlugin(plugin);
             else if (!isEnabled(plugin)) stopPlugin(plugin);
         }
-        if (key !== "enabled" && plugin.started) plugin.onSettingsChange?.(key);
+        if (key !== "enabled" && plugin.started) {
+            try {
+                plugin.onSettingsChange?.(key);
+            } catch (error) {
+                fail(plugin, "settings", error);
+            }
+        }
     }
 });

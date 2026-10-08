@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.8.3
+// @version      20261007.1.9.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -247,6 +247,27 @@
     return () => void observers.delete(observer);
   }
   var nextSequence = () => ++sequence;
+  var blockers = new Set;
+  function blockRequests(blocker) {
+    installHooks();
+    blockers.add(blocker);
+    return () => void blockers.delete(blocker);
+  }
+  function isBlocked(url, method) {
+    if (!url || !blockers.size)
+      return false;
+    for (const blocker of blockers) {
+      try {
+        if (blocker(url, method))
+          return true;
+      } catch {}
+    }
+    return false;
+  }
+  function emptyResponse() {
+    const Ctor = pageWindow.Response ?? Response;
+    return new Ctor("{}", { status: 200, headers: { "content-type": "application/json" } });
+  }
   function readHeader(headers, name) {
     if (!headers)
       return null;
@@ -343,16 +364,20 @@
     function fetch(input, init) {
       let targets = [];
       let partial = null;
+      let drop = false;
       try {
         const isRequest = isInstance(input, "Request");
         const url = resolveUrl(isRequest ? input.url : String(input));
         const method = String(init?.method ?? (isRequest ? input.method : "GET")).toUpperCase();
+        drop = isBlocked(url, method);
         targets = url ? interested(url, method) : [];
         if (url && targets.length) {
           const headers = init?.headers ?? (isRequest ? input.headers : undefined);
           partial = { url, method, sequence: nextSequence(), headers: safeHeaders(headers), body: fetchBody(input, init) };
         }
       } catch {}
+      if (drop)
+        return Promise.resolve(emptyResponse());
       const result = Reflect.apply(nativeFetch, this, arguments);
       if (partial) {
         const response = Promise.resolve(result).then(wrapFetchResponse, () => null);
@@ -385,6 +410,8 @@
     };
     proto.send = function(body) {
       const record = meta.get(this);
+      if (record && isBlocked(record.url, record.method))
+        return this.abort();
       const targets = record?.url ? interested(record.url, record.method) : [];
       if (record?.url && targets.length) {
         const xhr = this;
@@ -425,6 +452,22 @@
     } catch (error) {
       logger2.warn("XHR hook unavailable:", error);
     }
+    installBeacon();
+  }
+  function installBeacon() {
+    const nav = pageWindow.navigator;
+    const native = nav?.sendBeacon;
+    if (typeof native !== "function")
+      return;
+    try {
+      nav.sendBeacon = function(url) {
+        if (isBlocked(resolveUrl(String(url)), "POST"))
+          return true;
+        return Reflect.apply(native, this, arguments);
+      };
+    } catch (error) {
+      logger2.warn("sendBeacon hook unavailable:", error);
+    }
   }
   function nativeFetch() {
     return original ?? pageWindow.fetch.bind(pageWindow);
@@ -434,6 +477,19 @@
   var logger3 = new Logger("PluginManager");
   var definePlugin = (def) => ({ ...def, started: false });
   var plugins = new Map;
+  var errors = new Map;
+  var errorListeners = new Set;
+  var pluginError = (name) => errors.get(name) ?? null;
+  function fail(plugin, stage, error) {
+    logger3.error(`${plugin.name} failed to ${stage === "settings" ? "apply settings" : stage}:`, error);
+    const message = error instanceof Error ? error.message || error.name : String(error);
+    errors.set(plugin.name, { stage, message: message.slice(0, 300), at: Date.now() });
+    for (const listener of [...errorListeners]) {
+      try {
+        listener(plugin.name);
+      } catch {}
+    }
+  }
   var allPlugins = () => [...plugins.values()];
   function isEnabled(plugin) {
     if (plugin.required)
@@ -447,8 +503,9 @@
     try {
       plugin.start();
       plugin.started = true;
+      errors.delete(plugin.name);
     } catch (error) {
-      logger3.error(`${plugin.name} failed to start:`, error);
+      fail(plugin, "start", error);
     }
   }
   function stopPlugin(plugin) {
@@ -458,7 +515,7 @@
     try {
       plugin.stop();
     } catch (error) {
-      logger3.error(`${plugin.name} failed to stop:`, error);
+      fail(plugin, "stop", error);
     }
   }
   function setEnabled(plugin, enabled) {
@@ -491,8 +548,13 @@
         else if (!isEnabled(plugin))
           stopPlugin(plugin);
       }
-      if (key !== "enabled" && plugin.started)
-        plugin.onSettingsChange?.(key);
+      if (key !== "enabled" && plugin.started) {
+        try {
+          plugin.onSettingsChange?.(key);
+        } catch (error) {
+          fail(plugin, "settings", error);
+        }
+      }
     }
   });
 
@@ -565,6 +627,8 @@
     droplet: `<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>`,
     activity: `<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>`,
     quote: `<path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12v6"/>`,
+    shield: `<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m4.243 5.21 14.39 12.472"/>`,
+    music: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -1573,7 +1637,10 @@ button { font: inherit; color: inherit; }
 .card { contain: content; display: flex; flex-direction: column; min-width: 0; min-height: 7.5rem; border-radius: .5rem;
   border: 1px solid var(--border-l1); background: var(--surface-l1); overflow: hidden; }
 .card.required { opacity: .4; }
-.card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
+.card.crashed { border-color: color-mix(in srgb, var(--fg-danger) 55%, transparent); background: color-mix(in srgb, var(--fg-danger) 6%, var(--surface-l1)); }
+.card-error { margin-top: .25rem; display: flex; align-items: flex-start; gap: .5rem; font-size: 12.5px; line-height: 1.45; color: var(--fg-danger); }
+.card-error-text { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.card-error .btn { flex-shrink: 0; height: 22px; padding: 0 8px; font-size: 12px; }
 .card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }
@@ -2710,6 +2777,13 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       min: 10,
       max: 500
     },
+    browse: {
+      type: "action",
+      label: { zh: "浏览输入历史", en: "Browse prompt history" },
+      description: { zh: "搜索、点选填入输入框，或删除单条", en: "Search, insert into the composer, or delete single prompts" },
+      button: { zh: "打开", en: "Open" },
+      run: () => openBrowser()
+    },
     clear: {
       type: "action",
       label: { zh: "清空输入历史", en: "Clear prompt history" },
@@ -2774,6 +2848,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     browsing = -1;
     draft = "";
     browsingEditor = null;
+    hideCounter();
   }
   function record(editor) {
     if (!editor)
@@ -2814,6 +2889,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
         return;
       browsing--;
       fill(editor, list[browsing]);
+      showCounter(editor, browsing, list.length);
     } else if (event.key === "ArrowDown" && browsing !== -1) {
       if (!caretAt(editor, "end"))
         return;
@@ -2822,19 +2898,164 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       if (browsing >= list.length) {
         fill(editor, draft);
         reset();
-      } else
+      } else {
         fill(editor, list[browsing]);
+        showCounter(editor, browsing, list.length);
+      }
     } else if (event.key === "Escape" && browsing !== -1) {
       consume(event);
       fill(editor, draft);
       reset();
     }
   }
+  function onFocusOut(event) {
+    if (event.target?.closest?.(EDITOR2))
+      hideCounter();
+  }
   function onClick2(event) {
     const send = event.target?.closest?.(SEND);
     if (!send || send.getAttribute("aria-disabled") === "true")
       return;
     record(send.closest(COMPOSER2)?.querySelector("[contenteditable='true']") ?? null);
+  }
+  var COUNTER_CSS = `
+:host { all: initial; }
+button { position: fixed; z-index: 2147482000; transform: translate(-100%, -50%); padding: 2px 8px; border-radius: 999px;
+  border: 1px solid rgba(55,53,47,.16); background: #fff; color: rgba(55,53,47,.75); cursor: pointer;
+  font: 500 11.5px/18px ui-sans-serif, -apple-system, "Segoe UI", sans-serif; font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 8px rgba(15,15,15,.08); }
+button:hover { color: #37352f; border-color: rgba(55,53,47,.3); }
+:host([data-theme="dark"]) button { background: #2f2f2f; color: rgba(255,255,255,.7); border-color: rgba(255,255,255,.14); }
+:host([data-theme="dark"]) button:hover { color: #fff; }
+`;
+  var counter = null;
+  var counterText = (index, total) => `${index + 1} / ${total}`;
+  function showCounter(editor, index, total) {
+    const box = editor.closest(COMPOSER2)?.getBoundingClientRect();
+    if (!box)
+      return;
+    if (!counter) {
+      counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button"></button>`);
+      const button = counter.root.querySelector("button");
+      button.addEventListener("mousedown", (event) => event.preventDefault());
+      button.addEventListener("click", () => openBrowser());
+    }
+    const button = counter.root.querySelector("button");
+    button.textContent = counterText(index, total);
+    button.title = t("点击浏览全部输入历史", "Click to browse all prompts");
+    button.style.left = `${box.right - 14}px`;
+    button.style.top = `${box.top}px`;
+  }
+  function hideCounter() {
+    counter?.destroy();
+    counter = null;
+  }
+  var BROWSER_CSS = `
+:host { all: initial; --bg: #fff; --fg: #37352f; --fg2: rgba(55,53,47,.65); --line: rgba(55,53,47,.09); --hover: rgba(55,53,47,.06); --accent: #2383e2; }
+:host([data-theme="dark"]) { --bg: #252525; --fg: rgba(255,255,255,.88); --fg2: rgba(255,255,255,.5); --line: rgba(255,255,255,.09); --hover: rgba(255,255,255,.06); }
+.backdrop { position: fixed; inset: 0; z-index: 2147482500; background: rgba(15,15,15,.45); display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.panel { width: min(640px, calc(100vw - 32px)); max-height: 70vh; display: flex; flex-direction: column; border-radius: 12px; background: var(--bg); color: var(--fg);
+  box-shadow: 0 16px 48px rgba(0,0,0,.3); font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+.head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit; font: inherit; font-size: 15px; }
+.count { color: var(--fg2); font-size: 12px; white-space: nowrap; }
+.list { overflow: auto; padding: 6px; }
+.item { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.item:hover, .item.active { background: var(--hover); }
+.text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.del { flex: none; border: 0; background: none; color: var(--fg2); cursor: pointer; padding: 2px 6px; border-radius: 6px; font: inherit; font-size: 12px; visibility: hidden; }
+.item:hover .del, .item.active .del { visibility: visible; }
+.del:hover { color: #eb5757; background: var(--hover); }
+.empty { padding: 24px; text-align: center; color: var(--fg2); }
+.foot { padding: 8px 14px; border-top: 1px solid var(--line); color: var(--fg2); font-size: 12px; }
+`;
+  var browser = null;
+  function searchHistory(list, query) {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return list.map((text, index) => ({ text, index })).filter(({ text }) => words.every((word) => text.toLowerCase().includes(word))).reverse();
+  }
+  function closeBrowser() {
+    browser?.destroy();
+    browser = null;
+  }
+  function openBrowser() {
+    closeBrowser();
+    browser = createOverlay("notionai-pp-history-browser", BROWSER_CSS, `
+      <div class="backdrop"><div class="panel" role="dialog" aria-modal="true">
+        <div class="head"><input type="search" spellcheck="false"><span class="count"></span></div>
+        <div class="list" role="listbox"></div>
+        <div class="foot"></div>
+      </div></div>`);
+    const { root } = browser;
+    const input = root.querySelector("input");
+    const list = root.querySelector(".list");
+    const count = root.querySelector(".count");
+    input.placeholder = t("搜索输入历史…", "Search prompts…");
+    root.querySelector(".foot").textContent = t("↑↓ 选择 · Enter 填入输入框 · Delete 删除 · Esc 关闭", "↑↓ select · Enter insert · Delete remove · Esc close");
+    let active = 0;
+    let shown = [];
+    const insert = (text) => {
+      closeBrowser();
+      const editor = document.querySelector(EDITOR2);
+      if (editor)
+        fill(editor, text);
+      reset();
+    };
+    const remove = (index) => {
+      const all = load();
+      all.splice(index, 1);
+      save(all);
+      render();
+    };
+    const render = () => {
+      const all = load();
+      shown = searchHistory(all, input.value);
+      active = Math.min(active, Math.max(0, shown.length - 1));
+      count.textContent = input.value ? `${shown.length} / ${all.length}` : t(`共 ${all.length} 条`, `${all.length} prompts`);
+      list.replaceChildren(...shown.map((entry, position) => {
+        const item = document.createElement("div");
+        item.className = position === active ? "item active" : "item";
+        item.setAttribute("role", "option");
+        const text = Object.assign(document.createElement("div"), { className: "text", textContent: entry.text, title: entry.text });
+        const del = Object.assign(document.createElement("button"), { className: "del", type: "button", textContent: t("删除", "Delete") });
+        del.addEventListener("click", (event) => {
+          event.stopPropagation();
+          remove(entry.index);
+        });
+        item.addEventListener("click", () => insert(entry.text));
+        item.append(text, del);
+        return item;
+      }));
+      if (!shown.length)
+        list.append(Object.assign(document.createElement("div"), { className: "empty", textContent: all.length ? t("没有匹配的提问", "No matching prompts") : t("还没有输入历史", "No prompts yet") }));
+      list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+    };
+    input.addEventListener("input", () => {
+      active = 0;
+      render();
+    });
+    root.querySelector(".backdrop").addEventListener("mousedown", (event) => {
+      if (event.target === event.currentTarget)
+        closeBrowser();
+    });
+    root.addEventListener("keydown", (event) => {
+      const key = event.key;
+      if (key === "Escape")
+        closeBrowser();
+      else if (key === "ArrowDown" || key === "ArrowUp") {
+        active = Math.max(0, Math.min(shown.length - 1, active + (key === "ArrowDown" ? 1 : -1)));
+        render();
+      } else if (key === "Enter" && shown[active])
+        insert(shown[active].text);
+      else if (key === "Delete" && shown[active] && input.selectionStart === input.value.length)
+        remove(shown[active].index);
+      else
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    render();
+    input.focus();
   }
   var inputHistory_default = definePlugin({
     name: "inputHistory",
@@ -2850,11 +3071,14 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     start() {
       document.addEventListener("keydown", onKeyDown, true);
       document.addEventListener("click", onClick2, true);
+      document.addEventListener("focusout", onFocusOut, true);
     },
     stop() {
       document.removeEventListener("keydown", onKeyDown, true);
       document.removeEventListener("click", onClick2, true);
+      document.removeEventListener("focusout", onFocusOut, true);
       reset();
+      closeBrowser();
     }
   });
 
@@ -3954,12 +4178,95 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   });
 
-  // src/plugins/replyNotification/index.ts
+  // src/plugins/noTelemetry/index.ts
+  var logger4 = new Logger("NoTelemetry");
   var settings10 = definePluginSettings({
+    events: {
+      type: "boolean",
+      label: { zh: "Notion 事件统计", en: "Notion event tracking" },
+      description: { zh: "app.notion.com/api/v3/etClient：记录你在页面上的操作", en: "app.notion.com/api/v3/etClient: what you do on the page" },
+      default: true
+    },
+    experiments: {
+      type: "boolean",
+      label: { zh: "实验数据上报", en: "Experiment exposure reports" },
+      description: { zh: "exp.notion.com 的上报接口；功能开关的读取不受影响", en: "exp.notion.com reporting; reading feature flags is not affected" },
+      default: true
+    },
+    logs: {
+      type: "boolean",
+      label: { zh: "日志收集（Splunk）", en: "Log collection (Splunk)" },
+      default: true
+    },
+    errors: {
+      type: "boolean",
+      label: { zh: "错误上报（Sentry）", en: "Error reports (Sentry)" },
+      default: true
+    }
+  });
+  function categoryOf(url) {
+    const host = url.hostname;
+    if (/(^|\.)notion\.(so|com)$/.test(host) && /^\/api\/v3\/etClient\b/.test(url.pathname))
+      return "events";
+    if (host === "exp.notion.com" && /\/(rgstr|log_event)\b/.test(url.pathname))
+      return "experiments";
+    if (host.endsWith(".splunkcloud.com"))
+      return "logs";
+    if (host === "sentry.io" || host.endsWith(".sentry.io"))
+      return "errors";
+    return null;
+  }
+  var counts = { events: 0, experiments: 0, logs: 0, errors: 0 };
+  var stopBlocking = null;
+  var noTelemetry_default = definePlugin({
+    name: "noTelemetry",
+    title: { zh: "屏蔽统计上报", en: "Block telemetry" },
+    description: {
+      zh: "拦下 Notion 页面发出的统计、日志和错误上报（事件统计、实验数据、Splunk、Sentry），不影响正常功能。",
+      en: "Drops the usage, log and error reports a Notion page sends (event tracking, experiments, Splunk, Sentry) without affecting how Notion works."
+    },
+    icon: Icons.shield,
+    enabledByDefault: false,
+    startAt: "DocumentStart" /* DocumentStart */,
+    settings: settings10,
+    start() {
+      stopBlocking = blockRequests((url) => {
+        const category = categoryOf(url);
+        if (!category || !settings10.store[category])
+          return false;
+        if (!counts[category]++)
+          logger4.info(`blocking ${category} reports (${url.hostname})`);
+        return true;
+      });
+    },
+    stop() {
+      stopBlocking?.();
+      stopBlocking = null;
+    }
+  });
+
+  // src/plugins/replyNotification/index.ts
+  var settings11 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
       default: true
+    },
+    source: {
+      type: "select",
+      label: { zh: "提示音", en: "Sound" },
+      default: "chime",
+      options: [
+        { value: "chime", label: { zh: "内置提示音", en: "Built-in chime" } },
+        { value: "file", label: { zh: "本地音频文件", en: "Local audio file" } }
+      ]
+    },
+    pick: {
+      type: "action",
+      label: { zh: "选择音频文件", en: "Choose an audio file" },
+      description: { zh: "mp3、wav、ogg 等，最大 2 MB，只保存在本浏览器", en: "mp3, wav, ogg and so on, up to 2 MB, kept in this browser only" },
+      button: { zh: "选择…", en: "Choose…" },
+      run: () => pickSound()
     },
     volume: {
       type: "number",
@@ -3987,16 +4294,89 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       run: () => void test()
     }
   });
+  var SOUND_KEY = "notionai-pp:reply-sound:v1";
+  var MAX_SOUND_BYTES = 2 * 1024 * 1024;
   var audio = null;
+  var decoded = null;
+  function storedSound() {
+    try {
+      const value = JSON.parse(pageWindow.localStorage.getItem(SOUND_KEY) ?? "null");
+      return value && typeof value.data === "string" ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  function context() {
+    audio ??= new AudioContext;
+    if (audio.state === "suspended")
+      audio.resume();
+    return audio;
+  }
+  async function playFile(volume) {
+    const sound = storedSound();
+    if (!sound)
+      return false;
+    try {
+      const ctx = context();
+      if (decoded?.data !== sound.data) {
+        const bytes = Uint8Array.from(atob(sound.data), (char) => char.charCodeAt(0));
+        decoded = { data: sound.data, buffer: await ctx.decodeAudioData(bytes.buffer) };
+      }
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      source.buffer = decoded.buffer;
+      gain.gain.value = Math.max(0, Math.min(100, volume)) / 100;
+      source.connect(gain).connect(ctx.destination);
+      source.start();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  function play() {
+    const volume = settings11.store.volume;
+    if (settings11.store.source !== "file")
+      return chime(volume);
+    playFile(volume).then((ok) => ok || chime(volume));
+  }
+  function pickSound() {
+    const input = Object.assign(document.createElement("input"), { type: "file", accept: "audio/*" });
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file)
+        return;
+      if (file.size > MAX_SOUND_BYTES) {
+        pageWindow.alert(t("音频文件不能超过 2 MB。", "The audio file must be 2 MB or smaller."));
+        return;
+      }
+      const reader = new FileReader;
+      reader.onload = () => {
+        const data = String(reader.result ?? "").replace(/^data:[^,]*,/, "");
+        try {
+          pageWindow.localStorage.setItem(SOUND_KEY, JSON.stringify({ name: file.name, data }));
+        } catch {
+          pageWindow.alert(t("保存失败：浏览器存储空间不足。", "Could not save: browser storage is full."));
+          return;
+        }
+        setValue("replyNotification", "source", "file");
+        playFile(settings11.store.volume).then((ok) => {
+          if (!ok)
+            pageWindow.alert(t("这个文件无法播放，已改回内置提示音。", "This file can't be played; switched back to the built-in chime."));
+          if (!ok)
+            setValue("replyNotification", "source", "chime");
+        });
+      };
+      reader.readAsDataURL(file);
+    });
+    input.click();
+  }
   var cleanups5 = [];
-  function chime(volume = settings10.store.volume) {
+  function chime(volume = settings11.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
     try {
-      audio ??= new AudioContext;
-      if (audio.state === "suspended")
-        audio.resume();
+      context();
       const now = audio.currentTime;
       [660, 880].forEach((frequency, index) => {
         const start = now + index * 0.14;
@@ -4026,7 +4406,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings10.store.sound
+        silent: settings11.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -4035,20 +4415,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     } catch {}
   }
   function notify2({ error }) {
-    if (settings10.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings11.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings10.store.sound)
-      chime();
-    if (settings10.store.desktop)
+    if (settings11.store.sound)
+      play();
+    if (settings11.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings10.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings11.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings10.store.sound)
-      chime();
-    if (settings10.store.desktop)
+    if (settings11.store.sound)
+      play();
+    if (settings11.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -4061,7 +4441,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings10,
+    settings: settings11,
     start() {
       cleanups5 = [watchReplies(), on("replyEnd", notify2)];
     },
@@ -4070,13 +4450,75 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         cleanup();
       audio?.close();
       audio = null;
+      decoded = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings10.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings11.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
   });
+
+  // src/plugins/settings/notionSettings.ts
+  var logger5 = new Logger("NotionSettings");
+  var SWITCHER = ".notion-sidebar-switcher";
+  var GEAR_ITEM = "[role='dialog'] [role='button']:has(svg.gear), [role='menu'] [role='menuitem']:has(svg.gear)";
+  var tabSelector = (id) => `[role='dialog'] [data-testid='settings-tab-${id}']`;
+  var NOTION_PAGES = [
+    { id: "ai", zh: "Notion AI", en: "Notion AI", desc: { zh: "AI 的默认模型、联网、个性化等", en: "Default model, web access, personalization" } },
+    { id: "ai_usage_dashboard", zh: "Notion 额度", en: "Notion credits", desc: { zh: "AI 额度用量明细", en: "AI credit usage" } },
+    { id: "user_settings", zh: "偏好设置", en: "Preferences", desc: { zh: "外观、语言、时区、启动页", en: "Appearance, language, time zone, start page" } },
+    { id: "notifications", zh: "通知", en: "Notifications", desc: { zh: "邮件、桌面和移动端通知", en: "Email, desktop and mobile notifications" } },
+    { id: "integrations", zh: "连接", en: "Connections", desc: { zh: "已连接的应用和集成", en: "Connected apps and integrations" } },
+    { id: "integrations_mcp", zh: "Notion MCP", en: "Notion MCP", desc: { zh: "MCP 客户端连接", en: "MCP client connections" } },
+    { id: "billing", zh: "账单", en: "Billing", desc: { zh: "套餐、付款方式和发票", en: "Plan, payment method and invoices" } }
+  ];
+  function waitFor(selector, timeout = 4000) {
+    const found = document.querySelector(selector);
+    if (found)
+      return Promise.resolve(found);
+    return new Promise((resolve) => {
+      const done = (value) => {
+        stop();
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const stop = onDomChange(() => {
+        const el = document.querySelector(selector);
+        if (el)
+          done(el);
+      });
+      const timer = setTimeout(() => done(null), timeout);
+    });
+  }
+  async function openNotionSettings(id) {
+    let tab = document.querySelector(tabSelector(id));
+    if (!tab) {
+      const switcher = document.querySelector(SWITCHER);
+      if (!switcher)
+        return false;
+      switcher.click();
+      const gear = await waitFor(GEAR_ITEM);
+      if (!gear)
+        return false;
+      gear.click();
+      tab = await waitFor(tabSelector(id));
+    }
+    if (!tab)
+      return false;
+    tab.click();
+    return true;
+  }
+  function notionSettingsTab(close) {
+    const open = (id) => {
+      close();
+      openNotionSettings(id).then((ok) => {
+        if (!ok)
+          logger5.warn(`could not open Notion settings page "${id}"`);
+      });
+    };
+    return h("div", { class: "tab-root notion-settings" }, section(t("Notion 自带设置", "Notion's own settings"), ...NOTION_PAGES.map((page) => row(t(page.zh, page.en), t(page.desc.zh, page.desc.en), button("secondary", t("打开", "Open"), () => open(page.id))))));
+  }
 
   // src/plugins/settings/quickCss.ts
   var SELF = "settings";
@@ -4259,7 +4701,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const enabled = isEnabled(plugin);
     const starred = readList("starred").includes(plugin.name);
     const pinned = readList("pinned").includes(plugin.name);
-    const crashed = enabled && !plugin.started && !plugin.required;
+    const error = pluginError(plugin.name);
+    const crashed = !plugin.required && (error !== null || enabled && !plugin.started);
     const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
     const actions = h("div", { class: "card-controls" }, iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
       toggleInList("starred", plugin.name);
@@ -4274,7 +4717,12 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       setEnabled(plugin, value);
       refresh();
     }, plugin.required));
-    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title }, title), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), actions), h("div", { class: "card-desc", title: description }, description)), h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
+    const stage = error && { start: t("启动失败", "Failed to start"), stop: t("停止时出错", "Failed to stop"), settings: t("应用设置时出错", "Failed to apply a setting") }[error.stage];
+    const reason = crashed && h("div", { class: "card-error", title: error?.message ?? "" }, h("span", { class: "card-error-text" }, error ? `${stage}：${error.message}` : t("启动失败，详情见浏览器控制台", "Failed to start; see the browser console")), enabled && button("danger", t("关闭插件", "Turn off"), () => {
+      setEnabled(plugin, false);
+      refresh();
+    }));
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title }, title), crashed && h("span", { class: "badge danger", title: t("此插件出错了", "This plugin ran into an error") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), actions), reason || h("div", { class: "card-desc", title: description }, description)), h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
   }
   function pluginsTab() {
     const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
@@ -4360,12 +4808,13 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.8.3";
+    const version = "[20261007] v1.9.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
     { id: "css", icon: Icons.braces, title: () => t("自定义 CSS", "Custom CSS"), hint: () => t("像 Void++ 的 Quick CSS：写给 Notion 页面的样式，输入即生效，随设置保存。", "Like Void++'s Quick CSS: styles for the Notion page, applied as you type and saved with your settings."), render: quickCssTab },
+    { id: "notion", icon: Icons.cog, title: () => t("Notion 设置", "Notion settings"), hint: () => t("直接打开 Notion 自带的设置页。", "Open a page of Notion's own Settings directly."), render: () => notionSettingsTab(close2) },
     { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab }
   ];
@@ -4394,7 +4843,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.8.3";
+    const version = "[20261007] v1.9.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4448,7 +4897,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var INTERACTIVE2 = "a, button, input, textarea, select, label, [contenteditable=''], [contenteditable='true'], " + "[role='button'], [role='link'], [role='menuitem'], [role='treeitem'], [role='option'], [role='tab'], [role='checkbox'], [role='switch'], [draggable='true']";
   var ACTIVE_CURSORS = new Set(["pointer", "text", "col-resize", "ew-resize", "row-resize", "grab", "grabbing", "move"]);
   var SLOP = 6;
-  var settings11 = definePluginSettings({
+  var settings12 = definePluginSettings({
     clickToToggle: {
       type: "boolean",
       label: { zh: "点击侧栏空白处收起/固定", en: "Click empty sidebar space to toggle" },
@@ -4501,7 +4950,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return true;
   }
   function onClick3(event) {
-    if (!settings11.store.clickToToggle)
+    if (!settings12.store.clickToToggle)
       return;
     const target = event.target instanceof Element ? event.target : null;
     const sidebar = target?.closest(SIDEBAR);
@@ -4517,7 +4966,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var stopWait = null;
   var collapsedOnce = false;
   function collapseOnLoad() {
-    if (collapsedOnce || !settings11.store.defaultCollapsed)
+    if (collapsedOnce || !settings12.store.defaultCollapsed)
       return;
     const attempt = () => {
       const sidebar = document.querySelector(SIDEBAR);
@@ -4553,7 +5002,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.sidebar,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings11,
+    settings: settings12,
     start() {
       document.addEventListener("click", onClick3, true);
       collapseOnLoad();
@@ -4568,7 +5017,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var SIZE = 32;
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" };
-  var settings12 = definePluginSettings({
+  var settings13 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -4677,7 +5126,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings12,
+    settings: settings13,
     start() {
       remember2();
       const onVisible = () => seen();
@@ -4688,7 +5137,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error }) => {
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings12.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings13.store.showDone ? "done" : "idle");
         }),
         onDomChange(() => {
           const link = iconLink();
@@ -5006,7 +5455,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
 
   // src/plugins/usage/service.ts
-  var logger4 = new Logger("Usage");
+  var logger6 = new Logger("Usage");
   var HEARTBEAT_MS = 30000;
   var POLL_MS2 = 60000;
   var NOT_APPLICABLE_POLL_MS = 6 * 3600000;
@@ -5111,7 +5560,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const stored = storedContext(pageWindow.localStorage);
       if (!stored)
         return;
-      logger4.info("Using the workspace remembered by Notion until a native request arrives.");
+      logger6.info("Using the workspace remembered by Notion until a native request arrives.");
       const headers = stored.userId ? { "x-notion-active-user-header": stored.userId } : {};
       this.acceptContext(stored.spaceId, headers, 0);
       this.schedule(this.usage, 0, () => this.refreshUsage());
@@ -5168,7 +5617,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         if (token.version !== this.version)
           return;
         this.accept(kind, payload, token.sequence);
-      }).catch(() => logger4.debug(`Could not read native ${kind} response.`));
+      }).catch(() => logger6.debug(`Could not read native ${kind} response.`));
     }
     accept(kind, payload, sequence) {
       const track = kind === "current" ? this.usage : this.bill;
@@ -6087,7 +6536,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings13 = definePluginSettings({
+  var settings14 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -6134,19 +6583,19 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings13.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings14.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings13.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings14.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings13.store.usageStats,
-    setEnabled: (value) => void (settings13.store.usageStats = value),
-    retain: () => settings13.store.retainDays,
-    hoverDelay: () => settings13.store.hoverStatsDelay,
-    showPlan: () => settings13.store.showPlan,
+    enabled: () => settings14.store.usageStats,
+    setEnabled: (value) => void (settings14.store.usageStats = value),
+    retain: () => settings14.store.retainDays,
+    hoverDelay: () => settings14.store.hoverStatsDelay,
+    showPlan: () => settings14.store.showPlan,
     refresh: record2
   };
   function mount() {
@@ -6165,7 +6614,7 @@ button { font: inherit; }
     tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings13,
+    settings: settings14,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -6194,7 +6643,7 @@ button { font: inherit; }
   // src/plugins/userQuotes/index.ts
   var STYLE_ID5 = "notionai-pp-user-quotes";
   var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]`;
-  var settings14 = definePluginSettings({
+  var settings15 = definePluginSettings({
     dim: {
       type: "boolean",
       label: { zh: "引用文字变淡", en: "Dim quoted text" },
@@ -6220,7 +6669,7 @@ button { font: inherit; }
 [${MIRROR}] > div:empty::after { content: "\\200b"; }
 [${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
 [${MIRROR}] .q > div:empty::after { content: "\\200b"; }
-${settings14.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
+${settings15.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}`;
   }
   function buildMirror(text) {
     const fragment = document.createDocumentFragment();
@@ -6301,7 +6750,7 @@ ${settings14.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
     icon: Icons.quote,
     tags: ["chat", "appearance"],
     enabledByDefault: true,
-    settings: settings14,
+    settings: settings15,
     start() {
       applyStyle();
       render2();
@@ -6338,7 +6787,7 @@ ${settings14.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,1
   var MARK3 = "data-npp-chat-column";
   var COMPOSER4 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings15 = definePluginSettings({
+  var settings16 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -6377,7 +6826,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       style.id = STYLE_ID6;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css4(settings15.store.width);
+    style.textContent = css4(settings16.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -6389,7 +6838,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings15,
+    settings: settings16,
     start() {
       apply4();
       mark2();
@@ -6409,12 +6858,12 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
 
   // src/index.ts
   var FLAG = "__notionAiPlusPlus";
-  var logger5 = new Logger("Core");
+  var logger7 = new Logger("Core");
   function boot() {
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.8.3";
+    win[FLAG] = "[20261007] v1.9.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6432,7 +6881,8 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       composerLook_default,
       sidebarTweaks_default,
       healthCheck_default,
-      userQuotes_default
+      userQuotes_default,
+      noTelemetry_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -6441,7 +6891,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.8.3"} started`);
+    logger7.info(`NotionAI++ ${"[20261007] v1.9.0"} started`);
   }
   boot();
 })();

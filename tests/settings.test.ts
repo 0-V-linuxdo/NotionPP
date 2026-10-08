@@ -27,7 +27,7 @@ describe("settings dialog", () => {
 
     test("renders Void++-style nav, category tabs and a plugin card grid", () => {
         openSettings();
-        expect([...root().querySelectorAll(".nav-item")].map(n => n.getAttribute("aria-current"))).toEqual(["page", null, null, null]);
+        expect([...root().querySelectorAll(".nav-item")].map(n => n.getAttribute("aria-current"))).toEqual(["page", null, null, null, null]);
         expect(root().querySelectorAll(".tab").length).toBeGreaterThanOrEqual(2);
         expect(root().querySelector(".tab.active")!.textContent).toMatch(/All|全部/);
         const grids = root().querySelectorAll(".grid");

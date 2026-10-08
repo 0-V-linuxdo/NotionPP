@@ -138,7 +138,10 @@ button { font: inherit; color: inherit; }
 .card { contain: content; display: flex; flex-direction: column; min-width: 0; min-height: 7.5rem; border-radius: .5rem;
   border: 1px solid var(--border-l1); background: var(--surface-l1); overflow: hidden; }
 .card.required { opacity: .4; }
-.card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
+.card.crashed { border-color: color-mix(in srgb, var(--fg-danger) 55%, transparent); background: color-mix(in srgb, var(--fg-danger) 6%, var(--surface-l1)); }
+.card-error { margin-top: .25rem; display: flex; align-items: flex-start; gap: .5rem; font-size: 12.5px; line-height: 1.45; color: var(--fg-danger); }
+.card-error-text { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
+.card-error .btn { flex-shrink: 0; height: 22px; padding: 0 8px; font-size: 12px; }
 .card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }

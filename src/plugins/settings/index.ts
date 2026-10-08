@@ -6,12 +6,13 @@
 
 import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { allPlugins, definePlugin, isEnabled, type Plugin, type PluginTag, setEnabled } from "@api/PluginManager";
+import { allPlugins, definePlugin, isEnabled, type Plugin, pluginError, type PluginTag, setEnabled } from "@api/PluginManager";
 import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
 import { Icons } from "@utils/icons";
 import { button, h, icon, iconButton, optionRow, row, section, selectControl, switchControl } from "@utils/kit";
 import { t, type Text, tr } from "@utils/page";
 
+import { notionSettingsTab } from "./notionSettings";
 import { quickCssTab, startQuickCss, stopQuickCss } from "./quickCss";
 import { CSS } from "./styles";
 
@@ -148,7 +149,8 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
     const enabled = isEnabled(plugin);
     const starred = readList("starred").includes(plugin.name);
     const pinned = readList("pinned").includes(plugin.name);
-    const crashed = enabled && !plugin.started && !plugin.required;
+    const error = pluginError(plugin.name);
+    const crashed = !plugin.required && (error !== null || (enabled && !plugin.started));
     const cls = ["card", plugin.required && "required", crashed && "crashed"].filter(Boolean).join(" ");
     const actions = h("div", { class: "card-controls" },
         iconButton(Icons.star, starred ? t("取消收藏", "Remove from favorites") : t("收藏", "Add to favorites"), () => {
@@ -167,6 +169,13 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
         setEnabled(plugin, value);
         refresh();
     }, plugin.required));
+    const stage = error && { start: t("启动失败", "Failed to start"), stop: t("停止时出错", "Failed to stop"), settings: t("应用设置时出错", "Failed to apply a setting") }[error.stage];
+    const reason = crashed && h("div", { class: "card-error", title: error?.message ?? "" },
+        h("span", { class: "card-error-text" }, error ? `${stage}：${error.message}` : t("启动失败，详情见浏览器控制台", "Failed to start; see the browser console")),
+        enabled && button("danger", t("关闭插件", "Turn off"), () => {
+            setEnabled(plugin, false);
+            refresh();
+        }));
     // Same layout as Void++'s BaseCard: every control sits beside the title, the description is
     // clamped to two lines (full text on hover) so all cards in a row share one height, and the
     // footer carries the authors.
@@ -176,10 +185,10 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
                 h("div", { class: "card-name" },
                     h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
                     h("span", { class: "card-title", title }, title),
-                    crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)),
+                    crashed && h("span", { class: "badge danger", title: t("此插件出错了", "This plugin ran into an error") }, icon(Icons.alert)),
                     plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
                 actions),
-            h("div", { class: "card-desc", title: description }, description)),
+            reason || h("div", { class: "card-desc", title: description }, description)),
         h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
 }
 
@@ -281,6 +290,7 @@ function aboutTab() {
 const TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
     { id: "css", icon: Icons.braces, title: () => t("自定义 CSS", "Custom CSS"), hint: () => t("像 Void++ 的 Quick CSS：写给 Notion 页面的样式，输入即生效，随设置保存。", "Like Void++'s Quick CSS: styles for the Notion page, applied as you type and saved with your settings."), render: quickCssTab },
+    { id: "notion", icon: Icons.cog, title: () => t("Notion 设置", "Notion settings"), hint: () => t("直接打开 Notion 自带的设置页。", "Open a page of Notion's own Settings directly."), render: () => notionSettingsTab(close) },
     { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab },
 ];

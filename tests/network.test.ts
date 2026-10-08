@@ -36,6 +36,16 @@ describe("network observer", () => {
         expect(seen).toEqual(["/api/v3/target"]);
         expect(bodies).toEqual(["{\"spaceId\":\"s\"}"]);
         stop();
+
+        // a blocked request never reaches the network and gets an empty success back
+        const { blockRequests } = await import("@api/Network");
+        const stopBlocking = blockRequests(url => url.pathname === "/api/v3/etClient");
+        const blocked = await window.fetch("/api/v3/etClient", { method: "POST", body: "{}" });
+        expect(blocked.status).toBe(200);
+        expect(await blocked.json()).toEqual({});
+        stopBlocking();
+        const after = await window.fetch("/api/v3/etClient", { method: "POST" });
+        expect(await after.json()).toEqual({ ok: 1 });
         window.fetch = original;
     });
 });

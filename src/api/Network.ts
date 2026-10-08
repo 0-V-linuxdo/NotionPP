@@ -54,6 +54,32 @@ export function observeNetwork(observer: NetworkObserver) {
 
 export const nextSequence = () => ++sequence;
 
+/** Decides whether a request is dropped before it leaves the page. */
+export type Blocker = (url: URL, method: string) => boolean;
+const blockers = new Set<Blocker>();
+
+export function blockRequests(blocker: Blocker) {
+    installHooks();
+    blockers.add(blocker);
+    return () => void blockers.delete(blocker);
+}
+
+export function isBlocked(url: URL | null, method: string) {
+    if (!url || !blockers.size) return false;
+    for (const blocker of blockers) {
+        try {
+            if (blocker(url, method)) return true;
+        } catch {}
+    }
+    return false;
+}
+
+/** What a dropped fetch resolves to: an empty success, so the caller carries on. */
+function emptyResponse(): Response {
+    const Ctor = (pageWindow as unknown as { Response: typeof Response }).Response ?? Response;
+    return new Ctor("{}", { status: 200, headers: { "content-type": "application/json" } });
+}
+
 export function readHeader(headers: unknown, name: string): string | null {
     if (!headers) return null;
     try {
@@ -150,16 +176,19 @@ function installFetch() {
     function fetch(this: unknown, input: RequestInfo | URL, init?: RequestInit) {
         let targets: NetworkObserver[] = [];
         let partial: Omit<Exchange, "response"> | null = null;
+        let drop = false;
         try {
             const isRequest = isInstance(input, "Request");
             const url = resolveUrl(isRequest ? (input as Request).url : String(input));
             const method = String(init?.method ?? (isRequest ? (input as Request).method : "GET")).toUpperCase();
+            drop = isBlocked(url, method);
             targets = url ? interested(url, method) : [];
             if (url && targets.length) {
                 const headers = init?.headers ?? (isRequest ? (input as Request).headers : undefined);
                 partial = { url, method, sequence: nextSequence(), headers: safeHeaders(headers), body: fetchBody(input, init) };
             }
         } catch {}
+        if (drop) return Promise.resolve(emptyResponse());
         const result = Reflect.apply(nativeFetch, this, arguments) as Promise<Response>;
         if (partial) {
             const response = Promise.resolve(result).then(wrapFetchResponse, () => null);
@@ -191,6 +220,7 @@ function installXhr() {
     };
     proto.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
         const record = meta.get(this);
+        if (record && isBlocked(record.url, record.method)) return this.abort();
         const targets = record?.url ? interested(record.url, record.method) : [];
         if (record?.url && targets.length) {
             const xhr = this;
@@ -227,6 +257,22 @@ export function installHooks() {
         installXhr();
     } catch (error) {
         logger.warn("XHR hook unavailable:", error);
+    }
+    installBeacon();
+}
+
+function installBeacon() {
+    const nav = pageWindow.navigator;
+    const native = nav?.sendBeacon;
+    if (typeof native !== "function") return;
+    try {
+        nav.sendBeacon = function (this: Navigator, url: string | URL) {
+            // report success, as a browser does for a queued beacon
+            if (isBlocked(resolveUrl(String(url)), "POST")) return true;
+            return Reflect.apply(native, this, arguments);
+        } as typeof nav.sendBeacon;
+    } catch (error) {
+        logger.warn("sendBeacon hook unavailable:", error);
     }
 }
 

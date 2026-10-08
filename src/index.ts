@@ -18,6 +18,7 @@ import healthCheck from "@plugins/healthCheck/index";
 import hideShare from "@plugins/hideShare/index";
 import inputHistory from "@plugins/inputHistory/index";
 import messageStars from "@plugins/messageStars/index";
+import noTelemetry from "@plugins/noTelemetry/index";
 import chatNavigator from "@plugins/navigator/index";
 import replyNotification from "@plugins/replyNotification/index";
 import settings from "@plugins/settings/index";
@@ -40,7 +41,7 @@ function boot() {
     registerPlugins([
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
         inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
-        composerLook, sidebarTweaks, healthCheck, userQuotes,
+        composerLook, sidebarTweaks, healthCheck, userQuotes, noTelemetry,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);
