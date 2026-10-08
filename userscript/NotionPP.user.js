@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.6.0
+// @version      20261007.1.6.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2850,6 +2850,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var messages = [];
   var signature = "";
   var activeId = "";
+  var pinnedId = "";
   var cleanups2 = [];
   var panelObserver = null;
   var watchedPanels = new Set;
@@ -3077,6 +3078,8 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   function updateActive() {
     if (!messages.length)
       return;
+    if (pinnedId && messages.some((m) => m.id === pinnedId))
+      return setActive(pinnedId);
     const threshold = window.innerHeight * ACTIVE_RATIO;
     let current = messages[0].id;
     for (const message of messages) {
@@ -3100,6 +3103,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     if (!message?.element.isConnected)
       return;
     const target = message.element;
+    pinnedId = id;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
     const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
@@ -3146,11 +3150,18 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
       document.addEventListener("animationend", onLayout, { capture: true, passive: true });
       document.addEventListener("keydown", onKeyDown2, true);
+      const unpin = () => void (pinnedId = "");
+      for (const type of ["wheel", "touchmove", "pointerdown"])
+        window.addEventListener(type, unpin, { capture: true, passive: true });
       cleanups2 = [
         watchReplies(),
-        on("replyStart", () => build()),
-        on("replyEnd", () => build()),
+        on("replyStart", () => rescan()),
+        on("replyEnd", () => rescan()),
         () => document.removeEventListener("keydown", onKeyDown2, true),
+        () => {
+          for (const type of ["wheel", "touchmove", "pointerdown"])
+            window.removeEventListener(type, unpin, { capture: true });
+        },
         onDomChange(onLayout),
         onDomChange(rescan),
         () => document.removeEventListener("transitionend", onLayout, { capture: true }),
@@ -3166,6 +3177,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
         }),
         onRouteChange(() => {
           signature = "";
+          pinnedId = "";
           rescan();
         }),
         () => rescan.cancel(),
@@ -3182,6 +3194,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       messages = [];
       signature = "";
       activeId = "";
+      pinnedId = "";
     },
     onSettingsChange() {
       signature = "";
@@ -4072,7 +4085,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.6.0";
+    const version = "[20261007] v1.6.1";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4106,7 +4119,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.6.0";
+    const version = "[20261007] v1.6.1";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5861,7 +5874,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.6.0";
+    win[FLAG] = "[20261007] v1.6.1";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5884,7 +5897,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.6.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.6.1"} started`);
   }
   boot();
 })();

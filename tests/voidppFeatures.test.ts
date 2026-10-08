@@ -194,9 +194,8 @@ describe("starred list", () => {
 
 describe("custom CSS", () => {
     test("applies, updates and removes the page style", async () => {
-        const { setValue, reloadFromStorage } = await import("@api/Settings");
+        const { setValue, resetValues } = await import("@api/Settings");
         const { QUICK_CSS_ID, startQuickCss, stopQuickCss } = await import("../src/plugins/settings/quickCss");
-        reloadFromStorage(null);
         const stop = startQuickCss();
         expect(document.getElementById(QUICK_CSS_ID)).toBeNull();
         setValue("settings", "quickCss", "body { color: red; }");
@@ -208,7 +207,7 @@ describe("custom CSS", () => {
         stop();
         stopQuickCss();
         expect(document.getElementById(QUICK_CSS_ID)).toBeNull();
-        reloadFromStorage(null);
+        resetValues("settings", ["quickCss", "quickCssOn"]);
     });
 });
 

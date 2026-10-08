@@ -64,6 +64,8 @@ let overlay: Overlay | null = null;
 let messages: ChatMessage[] = [];
 let signature = "";
 let activeId = "";
+/** A message jumped to stays current until the user scrolls by hand, even if it can't reach the top. */
+let pinnedId = "";
 let cleanups: (() => void)[] = [];
 let panelObserver: ResizeObserver | null = null;
 const watchedPanels = new Set<Element>();
@@ -295,6 +297,7 @@ function setActive(id: string) {
 
 function updateActive() {
     if (!messages.length) return;
+    if (pinnedId && messages.some(m => m.id === pinnedId)) return setActive(pinnedId);
     const threshold = window.innerHeight * ACTIVE_RATIO;
     let current = messages[0].id;
     for (const message of messages) {
@@ -316,6 +319,7 @@ function jump(id: string) {
     const message = messages.find(m => m.id === id);
     if (!message?.element.isConnected) return;
     const target = message.element;
+    pinnedId = id;
     const scroller = scrollParentOf(target);
     const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
     const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
@@ -364,11 +368,14 @@ export default definePlugin({
         document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
         document.addEventListener("animationend", onLayout, { capture: true, passive: true });
         document.addEventListener("keydown", onKeyDown, true);
+        const unpin = () => void (pinnedId = "");
+        for (const type of ["wheel", "touchmove", "pointerdown"] as const) window.addEventListener(type, unpin, { capture: true, passive: true });
         cleanups = [
             watchReplies(),
-            on("replyStart", () => build()),
-            on("replyEnd", () => build()),
+            on("replyStart", () => rescan()),
+            on("replyEnd", () => rescan()),
             () => document.removeEventListener("keydown", onKeyDown, true),
+            () => { for (const type of ["wheel", "touchmove", "pointerdown"] as const) window.removeEventListener(type, unpin, { capture: true }); },
             onDomChange(onLayout),
             onDomChange(rescan),
             () => document.removeEventListener("transitionend", onLayout, { capture: true }),
@@ -384,6 +391,7 @@ export default definePlugin({
             }),
             onRouteChange(() => {
                 signature = "";
+                pinnedId = "";
                 rescan();
             }),
             () => rescan.cancel(),
@@ -399,6 +407,7 @@ export default definePlugin({
         messages = [];
         signature = "";
         activeId = "";
+        pinnedId = "";
     },
     onSettingsChange() {
         signature = "";
