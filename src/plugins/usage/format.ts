@@ -42,7 +42,7 @@ export function formatReset(resetAt: number | null, now = Date.now(), used?: num
     const minutes = Math.max(1, Math.ceil(diff / 60_000));
     if (minutes > 1440) {
         // Past a day, minutes are noise; the exact time is in the row tooltip.
-        const hours = Math.ceil(minutes / 60);
+        const hours = Math.floor(minutes / 60);
         const d = Math.floor(hours / 24);
         const h = hours % 24;
         return h
