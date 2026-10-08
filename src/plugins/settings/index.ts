@@ -160,22 +160,26 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
         }, { active: pinned, filled: pinned }),
         hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)),
     );
-    const toggle = switchControl(enabled, tr(plugin.title), value => {
+    const title = tr(plugin.title);
+    const description = tr(plugin.description);
+    actions.append(switchControl(enabled, title, value => {
         setEnabled(plugin, value);
         refresh();
-    }, plugin.required);
-    // The switch is the only control beside the title, so the title and description show in full.
+    }, plugin.required));
+    // Same layout as Void++'s BaseCard: every control sits beside the title, the description is
+    // clamped to two lines (full text on hover) so all cards in a row share one height, and the
+    // footer carries the authors.
     return h("div", { class: cls, "data-plugin": plugin.name },
         h("div", { class: "card-body" },
             h("div", { class: "card-head" },
                 h("div", { class: "card-name" },
                     h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
-                    h("span", { class: "card-title" }, tr(plugin.title)),
+                    h("span", { class: "card-title", title }, title),
                     crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)),
                     plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
-                toggle),
-            h("div", { class: "card-desc" }, tr(plugin.description))),
-        h("div", { class: "card-footer" }, h("span", { class: "card-id" }, plugin.name), actions));
+                actions),
+            h("div", { class: "card-desc", title: description }, description)),
+        h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
 }
 
 function pluginsTab() {

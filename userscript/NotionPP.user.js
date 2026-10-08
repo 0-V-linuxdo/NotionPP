@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.2.6
+// @version      20261007.1.2.7
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1472,19 +1472,20 @@ button { font: inherit; color: inherit; }
 .card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
 .card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; }
+.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }
 .card-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem;
   border-radius: .5rem; color: var(--fg-primary); background: color-mix(in srgb, var(--fg-primary) 10%, transparent); }
 .card-icon svg { width: .875rem; height: .875rem; }
-.card-title { min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.card-title { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; }
 .badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
 .badge.danger { color: var(--fg-danger); }
-.card-controls { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
+.card-controls { display: flex; align-items: center; gap: .375rem; flex-shrink: 0; }
+.card-controls .icon-btn { width: 1.5rem; height: 1.5rem; } .card-controls .icon-btn svg { width: .875rem; height: .875rem; }
 
-.card-desc { margin-top: .25rem; font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
-.card-footer { display: flex; align-items: center; justify-content: space-between; gap: .375rem; padding: .25rem .5rem .25rem .75rem;
-  border-top: 1px solid var(--border-l1); font-size: 12px; color: var(--fg-tertiary); min-width: 0; }
-.card-id { min-width: 0; overflow-wrap: anywhere; }
+.card-desc { margin-top: .25rem; font-size: 13px; line-height: 1.5; color: var(--fg-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card-footer { display: flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-top: 1px solid var(--border-l1); min-width: 0; }
+.card-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; color: var(--fg-tertiary); }
 
 /* Nested dialogs (Void++ VoidPPDialogShell, Notion metrics) */
 .sheet { position: relative; display: flex; flex-direction: column; gap: 20px; width: min(36rem, calc(100vw - 2rem));
@@ -2831,11 +2832,13 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       toggleInList("pinned", plugin.name);
       refresh();
     }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)));
-    const toggle = switchControl(enabled, tr(plugin.title), (value) => {
+    const title = tr(plugin.title);
+    const description = tr(plugin.description);
+    actions.append(switchControl(enabled, title, (value) => {
       setEnabled(plugin, value);
       refresh();
-    }, plugin.required);
-    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title" }, tr(plugin.title)), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), toggle), h("div", { class: "card-desc" }, tr(plugin.description))), h("div", { class: "card-footer" }, h("span", { class: "card-id" }, plugin.name), actions));
+    }, plugin.required));
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title }, title), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), actions), h("div", { class: "card-desc", title: description }, description)), h("div", { class: "card-footer" }, h("span", { class: "card-author" }, plugin.authors?.join(", ") || "NotionAI++ Contributors")));
   }
   function pluginsTab() {
     const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
@@ -2921,7 +2924,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.2.6";
+    const version = "[20261007] v1.2.7";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2954,7 +2957,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.2.6";
+    const version = "[20261007] v1.2.7";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4842,7 +4845,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.2.6";
+    win[FLAG] = "[20261007] v1.2.7";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4852,7 +4855,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.2.6"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.7"} started`);
   }
   boot();
 })();

@@ -24,6 +24,8 @@ export interface PluginDef {
     /** Inner markup of a 24×24 stroke icon (lucide style) for the settings card. */
     icon?: string;
     tags?: PluginTag[];
+    /** Shown in the settings card footer, as Void++ shows plugin authors. */
+    authors?: string[];
     enabledByDefault: boolean;
     required?: boolean;
     startAt?: StartAt;

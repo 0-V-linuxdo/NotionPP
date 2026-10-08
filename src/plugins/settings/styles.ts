@@ -128,19 +128,20 @@ button { font: inherit; color: inherit; }
 .card.crashed { opacity: .5; border-color: color-mix(in srgb, var(--fg-danger) 45%, transparent); }
 .card-body { flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .625rem .75rem; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; }
+.card-name { display: flex; align-items: center; gap: .375rem; flex: 1; min-width: 0; overflow: hidden; }
 .card-icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 1.5rem; height: 1.5rem;
   border-radius: .5rem; color: var(--fg-primary); background: color-mix(in srgb, var(--fg-primary) 10%, transparent); }
 .card-icon svg { width: .875rem; height: .875rem; }
-.card-title { min-width: 0; font-size: 14px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.card-title { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 20px; font-weight: 500; }
 .badge { display: inline-flex; color: var(--fg-tertiary); } .badge svg { width: .8125rem; height: .8125rem; }
 .badge.danger { color: var(--fg-danger); }
-.card-controls { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
+.card-controls { display: flex; align-items: center; gap: .375rem; flex-shrink: 0; }
+.card-controls .icon-btn { width: 1.5rem; height: 1.5rem; } .card-controls .icon-btn svg { width: .875rem; height: .875rem; }
 
-.card-desc { margin-top: .25rem; font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
-.card-footer { display: flex; align-items: center; justify-content: space-between; gap: .375rem; padding: .25rem .5rem .25rem .75rem;
-  border-top: 1px solid var(--border-l1); font-size: 12px; color: var(--fg-tertiary); min-width: 0; }
-.card-id { min-width: 0; overflow-wrap: anywhere; }
+.card-desc { margin-top: .25rem; font-size: 13px; line-height: 1.5; color: var(--fg-secondary);
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card-footer { display: flex; align-items: center; gap: .375rem; padding: .375rem .75rem; border-top: 1px solid var(--border-l1); min-width: 0; }
+.card-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; color: var(--fg-tertiary); }
 
 /* Nested dialogs (Void++ VoidPPDialogShell, Notion metrics) */
 .sheet { position: relative; display: flex; flex-direction: column; gap: 20px; width: min(36rem, calc(100vw - 2rem));
