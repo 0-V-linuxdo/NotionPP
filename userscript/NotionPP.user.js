@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.3.1
+// @version      20261007.1.3.2
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2837,7 +2837,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 }
 :host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
 :host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
-.head { padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; font-weight: 600; }
+.head { padding: 4px 10px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
 ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
 button.item {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
@@ -2955,7 +2955,6 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       return;
     }
     signature = nextSignature;
-    q(".head").textContent = t(`对话目录 · ${next.filter((m) => m.role === "user").length} 问`, `Outline · ${next.filter((m) => m.role === "user").length} prompts`);
     q(".lines").replaceChildren(...next.map((message) => {
       const line = document.createElement("div");
       line.className = "line";
@@ -2999,10 +2998,17 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
         label.textContent = label.dataset.compact;
     }
   }
+  function updateHead() {
+    if (!overlay2)
+      return;
+    const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
+    q(".head").textContent = `${Math.min(index + 1, Math.max(messages.length, 1))} / ${messages.length}`;
+  }
   function setActive(id) {
     if (!overlay2 || id === activeId)
       return;
     activeId = id;
+    updateHead();
     for (const node of overlay2.root.querySelectorAll("[data-id]"))
       node.classList.toggle("active", node.dataset.id === id);
     const lines = q(".lines");
@@ -3439,7 +3445,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.3.1";
+    const version = "[20261007] v1.3.2";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -3472,7 +3478,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.3.1";
+    const version = "[20261007] v1.3.2";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5226,7 +5232,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.3.1";
+    win[FLAG] = "[20261007] v1.3.2";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5248,7 +5254,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.3.1"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.3.2"} started`);
   }
   boot();
 })();

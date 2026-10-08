@@ -12,7 +12,7 @@ import { definePlugin } from "@api/PluginManager";
 import { onRouteChange } from "@api/Router";
 import { definePluginSettings } from "@api/Settings";
 import { scrollParentOf, viewport, visibleBox } from "@utils/dom";
-import { isAiRoute, t } from "@utils/page";
+import { isAiRoute } from "@utils/page";
 import { debounce, frameThrottle } from "@utils/time";
 
 import { EFFECTS, type Effect, playEffect, previewEffect } from "./effects";
@@ -124,7 +124,6 @@ function build() {
         return;
     }
     signature = nextSignature;
-    q(".head").textContent = t(`对话目录 · ${next.filter(m => m.role === "user").length} 问`, `Outline · ${next.filter(m => m.role === "user").length} prompts`);
     q(".lines").replaceChildren(...next.map(message => {
         const line = document.createElement("div");
         line.className = "line";
@@ -169,9 +168,17 @@ function compactOverflowing() {
     }
 }
 
+/** Like Void++'s menu meta: where you are in the outline, "3 / 12". */
+function updateHead() {
+    if (!overlay) return;
+    const index = Math.max(0, messages.findIndex(m => m.id === activeId));
+    q(".head").textContent = `${Math.min(index + 1, Math.max(messages.length, 1))} / ${messages.length}`;
+}
+
 function setActive(id: string) {
     if (!overlay || id === activeId) return;
     activeId = id;
+    updateHead();
     for (const node of overlay.root.querySelectorAll<HTMLElement>("[data-id]")) node.classList.toggle("active", node.dataset.id === id);
     const lines = q(".lines");
     const rail = q(".rail");

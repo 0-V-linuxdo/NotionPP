@@ -38,7 +38,7 @@ export const NAV_CSS = `
 }
 :host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
 :host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
-.head { padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; font-weight: 600; }
+.head { padding: 4px 10px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
 ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
 button.item {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
