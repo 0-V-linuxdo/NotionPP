@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.1.3
+// @version      20261007.1.1.4
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2184,6 +2184,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var signature = "";
   var activeId = "";
   var cleanups2 = [];
+  var panelObserver = null;
+  var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
   function visibleMessages(all) {
     return settings4.store.showAssistant ? all : all.filter((message) => message.role === "user");
@@ -2193,9 +2195,18 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       return;
     const { width } = viewport();
     let right = RAIL_MARGIN;
+    for (const panel of [...watchedPanels])
+      if (!panel.isConnected) {
+        panelObserver?.unobserve(panel);
+        watchedPanels.delete(panel);
+      }
     for (const panel of document.querySelectorAll(SIDE_PANELS)) {
       if (overlay2.host.contains(panel))
         continue;
+      if (panelObserver && !watchedPanels.has(panel)) {
+        watchedPanels.add(panel);
+        panelObserver.observe(panel);
+      }
       const box = visibleBox(panel);
       if (!box || box.left < width / 2 || box.right < width - 80 || box.height < 120)
         continue;
@@ -2321,8 +2332,23 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
         updateActive();
       });
       window.addEventListener("resize", onResize, { passive: true });
+      const onLayout = frameThrottle(placeRail);
+      if (typeof ResizeObserver === "function") {
+        panelObserver = new ResizeObserver(onLayout);
+        panelObserver.observe(document.documentElement);
+      }
+      document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
+      document.addEventListener("animationend", onLayout, { capture: true, passive: true });
       cleanups2 = [
+        onDomChange(onLayout),
         onDomChange(rescan),
+        () => document.removeEventListener("transitionend", onLayout, { capture: true }),
+        () => document.removeEventListener("animationend", onLayout, { capture: true }),
+        () => {
+          panelObserver?.disconnect();
+          panelObserver = null;
+          watchedPanels.clear();
+        },
         onRouteChange(() => {
           signature = "";
           rescan();
@@ -2770,7 +2796,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
   function aboutTab() {
-    const version = "[20261007] v1.1.3";
+    const version = "[20261007] v1.1.4";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2802,7 +2828,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.1.3";
+    const version = "[20261007] v1.1.4";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4669,7 +4695,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.1.3";
+    win[FLAG] = "[20261007] v1.1.4";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4679,7 +4705,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.1.3"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.1.4"} started`);
   }
   boot();
 })();

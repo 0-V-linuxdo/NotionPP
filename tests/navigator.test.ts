@@ -140,4 +140,18 @@ describe("chat navigator rail", () => {
         expect(host.style.getPropertyValue("--nav-right")).toBe("20px");
         navigator.stop();
     });
+
+    test("follows a panel closing on the next frame, without waiting for the rescan", async () => {
+        const { default: navigator, NAV_HOST_ID } = await import("@plugins/navigator/index");
+        const panel = document.createElement("aside");
+        panel.getBoundingClientRect = () => ({ left: 1008, top: 50, right: 1328, bottom: 850, width: 320, height: 800, x: 1008, y: 50, toJSON() {} }) as DOMRect;
+        document.body.append(panel);
+        navigator.start();
+        const host = document.getElementById(NAV_HOST_ID)!;
+        expect(host.style.getPropertyValue("--nav-right")).toBe("356px");
+        panel.remove();
+        await new Promise(resolve => setTimeout(resolve, 60));
+        expect(host.style.getPropertyValue("--nav-right")).toBe("20px");
+        navigator.stop();
+    });
 });

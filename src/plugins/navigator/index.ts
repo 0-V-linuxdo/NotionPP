@@ -49,6 +49,8 @@ let messages: ChatMessage[] = [];
 let signature = "";
 let activeId = "";
 let cleanups: (() => void)[] = [];
+let panelObserver: ResizeObserver | null = null;
+const watchedPanels = new Set<Element>();
 
 const q = <T extends Element = HTMLElement>(selector: string) => overlay!.root.querySelector(selector) as T;
 
@@ -61,8 +63,17 @@ export function placeRail() {
     if (!overlay) return;
     const { width } = viewport();
     let right = RAIL_MARGIN;
+    for (const panel of [...watchedPanels]) if (!panel.isConnected) {
+        panelObserver?.unobserve(panel);
+        watchedPanels.delete(panel);
+    }
     for (const panel of document.querySelectorAll(SIDE_PANELS)) {
         if (overlay.host.contains(panel)) continue;
+        // Panels open and close with a width animation that adds no DOM nodes; follow their size.
+        if (panelObserver && !watchedPanels.has(panel)) {
+            watchedPanels.add(panel);
+            panelObserver.observe(panel);
+        }
         const box = visibleBox(panel);
         if (!box || box.left < width / 2 || box.right < width - 80 || box.height < 120) continue;
         right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
@@ -182,8 +193,24 @@ export default definePlugin({
             updateActive();
         });
         window.addEventListener("resize", onResize, { passive: true });
+        // Side panels open and close well before the debounced rescan; place the rail on the next frame.
+        const onLayout = frameThrottle(placeRail);
+        if (typeof ResizeObserver === "function") {
+            panelObserver = new ResizeObserver(onLayout);
+            panelObserver.observe(document.documentElement);
+        }
+        document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
+        document.addEventListener("animationend", onLayout, { capture: true, passive: true });
         cleanups = [
+            onDomChange(onLayout),
             onDomChange(rescan),
+            () => document.removeEventListener("transitionend", onLayout, { capture: true }),
+            () => document.removeEventListener("animationend", onLayout, { capture: true }),
+            () => {
+                panelObserver?.disconnect();
+                panelObserver = null;
+                watchedPanels.clear();
+            },
             onRouteChange(() => {
                 signature = "";
                 rescan();
