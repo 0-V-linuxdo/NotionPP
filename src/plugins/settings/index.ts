@@ -9,7 +9,7 @@ import { createOverlay, type Overlay } from "@api/Overlay";
 import { allPlugins, definePlugin, isEnabled, type Plugin, type PluginTag, setEnabled } from "@api/PluginManager";
 import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
 import { Icons, svgIcon } from "@utils/icons";
-import { t } from "@utils/page";
+import { t, type Text, tr } from "@utils/page";
 
 import { CSS } from "./styles";
 
@@ -37,6 +37,9 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, 
 }
 
 const option = (value: string, text: string, selected = false) => h("option", { value, selected }, text);
+
+/** Both translations, so search finds a plugin in either language. */
+const both = (text: Text) => (typeof text === "string" ? text : `${text.zh} ${text.en}`);
 
 const icon = (markup: string, filled = false) => svgIcon(markup, filled);
 
@@ -137,49 +140,61 @@ function confirmDialog(title: string, description: string, confirmText: string, 
 
 /* ---------- setting fields ---------- */
 
-function label(def: OptionDef) {
-    return h("div", { class: "row-body" },
-        h("div", { class: "s-title" }, def.label),
-        def.description && h("div", { class: "s-desc" }, def.description));
+/** One Notion-style settings row: title and description on the left, the control on the right. */
+function row(title: string, description: string | undefined, control: HTMLElement) {
+    return h("div", { class: "row" },
+        h("div", { class: "row-body" },
+            h("div", { class: "s-title" }, title),
+            description && h("div", { class: "s-desc" }, description)),
+        h("div", { class: "row-control" }, control));
+}
+
+function section(title: string, ...children: Child[]) {
+    return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
+}
+
+function selectControl(label: string, options: { value: string; label: string }[], value: string, onChange: (value: string) => void) {
+    const select = h("select", { class: "select", "aria-label": label, onchange: () => onChange(select.value) });
+    for (const o of options) select.append(option(o.value, o.label, value === o.value));
+    return select;
 }
 
 function settingField(plugin: Plugin, key: string, def: OptionDef): HTMLElement {
     const store = plugin.settings!.store as Record<string, unknown>;
     const set = (value: string | number | boolean) => setValue(plugin.name, key, value);
+    const title = tr(def.label);
+    const description = def.description && tr(def.description);
     switch (def.type) {
         case "boolean":
-            return h("div", { class: "row" }, label(def), switchControl(Boolean(store[key]), def.label, set));
-        case "select": {
-            const select = h("select", { class: "select", "aria-label": def.label, onchange: () => set(select.value) });
-            for (const o of def.options) select.append(option(o.value, o.label, store[key] === o.value));
-            return h("div", { class: "row" }, label(def), select);
-        }
+            return row(title, description, switchControl(Boolean(store[key]), title, set));
+        case "select":
+            return row(title, description, selectControl(title, def.options.map(o => ({ value: o.value, label: tr(o.label) })), String(store[key]), set));
         case "color": {
             const value = h("span", { class: "color-value" }, String(store[key]));
-            const input = h("input", { type: "color", value: String(store[key]), "aria-label": def.label });
+            const input = h("input", { type: "color", value: String(store[key]), "aria-label": title });
             input.addEventListener("input", () => {
                 value.textContent = input.value.toLowerCase();
                 set(input.value.toLowerCase());
             });
-            return h("div", { class: "row" }, label(def), h("div", { class: "color" }, input, value));
+            return row(title, description, h("div", { class: "color" }, value, input));
         }
         case "number": {
-            const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": def.label });
+            const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": title });
             input.addEventListener("change", () => {
                 const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
                 input.value = String(value);
                 set(value);
             });
-            return h("div", { class: "stack" }, label(def), input);
+            return row(title, description, input);
         }
         case "action":
-            return h("div", { class: "row" }, label(def), button("secondary", def.button, () => def.run()));
+            return row(title, description, button("secondary", tr(def.button), () => def.run()));
     }
 }
 
 function openPluginDialog(plugin: Plugin) {
     let layer: ReturnType<typeof pushLayer>;
-    const node = sheet(plugin.title, plugin.description, () => layer.close());
+    const node = sheet(tr(plugin.title), tr(plugin.description), () => layer.close());
     const entries = settingKeys(plugin);
     const list = h("div", { class: "settings-list" });
     const render = () => {
@@ -187,21 +202,24 @@ function openPluginDialog(plugin: Plugin) {
         list.toggleAttribute("data-off", !isEnabled(plugin));
     };
     render();
-    node.append(h("div", { class: "separator" }));
-    node.append(h("div", { class: "field" }, h("div", { class: "field-label" }, t("设置", "Settings")),
-        entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
+    const body = h("div", { class: "sheet-body" },
+        section(t("设置", "Settings"), entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
     const storable = entries.filter(([, def]) => def.type !== "action").map(([key]) => key);
     if (storable.length) {
-        node.append(h("div", { class: "footer" }, button("secondary", t("恢复默认", "Reset"), () => confirmDialog(
-            t("恢复默认设置", "Reset settings"),
-            t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."),
-            t("恢复默认", "Reset"),
-            () => {
-                resetValues(plugin.name, storable);
-                render();
-            },
-        ))));
+        body.append(section(t("重置", "Reset"), row(
+            t("恢复默认设置", "Reset to defaults"),
+            t("把这个插件的设置恢复为默认值", "Restore this plugin's settings to their defaults"),
+            button("secondary", t("恢复默认", "Reset"), () => confirmDialog(
+                t("恢复默认设置", "Reset settings"),
+                t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."),
+                t("恢复默认", "Reset"),
+                () => {
+                    resetValues(plugin.name, storable);
+                    render();
+                },
+            )))));
     }
+    node.append(body);
     layer = pushLayer("nested", node);
     node.tabIndex = -1;
     node.focus();
@@ -225,7 +243,7 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
             refresh();
         }, { active: pinned, filled: pinned }),
         hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)),
-        switchControl(enabled, plugin.title, value => {
+        switchControl(enabled, tr(plugin.title), value => {
             setEnabled(plugin, value);
             refresh();
         }, plugin.required),
@@ -235,16 +253,16 @@ function pluginCard(plugin: Plugin, refresh: () => void) {
             h("div", { class: "card-head" },
                 h("div", { class: "card-name" },
                     h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)),
-                    h("span", { class: "card-title", title: plugin.title }, plugin.title),
+                    h("span", { class: "card-title", title: tr(plugin.title) }, tr(plugin.title)),
                     crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)),
                     plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))),
                 controls),
-            h("div", { class: "card-desc", title: plugin.description }, plugin.description)),
+            h("div", { class: "card-desc", title: tr(plugin.description) }, tr(plugin.description))),
         h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
 }
 
 function pluginsTab() {
-    const all = allPlugins().slice().sort((a, b) => a.title.localeCompare(b.title));
+    const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
     const user = all.filter(p => !p.required);
     const required = all.filter(p => p.required);
     const state = { category: (readList("starred").length ? "favorites" : "all") as Category, search: "", filter: "all" as Filter };
@@ -260,7 +278,7 @@ function pluginsTab() {
     const matches = (p: Plugin) => {
         if (state.filter !== "all" && isEnabled(p) !== (state.filter === "enabled")) return false;
         const q = state.search.trim().toLowerCase();
-        return !q || `${p.title} ${p.name} ${p.description}`.toLowerCase().includes(q);
+        return !q || [p.title, p.name, p.description].map(both).join(" ").toLowerCase().includes(q);
     };
 
     const render = () => {
@@ -302,6 +320,23 @@ function pluginsTab() {
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
 }
 
+export const LANGUAGE_KEY = "language";
+
+function preferencesTab() {
+    const current = String(getValue(SELF, LANGUAGE_KEY) ?? "auto");
+    const language = selectControl(t("界面语言", "Language"), [
+        { value: "auto", label: t("跟随 Notion", "Same as Notion") },
+        { value: "zh", label: "中文" },
+        { value: "en", label: "English" },
+    ], current, value => {
+        setValue(SELF, LANGUAGE_KEY, value);
+        openSettings("preferences");
+    });
+    return h("div", { class: "tab-root prefs" },
+        section(t("语言", "Language"),
+            row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
+}
+
 function aboutTab() {
     const version = typeof VERSION === "string" ? VERSION : "";
     return h("div", { class: "tab-root about" },
@@ -318,6 +353,7 @@ function aboutTab() {
 
 const TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab },
 ];
 
@@ -378,8 +414,8 @@ export function openSettings(tab = "plugins") {
 
 export default definePlugin({
     name: SELF,
-    title: "设置面板 / Settings",
-    description: "NotionAI++ 设置面板与脚本管理器菜单命令。",
+    title: { zh: "设置面板", en: "Settings" },
+    description: { zh: "NotionAI++ 设置面板与脚本管理器菜单命令。", en: "The NotionAI++ settings panel and its userscript manager menu command." },
     icon: Icons.cog,
     enabledByDefault: true,
     required: true,

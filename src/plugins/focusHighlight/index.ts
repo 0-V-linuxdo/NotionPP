@@ -44,12 +44,12 @@ const LEGACY_SHARED_KEY = "notionAiFocusHighlightColor";
 export const settings = definePluginSettings({
     lightColor: {
         type: "color",
-        label: "普通模式高亮色 / Light mode color",
+        label: { zh: "普通模式", en: "Light mode" },
         default: "#37352f",
     },
     darkColor: {
         type: "color",
-        label: "黑暗模式高亮色 / Dark mode color",
+        label: { zh: "黑暗模式", en: "Dark mode" },
         default: "#ffffff",
     },
 });
@@ -243,8 +243,11 @@ export function migrateLegacy() {
 
 export default definePlugin({
     name: PLUGIN,
-    title: "输入框高亮色",
-    description: "给 Notion AI 输入框描一圈自定义颜色（普通 / 黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+    title: { zh: "输入框高亮色", en: "Composer highlight" },
+    description: {
+        zh: "给 Notion AI 输入框描一圈自定义颜色（普通、黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+        en: "Outlines the Notion AI composer in a color of your choice, one for light mode and one for dark. Double right-click the empty right side of the composer to pick a color.",
+    },
     icon: Icons.highlighter,
     tags: ["composer", "appearance"],
     enabledByDefault: true,

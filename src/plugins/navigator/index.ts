@@ -28,18 +28,18 @@ const RAIL_MARGIN = 20;
 const SIDE_PANELS = "[role='complementary'], aside";
 
 export const settings = definePluginSettings({
-    showAssistant: { type: "boolean", label: "目录显示 AI 回复 / Show AI replies", default: true },
+    showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     effect: {
         type: "select",
-        label: "跳转定位效果 / Jump effect",
+        label: { zh: "跳转定位效果", en: "Jump effect" },
         default: "border",
-        description: "选择后立即保存，点「预览」查看效果演示 / Saved on change; use Preview to see it",
-        options: EFFECTS.map(effect => ({ value: effect.value, label: `${effect.zh} / ${effect.en}（${effect.hint}）` })),
+        description: { zh: "跳转到消息后用什么方式标出它", en: "How a message is marked after jumping to it" },
+        options: EFFECTS.map(effect => ({ value: effect.value, label: { zh: effect.zh, en: effect.en } })),
     },
     preview: {
         type: "action",
-        label: "预览当前效果 / Preview effect",
-        button: "预览 / Preview",
+        label: { zh: "预览效果", en: "Preview effect" },
+        button: { zh: "预览", en: "Preview" },
         run: () => previewEffect(settings.store.effect as Effect),
     },
 });
@@ -176,8 +176,11 @@ function jump(id: string) {
 
 export default definePlugin({
     name: "chatNavigator",
-    title: "对话目录 / Chat navigator",
-    description: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+    title: { zh: "对话目录", en: "Chat navigator" },
+    description: {
+        zh: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+        en: "Shows a Notion-style outline beside Notion AI chats. Hover to expand it and click to jump to a prompt or reply.",
+    },
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,

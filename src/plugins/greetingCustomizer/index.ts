@@ -31,35 +31,35 @@ const RIGHT_DOUBLE_MS = 400;
 export const settings = definePluginSettings({
     manage: {
         type: "action",
-        label: "问候语列表 / Greetings",
-        description: "添加、修改、删除问候语；也可在首页双击右键问候语打开 / Add, edit or delete greetings; double right-click the home greeting also opens it",
-        button: "管理… / Manage…",
+        label: { zh: "问候语列表", en: "Greetings" },
+        description: { zh: "添加、修改或删除问候语", en: "Add, edit or delete greetings" },
+        button: { zh: "管理…", en: "Manage…" },
         run: () => openGreetingManager(),
     },
     mode: {
         type: "select",
-        label: "轮播方式 / Rotation",
-        description: "手动模式：回到首页后点击标题即可切换；定时模式：离开首页会自动停止计时 / Manual: click the title on home; Timer: pauses when you leave home",
+        label: { zh: "轮播方式", en: "Rotation" },
+        description: { zh: "定时切换在离开首页时会暂停", en: "The timer pauses while you are away from home" },
         default: "refresh",
         options: [
-            { value: "refresh", label: "刷新/进入首页时切换 / On refresh or entering home" },
-            { value: "interval", label: "按时间间隔切换 / On a timer" },
-            { value: "manual", label: "点击问候语切换 / Click the greeting" },
+            { value: "refresh", label: { zh: "刷新/进入首页时切换", en: "On refresh or entering home" } },
+            { value: "interval", label: { zh: "按时间间隔切换", en: "On a timer" } },
+            { value: "manual", label: { zh: "点击问候语切换", en: "Click the greeting" } },
         ],
     },
     order: {
         type: "select",
-        label: "轮播顺序 / Order",
+        label: { zh: "轮播顺序", en: "Order" },
         default: "sequential",
         options: [
-            { value: "sequential", label: "顺序循环 / Sequential" },
-            { value: "random", label: "随机 / Random" },
+            { value: "sequential", label: { zh: "顺序循环", en: "Sequential" } },
+            { value: "random", label: { zh: "随机", en: "Random" } },
         ],
     },
     intervalSec: {
         type: "number",
-        label: "切换间隔（秒）/ Interval (seconds)",
-        description: "仅“按时间间隔切换”时生效 / Only used by the timer mode",
+        label: { zh: "切换间隔（秒）", en: "Interval in seconds" },
+        description: { zh: "仅在按时间间隔切换时生效", en: "Only used when switching on a timer" },
         default: 10,
         min: 1,
         max: 3600,
@@ -175,8 +175,11 @@ export function openGreetingManager() {
 
 export default definePlugin({
     name: "GreetingCustomizer",
-    title: "自定义问候语",
-    description: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+    title: { zh: "自定义问候语", en: "Custom greetings" },
+    description: {
+        zh: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+        en: "Replaces the Notion AI home greeting with your own lines, shown in order or at random, switched on refresh, on a timer or by click. Double right-click the greeting to manage them.",
+    },
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,

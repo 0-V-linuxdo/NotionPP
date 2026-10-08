@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { getValue } from "@api/Settings";
+
 declare const unsafeWindow: (Window & typeof globalThis) | undefined;
 
 export const pageWindow: Window & typeof globalThis =
@@ -49,11 +51,19 @@ export function isTopmostNotionDocument(win: Window = pageWindow): boolean {
 
 export const isAiRoute = (pathname = pageWindow.location.pathname) => /^\/(?:ai|chat)(?:\/|$)/i.test(pathname);
 
+/** The language chosen in NotionAI++'s settings, else Notion's own UI language. */
 export function uiLanguage(): "zh" | "en" {
+    const chosen = getValue("settings", "language");
+    if (chosen === "zh" || chosen === "en") return chosen;
     return /^zh(?:-|$)/i.test(document.documentElement?.lang ?? "") ? "zh" : "en";
 }
 
 export const t = (zh: string, en: string) => (uiLanguage() === "zh" ? zh : en);
+
+/** User-facing text: one string for both languages, or a translation per language. */
+export type Text = string | { zh: string; en: string };
+
+export const tr = (text: Text) => (typeof text === "string" ? text : t(text.zh, text.en));
 
 export function trustedHtml(html: string): string {
     const policy = (globalThis as any).ADG_policyApi;

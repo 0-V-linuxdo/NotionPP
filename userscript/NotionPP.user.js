@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.1.4
+// @version      20261007.1.2.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -50,6 +50,124 @@
     }
   }
 
+  // src/utils/guards.ts
+  var isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+  function finiteNumber(value) {
+    if (typeof value === "number")
+      return Number.isFinite(value) ? value : null;
+    if (typeof value !== "string" || !value.trim())
+      return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function nonNegative(value) {
+    const parsed = finiteNumber(value);
+    return parsed !== null && parsed >= 0 ? parsed : null;
+  }
+  var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+  var SPACE_ID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  var isSpaceId = (value) => typeof value === "string" && SPACE_ID_RE.test(value);
+  function safeJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
+  // src/api/Settings.ts
+  var logger = new Logger("Settings");
+  var SETTINGS_KEY = "notionai-pp:settings:v1";
+  var isHexColor = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+  var listeners = new Set;
+  function read() {
+    try {
+      const parsed = safeJson(localStorage.getItem(SETTINGS_KEY) ?? "");
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  var bag = read();
+  function persist() {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(bag));
+    } catch (error) {
+      logger.warn("Settings could not be saved:", error);
+    }
+  }
+  function getValue(plugin, key) {
+    return bag[plugin]?.[key];
+  }
+  function setValue(plugin, key, value) {
+    if (bag[plugin]?.[key] === value)
+      return;
+    bag = { ...bag, [plugin]: { ...bag[plugin], [key]: value } };
+    persist();
+    for (const listener of [...listeners]) {
+      try {
+        listener(plugin, key);
+      } catch (error) {
+        logger.error("Settings listener failed:", error);
+      }
+    }
+  }
+  function resetValues(plugin, keys) {
+    const current = bag[plugin];
+    if (!current || !keys.some((key) => (key in current)))
+      return;
+    const next = { ...current };
+    for (const key of keys)
+      delete next[key];
+    bag = { ...bag, [plugin]: next };
+    persist();
+    for (const key of keys) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(plugin, key);
+        } catch (error) {
+          logger.error("Settings listener failed:", error);
+        }
+      }
+    }
+  }
+  function onSettingsChange(listener) {
+    listeners.add(listener);
+    return () => void listeners.delete(listener);
+  }
+  function reloadFromStorage(raw) {
+    const parsed = safeJson(raw ?? "");
+    bag = isRecord(parsed) ? parsed : {};
+    for (const listener of [...listeners])
+      listener("*", "*");
+  }
+  function definePluginSettings(def) {
+    let owner = "";
+    const store = new Proxy({}, {
+      get: (_, key) => {
+        const option = def[key];
+        if (!option)
+          return;
+        const value = getValue(owner, key);
+        if (option.type === "boolean")
+          return typeof value === "boolean" ? value : option.default;
+        if (option.type === "color")
+          return isHexColor(value) ? value.toLowerCase() : option.default;
+        if (option.type === "action")
+          return;
+        if (option.type === "number") {
+          return typeof value === "number" && Number.isFinite(value) ? Math.min(option.max, Math.max(option.min, Math.round(value))) : option.default;
+        }
+        return typeof value === "string" && option.options.some((o) => o.value === value) ? value : option.default;
+      },
+      set: (_, key, value) => {
+        setValue(owner, key, value);
+        return true;
+      }
+    });
+    return { def, store, bind: (plugin) => void (owner = plugin) };
+  }
+
   // src/utils/page.ts
   var pageWindow = typeof unsafeWindow !== "undefined" && unsafeWindow ? unsafeWindow : window;
   var NOTION_HOSTS = new Set(["app.notion.com", "www.notion.so", "notion.so"]);
@@ -93,9 +211,13 @@
   }
   var isAiRoute = (pathname = pageWindow.location.pathname) => /^\/(?:ai|chat)(?:\/|$)/i.test(pathname);
   function uiLanguage() {
+    const chosen = getValue("settings", "language");
+    if (chosen === "zh" || chosen === "en")
+      return chosen;
     return /^zh(?:-|$)/i.test(document.documentElement?.lang ?? "") ? "zh" : "en";
   }
   var t = (zh, en) => uiLanguage() === "zh" ? zh : en;
+  var tr = (text) => typeof text === "string" ? text : t(text.zh, text.en);
   function trustedHtml(html) {
     const policy = globalThis.ADG_policyApi;
     try {
@@ -106,7 +228,7 @@
   }
 
   // src/api/Network.ts
-  var logger = new Logger("Network");
+  var logger2 = new Logger("Network");
   var SAFE_HEADERS = [
     "content-type",
     "notion-client-version",
@@ -172,7 +294,7 @@
       try {
         observer.onExchange(exchange);
       } catch (error) {
-        logger.error("Network observer failed:", error);
+        logger2.error("Network observer failed:", error);
       }
     }
   }
@@ -241,7 +363,7 @@
     try {
       pageWindow.fetch = fetch;
     } catch (error) {
-      logger.warn("fetch hook unavailable:", error);
+      logger2.warn("fetch hook unavailable:", error);
     }
   }
   function installXhr() {
@@ -301,129 +423,11 @@
     try {
       installXhr();
     } catch (error) {
-      logger.warn("XHR hook unavailable:", error);
+      logger2.warn("XHR hook unavailable:", error);
     }
   }
   function nativeFetch() {
     return original ?? pageWindow.fetch.bind(pageWindow);
-  }
-
-  // src/utils/guards.ts
-  var isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  function finiteNumber(value) {
-    if (typeof value === "number")
-      return Number.isFinite(value) ? value : null;
-    if (typeof value !== "string" || !value.trim())
-      return null;
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  function nonNegative(value) {
-    const parsed = finiteNumber(value);
-    return parsed !== null && parsed >= 0 ? parsed : null;
-  }
-  var clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-  var SPACE_ID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-  var isSpaceId = (value) => typeof value === "string" && SPACE_ID_RE.test(value);
-  function safeJson(text) {
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
-
-  // src/api/Settings.ts
-  var logger2 = new Logger("Settings");
-  var SETTINGS_KEY = "notionai-pp:settings:v1";
-  var isHexColor = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
-  var listeners = new Set;
-  function read() {
-    try {
-      const parsed = safeJson(localStorage.getItem(SETTINGS_KEY) ?? "");
-      return isRecord(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  }
-  var bag = read();
-  function persist() {
-    try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(bag));
-    } catch (error) {
-      logger2.warn("Settings could not be saved:", error);
-    }
-  }
-  function getValue(plugin, key) {
-    return bag[plugin]?.[key];
-  }
-  function setValue(plugin, key, value) {
-    if (bag[plugin]?.[key] === value)
-      return;
-    bag = { ...bag, [plugin]: { ...bag[plugin], [key]: value } };
-    persist();
-    for (const listener of [...listeners]) {
-      try {
-        listener(plugin, key);
-      } catch (error) {
-        logger2.error("Settings listener failed:", error);
-      }
-    }
-  }
-  function resetValues(plugin, keys) {
-    const current = bag[plugin];
-    if (!current || !keys.some((key) => (key in current)))
-      return;
-    const next = { ...current };
-    for (const key of keys)
-      delete next[key];
-    bag = { ...bag, [plugin]: next };
-    persist();
-    for (const key of keys) {
-      for (const listener of [...listeners]) {
-        try {
-          listener(plugin, key);
-        } catch (error) {
-          logger2.error("Settings listener failed:", error);
-        }
-      }
-    }
-  }
-  function onSettingsChange(listener) {
-    listeners.add(listener);
-    return () => void listeners.delete(listener);
-  }
-  function reloadFromStorage(raw) {
-    const parsed = safeJson(raw ?? "");
-    bag = isRecord(parsed) ? parsed : {};
-    for (const listener of [...listeners])
-      listener("*", "*");
-  }
-  function definePluginSettings(def) {
-    let owner = "";
-    const store = new Proxy({}, {
-      get: (_, key) => {
-        const option = def[key];
-        if (!option)
-          return;
-        const value = getValue(owner, key);
-        if (option.type === "boolean")
-          return typeof value === "boolean" ? value : option.default;
-        if (option.type === "color")
-          return isHexColor(value) ? value.toLowerCase() : option.default;
-        if (option.type === "action")
-          return;
-        if (option.type === "number") {
-          return typeof value === "number" && Number.isFinite(value) ? Math.min(option.max, Math.max(option.min, Math.round(value))) : option.default;
-        }
-        return typeof value === "string" && option.options.some((o) => o.value === value) ? value : option.default;
-      },
-      set: (_, key, value) => {
-        setValue(owner, key, value);
-        return true;
-      }
-    });
-    return { def, store, bind: (plugin) => void (owner = plugin) };
   }
 
   // src/api/PluginManager.ts
@@ -572,18 +576,18 @@
   var settings = definePluginSettings({
     mode: {
       type: "select",
-      label: "折叠时机 / When to collapse",
-      description: "回复完成后折叠，或生成过程中就折叠 / After the reply finishes, or while it is still streaming",
+      label: { zh: "折叠时机", en: "When to collapse" },
+      description: { zh: "回复完成后折叠，或生成过程中就折叠", en: "After the reply finishes, or while it is still writing" },
       default: "finished",
       options: [
-        { value: "finished", label: "回复完成后 / When the reply finishes" },
-        { value: "immediate", label: "立即（含生成中）/ Immediately, even while streaming" }
+        { value: "finished", label: { zh: "回复完成后", en: "When the reply finishes" } },
+        { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately, even while streaming" } }
       ]
     },
     collapseHistory: {
       type: "boolean",
-      label: "折叠历史回复 / Collapse earlier replies",
-      description: "打开对话时，也折叠已经展开的旧回复思考 / Also collapse expanded thinking in replies already on the page",
+      label: { zh: "折叠历史回复", en: "Collapse earlier replies" },
+      description: { zh: "打开对话时，也折叠已经展开的旧回复思考", en: "Also collapse expanded thinking in replies already on the page" },
       default: true
     }
   });
@@ -653,8 +657,11 @@
   }
   var autoCollapseThinking_default = definePlugin({
     name: "AutoCollapseThinking",
-    title: "自动折叠 AI 思考",
-    description: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+    title: { zh: "自动折叠 AI 思考", en: "Auto-collapse AI thinking" },
+    description: {
+      zh: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+      en: `Collapses Notion AI's thinking steps ("N steps") once a reply finishes. Steps you expand stay open.`
+    },
     icon: Icons.collapse,
     tags: ["chat"],
     enabledByDefault: true,
@@ -1036,12 +1043,12 @@
   var settings2 = definePluginSettings({
     lightColor: {
       type: "color",
-      label: "普通模式高亮色 / Light mode color",
+      label: { zh: "普通模式", en: "Light mode" },
       default: "#37352f"
     },
     darkColor: {
       type: "color",
-      label: "黑暗模式高亮色 / Dark mode color",
+      label: { zh: "黑暗模式", en: "Dark mode" },
       default: "#ffffff"
     }
   });
@@ -1221,8 +1228,11 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   }
   var focusHighlight_default = definePlugin({
     name: PLUGIN,
-    title: "输入框高亮色",
-    description: "给 Notion AI 输入框描一圈自定义颜色（普通 / 黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+    title: { zh: "输入框高亮色", en: "Composer highlight" },
+    description: {
+      zh: "给 Notion AI 输入框描一圈自定义颜色（普通、黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+      en: "Outlines the Notion AI composer in a color of your choice, one for light mode and one for dark. Double right-click the empty right side of the composer to pick a color."
+    },
     icon: Icons.highlighter,
     tags: ["composer", "appearance"],
     enabledByDefault: true,
@@ -1341,7 +1351,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     clickHint: ["点击切换问候语", "Click to rotate greeting"],
     menu: ["\uD83D\uDCAC NotionAI++ 问候语设置", "\uD83D\uDCAC NotionAI++ greetings"]
   };
-  function tr(key, vars = {}) {
+  function tr2(key, vars = {}) {
     const text = STRINGS[key][zh ? 0 : 1];
     return text.replace(/\{(\w+)\}/g, (match, name) => (name in vars) ? String(vars[name]) : match);
   }
@@ -1405,27 +1415,27 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
     root.addEventListener("keydown", (event) => event.key === "Escape" && closeManager());
     let greetings = loadGreetings();
     let editing = -1;
-    const close = el("button", { class: "close", type: "button", "aria-label": tr("close"), title: tr("close"), text: "×" });
+    const close = el("button", { class: "close", type: "button", "aria-label": tr2("close"), title: tr2("close"), text: "×" });
     close.addEventListener("click", closeManager);
-    const header = el("header", {}, el("h2", { text: tr("title") }), close);
-    const textarea = el("textarea", { placeholder: tr("placeholder"), maxlength: String(MAX_LEN) });
-    textarea.setAttribute("aria-label", tr("placeholder"));
+    const header = el("header", {}, el("h2", { text: tr2("title") }), close);
+    const textarea = el("textarea", { placeholder: tr2("placeholder"), maxlength: String(MAX_LEN) });
+    textarea.setAttribute("aria-label", tr2("placeholder"));
     const error = el("div", { class: "error", role: "alert" });
-    const submit = el("button", { class: "btn primary", type: "button", text: tr("add") });
-    const cancel = el("button", { class: "btn", type: "button", text: tr("cancelEdit") });
+    const submit = el("button", { class: "btn primary", type: "button", text: tr2("add") });
+    const cancel = el("button", { class: "btn", type: "button", text: tr2("cancelEdit") });
     const counter = el("span", { class: "counter" });
     const saved = el("div", { class: "hint" });
     const list = el("ul");
-    const left = el("div", { class: "card" }, el("div", { class: "label", text: tr("newLabel") }), textarea, error, el("div", { class: "row" }, submit, cancel, counter), saved, list);
+    const left = el("div", { class: "card" }, el("div", { class: "label", text: tr2("newLabel") }), textarea, error, el("div", { class: "row" }, submit, cancel, counter), saved, list);
     const setError = (key) => {
-      error.textContent = key ? tr(key) : "";
+      error.textContent = key ? tr2(key) : "";
       error.hidden = !key;
     };
     const syncCounter = () => void (counter.textContent = `${textarea.value.length}/${MAX_LEN}`);
     const stopEditing = () => {
       editing = -1;
       textarea.value = "";
-      submit.textContent = tr("add");
+      submit.textContent = tr2("add");
       cancel.hidden = true;
       syncCounter();
     };
@@ -1434,15 +1444,15 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
       greetings = loadGreetings();
     }
     function render() {
-      saved.textContent = tr("saved", { count: greetings.length, max: MAX_COUNT });
+      saved.textContent = tr2("saved", { count: greetings.length, max: MAX_COUNT });
       const current = currentIndex();
       list.replaceChildren(...greetings.map((greeting, index) => {
-        const edit = el("button", { class: "icon", type: "button", title: tr("edit"), "aria-label": tr("edit"), text: "✍️" });
-        const remove = el("button", { class: "icon", type: "button", title: tr("delete"), "aria-label": tr("delete"), text: "\uD83D\uDDD1️" });
+        const edit = el("button", { class: "icon", type: "button", title: tr2("edit"), "aria-label": tr2("edit"), text: "✍️" });
+        const remove = el("button", { class: "icon", type: "button", title: tr2("delete"), "aria-label": tr2("delete"), text: "\uD83D\uDDD1️" });
         edit.addEventListener("click", () => {
           editing = index;
           textarea.value = greetings[index];
-          submit.textContent = tr("saveEdit");
+          submit.textContent = tr2("saveEdit");
           cancel.hidden = false;
           setError(null);
           syncCounter();
@@ -1494,7 +1504,7 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
     const select = (key, options) => {
       const node = el("select");
       for (const [value, label] of options)
-        node.append(el("option", { value, text: tr(label) }));
+        node.append(el("option", { value, text: tr2(label) }));
       node.value = values[key];
       node.addEventListener("change", () => {
         rotation.set(key, node.value);
@@ -1511,9 +1521,9 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
       rotation.set("intervalSec", value);
     });
     const syncInterval = () => void (interval.disabled = mode.value !== "interval");
-    const field = (label, control) => el("label", { class: "field" }, el("span", { text: tr(label) }), control);
-    const right = el("div", { class: "card" }, el("div", { class: "label", text: tr("rotation") }), field("mode", mode), field("order", order), field("interval", interval), el("div", { class: "hint", text: tr("tip") }));
-    const done = el("button", { class: "btn primary", type: "button", text: tr("done") });
+    const field = (label, control) => el("label", { class: "field" }, el("span", { text: tr2(label) }), control);
+    const right = el("div", { class: "card" }, el("div", { class: "label", text: tr2("rotation") }), field("mode", mode), field("order", order), field("interval", interval), el("div", { class: "hint", text: tr2("tip") }));
+    const done = el("button", { class: "btn primary", type: "button", text: tr2("done") });
     done.addEventListener("click", closeManager);
     dialog.append(header, el("div", { class: "body" }, left, right), el("footer", {}, done));
     stopEditing();
@@ -1604,35 +1614,35 @@ footer { display: flex; justify-content: flex-end; padding: 12px 18px; border-to
   var settings3 = definePluginSettings({
     manage: {
       type: "action",
-      label: "问候语列表 / Greetings",
-      description: "添加、修改、删除问候语；也可在首页双击右键问候语打开 / Add, edit or delete greetings; double right-click the home greeting also opens it",
-      button: "管理… / Manage…",
+      label: { zh: "问候语列表", en: "Greetings" },
+      description: { zh: "添加、修改或删除问候语", en: "Add, edit or delete greetings" },
+      button: { zh: "管理…", en: "Manage…" },
       run: () => openGreetingManager()
     },
     mode: {
       type: "select",
-      label: "轮播方式 / Rotation",
-      description: "手动模式：回到首页后点击标题即可切换；定时模式：离开首页会自动停止计时 / Manual: click the title on home; Timer: pauses when you leave home",
+      label: { zh: "轮播方式", en: "Rotation" },
+      description: { zh: "定时切换在离开首页时会暂停", en: "The timer pauses while you are away from home" },
       default: "refresh",
       options: [
-        { value: "refresh", label: "刷新/进入首页时切换 / On refresh or entering home" },
-        { value: "interval", label: "按时间间隔切换 / On a timer" },
-        { value: "manual", label: "点击问候语切换 / Click the greeting" }
+        { value: "refresh", label: { zh: "刷新/进入首页时切换", en: "On refresh or entering home" } },
+        { value: "interval", label: { zh: "按时间间隔切换", en: "On a timer" } },
+        { value: "manual", label: { zh: "点击问候语切换", en: "Click the greeting" } }
       ]
     },
     order: {
       type: "select",
-      label: "轮播顺序 / Order",
+      label: { zh: "轮播顺序", en: "Order" },
       default: "sequential",
       options: [
-        { value: "sequential", label: "顺序循环 / Sequential" },
-        { value: "random", label: "随机 / Random" }
+        { value: "sequential", label: { zh: "顺序循环", en: "Sequential" } },
+        { value: "random", label: { zh: "随机", en: "Random" } }
       ]
     },
     intervalSec: {
       type: "number",
-      label: "切换间隔（秒）/ Interval (seconds)",
-      description: "仅“按时间间隔切换”时生效 / Only used by the timer mode",
+      label: { zh: "切换间隔（秒）", en: "Interval in seconds" },
+      description: { zh: "仅在按时间间隔切换时生效", en: "Only used when switching on a timer" },
       default: 10,
       min: 1,
       max: 3600
@@ -1682,7 +1692,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const target = document.querySelector(TARGET_SELECTOR);
     if (!target)
       return;
-    const want = settings3.store.mode === "manual" && loadGreetings().length > 1 ? tr("clickHint") : null;
+    const want = settings3.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
     if (want)
       target.title = want;
     else
@@ -1747,8 +1757,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   }
   var greetingCustomizer_default = definePlugin({
     name: "GreetingCustomizer",
-    title: "自定义问候语",
-    description: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+    title: { zh: "自定义问候语", en: "Custom greetings" },
+    description: {
+      zh: "把 Notion AI 首页的问候语换成你自己的文案：多条管理，顺序或随机轮播，刷新、定时或点击切换。在首页双击右键问候语可打开管理面板。",
+      en: "Replaces the Notion AI home greeting with your own lines, shown in order or at random, switched on refresh, on a timer or by click. Double right-click the greeting to manage them."
+    },
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,
@@ -1764,7 +1777,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       if (!menuRegistered && typeof GM_registerMenuCommand === "function") {
         menuRegistered = true;
         try {
-          GM_registerMenuCommand(tr("menu"), () => openGreetingManager());
+          GM_registerMenuCommand(tr2("menu"), () => openGreetingManager());
         } catch {}
       }
       check2();
@@ -2164,18 +2177,18 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var RAIL_MARGIN = 20;
   var SIDE_PANELS = "[role='complementary'], aside";
   var settings4 = definePluginSettings({
-    showAssistant: { type: "boolean", label: "目录显示 AI 回复 / Show AI replies", default: true },
+    showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     effect: {
       type: "select",
-      label: "跳转定位效果 / Jump effect",
+      label: { zh: "跳转定位效果", en: "Jump effect" },
       default: "border",
-      description: "选择后立即保存，点「预览」查看效果演示 / Saved on change; use Preview to see it",
-      options: EFFECTS.map((effect) => ({ value: effect.value, label: `${effect.zh} / ${effect.en}（${effect.hint}）` }))
+      description: { zh: "跳转到消息后用什么方式标出它", en: "How a message is marked after jumping to it" },
+      options: EFFECTS.map((effect) => ({ value: effect.value, label: { zh: effect.zh, en: effect.en } }))
     },
     preview: {
       type: "action",
-      label: "预览当前效果 / Preview effect",
-      button: "预览 / Preview",
+      label: { zh: "预览效果", en: "Preview effect" },
+      button: { zh: "预览", en: "Preview" },
       run: () => previewEffect(settings4.store.effect)
     }
   });
@@ -2315,8 +2328,11 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   }
   var navigator_default = definePlugin({
     name: "chatNavigator",
-    title: "对话目录 / Chat navigator",
-    description: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+    title: { zh: "对话目录", en: "Chat navigator" },
+    description: {
+      zh: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+      en: "Shows a Notion-style outline beside Notion AI chats. Hover to expand it and click to jump to a prompt or reply."
+    },
     icon: Icons.list,
     tags: ["chat"],
     enabledByDefault: true,
@@ -2390,18 +2406,24 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   // src/plugins/settings/styles.ts
   var CSS2 = `
 :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
-  --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #f7f7f5; --surface-hover: rgba(55,53,47,.06);
+  --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #fbfbfa; --surface-hover: rgba(55,53,47,.06);
+  --surface-field: rgba(242,241,238,.6);
   --border-l1: rgba(55,53,47,.09); --border-l2: rgba(55,53,47,.16);
   --fg-primary: #37352f; --fg-secondary: #787774; --fg-tertiary: #a5a29a; --fg-invert: #ffffff;
-  --fg-danger: #e03e3e; --fg-warning: #d9730d; --overlay: rgba(15,15,15,.45); --shadow: 0 16px 48px rgba(15,15,15,.2);
+  --accent: #2383e2; --accent-hover: #0077d4; --switch-off: rgba(135,131,120,.3);
+  --fg-danger: #eb5757; --fg-warning: #d9730d; --overlay: rgba(15,15,15,.6);
+  --shadow: 0 0 0 1px rgba(15,15,15,.05), 0 24px 48px rgba(15,15,15,.2);
   color-scheme: light;
   font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--fg-primary); }
 :host([data-theme="dark"]) {
   --surface-base: #191919; --surface-l1: #202020; --surface-l2: #252525; --surface-hover: rgba(255,255,255,.055);
-  --border-l1: rgba(255,255,255,.08); --border-l2: rgba(255,255,255,.14);
-  --fg-primary: #ebebea; --fg-secondary: #9b9b9b; --fg-tertiary: #6e6e6e; --fg-invert: #191919;
-  --fg-danger: #ff7369; --overlay: rgba(0,0,0,.6); --shadow: 0 16px 48px rgba(0,0,0,.5);
+  --surface-field: rgba(255,255,255,.055);
+  --border-l1: rgba(255,255,243,.082); --border-l2: rgba(255,255,235,.1);
+  --fg-primary: #f0efed; --fg-secondary: #ada9a3; --fg-tertiary: #7d7a75; --fg-invert: #191919;
+  --accent: #2783de; --accent-hover: #3b8fe2; --switch-off: rgba(202,204,206,.3);
+  --fg-danger: #ff7369; --overlay: rgba(0,0,0,.6);
+  --shadow: 0 0 0 1px #383836, 0 24px 48px rgba(25,25,25,.64);
   color-scheme: dark; }
 * { box-sizing: border-box; }
 svg { width: 1rem; height: 1rem; flex-shrink: 0; }
@@ -2414,39 +2436,39 @@ button { font: inherit; color: inherit; }
 .layer-confirm { background: color-mix(in srgb, var(--overlay) 60%, transparent); }
 
 /* Buttons */
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; height: 2rem; padding: 0 .875rem;
-  border-radius: .625rem; border: 1px solid transparent; font-size: .8125rem; font-weight: 500; cursor: pointer; white-space: nowrap;
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: .375rem; height: 28px; padding: 0 10px;
+  border-radius: 6px; border: 1px solid transparent; font-size: 14px; font-weight: 500; line-height: 1; cursor: pointer; white-space: nowrap;
   transition: background-color .12s, border-color .12s, color .12s; }
 .btn:disabled { opacity: .5; cursor: default; }
-.btn-primary { background: var(--fg-primary); color: var(--fg-invert); }
-.btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--fg-primary) 86%, var(--surface-base)); }
-.btn-secondary { background: var(--surface-l1); border-color: var(--border-l2); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-secondary { background: transparent; border-color: var(--border-l2); }
 .btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
 .btn-tertiary { background: transparent; }
 .btn-tertiary:hover:not(:disabled) { background: var(--surface-hover); }
-.btn-danger { background: var(--fg-danger); color: #fff; }
-.btn-danger:hover { background: color-mix(in srgb, var(--fg-danger) 85%, #000); }
-.btn-square { width: 2rem; padding: 0; }
+.btn-danger { background: transparent; color: var(--fg-danger); border-color: color-mix(in srgb, var(--fg-danger) 50%, transparent); }
+.btn-danger:hover { background: color-mix(in srgb, var(--fg-danger) 10%, transparent); }
+.btn-square { width: 28px; padding: 0; }
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; padding: 0;
-  border: 0; border-radius: .5rem; background: transparent; color: var(--fg-tertiary); cursor: pointer; }
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg-tertiary); cursor: pointer; }
 .icon-btn:hover { background: var(--surface-hover); color: var(--fg-primary); }
 .icon-btn.active { color: var(--fg-primary); }
 .icon-btn svg { width: .9375rem; height: .9375rem; }
 
-/* Switch (Grok/Void++ SettingsSwitch) */
-.switch { position: relative; flex-shrink: 0; width: 2.25rem; height: 1.25rem; margin: 0; padding: 0; border: 0; border-radius: 999px;
-  background: color-mix(in srgb, var(--fg-primary) 22%, transparent); cursor: pointer; transition: background-color .15s; }
-.switch::after { content: ""; position: absolute; top: .125rem; left: .125rem; width: 1rem; height: 1rem; border-radius: 50%;
-  background: var(--surface-base); box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .15s; }
-.switch[aria-checked="true"] { background: var(--fg-primary); }
-.switch[aria-checked="true"]::after { transform: translateX(1rem); }
+/* Switch (Notion: 30×18 track, 14px thumb, blue when on) */
+.switch { position: relative; flex-shrink: 0; width: 30px; height: 18px; margin: 0; padding: 0; border: 0; border-radius: 44px;
+  background: var(--switch-off); cursor: pointer; transition: background-color .2s; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(15,15,15,.2); transition: transform .2s ease-out; }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { transform: translateX(12px); }
 .switch:disabled { cursor: default; opacity: .6; }
 
 /* Inputs */
-.input, .select { height: 2.25rem; border-radius: .75rem; border: 1px solid var(--border-l2); background: var(--surface-l1);
-  color: var(--fg-primary); font: inherit; font-size: .875rem; padding: 0 .75rem; }
+.input, .select { height: 32px; border-radius: 6px; border: 1px solid var(--border-l2); background: var(--surface-field);
+  color: var(--fg-primary); font: inherit; font-size: 14px; padding: 0 10px; }
 .input::placeholder { color: var(--fg-tertiary); }
-.input:focus, .select:focus { outline: none; border-color: color-mix(in srgb, var(--fg-primary) 45%, transparent); }
+.input:focus, .select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .select { appearance: none; padding-right: 2rem; cursor: pointer;
   background-image: linear-gradient(45deg, transparent 50%, var(--fg-secondary) 50%), linear-gradient(135deg, var(--fg-secondary) 50%, transparent 50%);
   background-position: calc(100% - 1rem) 52%, calc(100% - .7rem) 52%; background-size: .3rem .3rem; background-repeat: no-repeat; }
@@ -2454,12 +2476,12 @@ button { font: inherit; color: inherit; }
 
 /* Main dialog: nav + content */
 .dialog { position: relative; display: flex; width: min(56rem, calc(100vw - 2rem)); height: min(40rem, calc(100vh - 2rem));
-  border-radius: 1rem; border: 1px solid var(--border-l1); background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
+  border-radius: 12px; border: 0; background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
 .nav { position: relative; flex: 0 0 13rem; display: flex; flex-direction: column; gap: .125rem; padding: 1rem .75rem;
   background: var(--surface-l2); border-right: 1px solid var(--border-l1); }
 .nav-group { padding: .25rem .5rem .375rem; font-size: .75rem; font-weight: 500; color: var(--fg-tertiary); }
-.nav-item { display: flex; align-items: center; gap: .5rem; height: 2rem; padding: 0 .625rem; border: 0; border-radius: .5rem;
-  background: transparent; color: var(--fg-secondary); font-size: .875rem; text-align: left; cursor: pointer; }
+.nav-item { display: flex; align-items: center; gap: .5rem; height: 28px; padding: 0 6px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--fg-secondary); font-size: 14px; font-weight: 500; text-align: left; cursor: pointer; }
 .nav-item:hover { background: var(--surface-hover); color: var(--fg-primary); }
 .nav-item[aria-current="page"] { background: var(--surface-hover); color: var(--fg-primary); font-weight: 500; }
 .version { position: absolute; left: 0; right: 0; bottom: 0; padding: .75rem; font-size: .625rem; line-height: 1rem;
@@ -2467,7 +2489,7 @@ button { font: inherit; color: inherit; }
 .version a { color: inherit; text-decoration: none; } .version a:hover { text-decoration: underline; }
 .content { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 1.25rem; }
 .content-head { display: flex; align-items: center; gap: .375rem; padding: 0 3.5rem 0 1.25rem; margin-bottom: 1rem; }
-.content-head h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
+.content-head h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 600; }
 .hint { display: inline-flex; color: var(--fg-tertiary); cursor: help; }
 .hint svg { width: .875rem; height: .875rem; }
 .close { position: absolute; top: 1rem; right: 1rem; z-index: 2; color: var(--fg-secondary); }
@@ -2513,35 +2535,45 @@ button { font: inherit; color: inherit; }
   font-size: .7rem; color: var(--fg-tertiary); min-width: 0; }
 .card-footer span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Nested dialogs (Void++ VoidPPDialogShell) */
-.sheet { position: relative; display: flex; flex-direction: column; gap: 1rem; width: min(32rem, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem); padding: 1.5rem; border-radius: 1rem; border: 1px solid var(--border-l1);
+/* Nested dialogs (Void++ VoidPPDialogShell, Notion metrics) */
+.sheet { position: relative; display: flex; flex-direction: column; gap: 20px; width: min(36rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem); padding: 28px 32px 24px; border-radius: 12px; border: 0;
   background: var(--surface-l1); box-shadow: var(--shadow); overflow: hidden; }
-.sheet-sm { width: min(28rem, calc(100vw - 2rem)); }
-.sheet-head { padding-right: 2.5rem; }
-.sheet-title { margin: 0; font-size: 1.125rem; font-weight: 600; line-height: 1.5rem; }
-.sheet-desc { margin: .375rem 0 0; font-size: .875rem; color: var(--fg-secondary); }
+.sheet-sm { width: min(28rem, calc(100vw - 2rem)); gap: 16px; padding: 24px; }
+.sheet-head { padding-right: 2rem; }
+.sheet-title { margin: 0; font-size: 20px; font-weight: 600; line-height: 28px; }
+.sheet-desc { margin: 4px 0 0; font-size: 14px; line-height: 20px; color: var(--fg-secondary); }
+.sheet-body { display: flex; flex-direction: column; gap: 28px; min-height: 0; overflow-y: auto; margin: 0 -32px -24px; padding: 0 32px 24px; }
+.sheet > .close { top: 18px; right: 18px; }
 .field { display: flex; flex-direction: column; gap: .25rem; min-height: 0; }
-.field-label { font-size: .875rem; font-weight: 500; }
-.field-text { margin: 0; font-size: .875rem; color: var(--fg-secondary); }
-.settings-list { display: flex; flex-direction: column; gap: .75rem; min-height: 0; overflow-y: auto; padding: .25rem 0; }
-.settings-list[data-off] { opacity: .55; }
-.footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: auto; }
+.field-label { font-size: 14px; font-weight: 500; }
+.field-text { margin: 0; font-size: 14px; color: var(--fg-secondary); }
+.footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: auto; }
 
-/* Setting rows (Grok SettingsRow / Void++ SettingField) */
-.row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
-.row-body { flex: 1; min-width: 8rem; display: flex; flex-direction: column; }
+/* Sections and rows (Notion Settings: section title over a hairline, 24px between rows) */
+.section { display: flex; flex-direction: column; }
+.section-title { margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-l1);
+  font-size: 16px; line-height: 24px; font-weight: 500; color: var(--fg-primary); }
+.settings-list { display: flex; flex-direction: column; gap: 24px; }
+.settings-list[data-off] { opacity: .55; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 28px; }
+.row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.row-control { flex: 0 1 auto; min-width: 0; max-width: 50%; display: flex; justify-content: flex-end; }
 .stack { display: flex; flex-direction: column; gap: .5rem; }
-.s-title { font-size: .875rem; font-weight: 500; line-height: 1.25rem; color: var(--fg-primary); }
-.s-desc { font-size: .75rem; line-height: 1rem; color: var(--fg-secondary); }
-.color { display: flex; align-items: center; gap: .5rem; }
-.color input { width: 2rem; height: 2rem; padding: .125rem; border: 1px solid var(--border-l2); border-radius: .5rem; background: transparent; cursor: pointer; }
-.color input::-webkit-color-swatch-wrapper { padding: 0; } .color input::-webkit-color-swatch { border: 0; border-radius: .375rem; }
-.color input::-moz-color-swatch { border: 0; border-radius: .375rem; }
-.color-value { min-width: 4.5rem; font-size: .875rem; color: var(--fg-tertiary); font-variant-numeric: tabular-nums; }
-.number { width: 6rem; }
-.row .select { flex: 0 1 auto; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-title { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--fg-primary); }
+.s-desc { font-size: 13px; line-height: 18px; color: var(--fg-secondary); }
+.color { display: flex; align-items: center; gap: 8px; }
+.color input { width: 28px; height: 28px; padding: 2px; border: 1px solid var(--border-l2); border-radius: 6px; background: transparent; cursor: pointer; }
+.color input::-webkit-color-swatch-wrapper { padding: 0; } .color input::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.color input::-moz-color-swatch { border: 0; border-radius: 4px; }
+.color-value { font-size: 14px; color: var(--fg-secondary); font-variant-numeric: tabular-nums; }
+.number { width: 5rem; text-align: right; }
+.row .select { height: 28px; max-width: 100%; padding-left: 8px; font-weight: 500; border-color: transparent; background-color: transparent;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .select:hover { background-color: var(--surface-hover); }
+.row .input { height: 28px; }
 .dialog:focus, .sheet:focus { outline: none; }
+.prefs { gap: 0; padding-top: .25rem; }
 
 /* About tab */
 .about { display: flex; flex-direction: column; gap: .75rem; overflow-y: auto; padding-bottom: 1.5rem; }
@@ -2573,6 +2605,7 @@ button { font: inherit; color: inherit; }
     return node;
   }
   var option = (value, text, selected = false) => h("option", { value, selected }, text);
+  var both = (text) => typeof text === "string" ? text : `${text.zh} ${text.en}`;
   var icon = (markup, filled = false) => svgIcon(markup, filled);
   function button(variant, label, onclick, extra = "") {
     return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
@@ -2648,46 +2681,53 @@ button { font: inherit; color: inherit; }
     node.tabIndex = -1;
     node.focus();
   }
-  function label(def) {
-    return h("div", { class: "row-body" }, h("div", { class: "s-title" }, def.label), def.description && h("div", { class: "s-desc" }, def.description));
+  function row(title, description, control) {
+    return h("div", { class: "row" }, h("div", { class: "row-body" }, h("div", { class: "s-title" }, title), description && h("div", { class: "s-desc" }, description)), h("div", { class: "row-control" }, control));
+  }
+  function section(title, ...children) {
+    return h("section", { class: "section" }, h("h4", { class: "section-title" }, title), ...children);
+  }
+  function selectControl(label, options, value, onChange) {
+    const select = h("select", { class: "select", "aria-label": label, onchange: () => onChange(select.value) });
+    for (const o of options)
+      select.append(option(o.value, o.label, value === o.value));
+    return select;
   }
   function settingField(plugin, key, def) {
     const store = plugin.settings.store;
     const set = (value) => setValue(plugin.name, key, value);
+    const title = tr(def.label);
+    const description = def.description && tr(def.description);
     switch (def.type) {
       case "boolean":
-        return h("div", { class: "row" }, label(def), switchControl(Boolean(store[key]), def.label, set));
-      case "select": {
-        const select = h("select", { class: "select", "aria-label": def.label, onchange: () => set(select.value) });
-        for (const o of def.options)
-          select.append(option(o.value, o.label, store[key] === o.value));
-        return h("div", { class: "row" }, label(def), select);
-      }
+        return row(title, description, switchControl(Boolean(store[key]), title, set));
+      case "select":
+        return row(title, description, selectControl(title, def.options.map((o) => ({ value: o.value, label: tr(o.label) })), String(store[key]), set));
       case "color": {
         const value = h("span", { class: "color-value" }, String(store[key]));
-        const input = h("input", { type: "color", value: String(store[key]), "aria-label": def.label });
+        const input = h("input", { type: "color", value: String(store[key]), "aria-label": title });
         input.addEventListener("input", () => {
           value.textContent = input.value.toLowerCase();
           set(input.value.toLowerCase());
         });
-        return h("div", { class: "row" }, label(def), h("div", { class: "color" }, input, value));
+        return row(title, description, h("div", { class: "color" }, value, input));
       }
       case "number": {
-        const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": def.label });
+        const input = h("input", { type: "number", class: "input number", min: String(def.min), max: String(def.max), step: "1", value: String(store[key]), "aria-label": title });
         input.addEventListener("change", () => {
           const value = Math.min(def.max, Math.max(def.min, Math.round(Number(input.value) || def.default)));
           input.value = String(value);
           set(value);
         });
-        return h("div", { class: "stack" }, label(def), input);
+        return row(title, description, input);
       }
       case "action":
-        return h("div", { class: "row" }, label(def), button("secondary", def.button, () => def.run()));
+        return row(title, description, button("secondary", tr(def.button), () => def.run()));
     }
   }
   function openPluginDialog(plugin) {
     let layer;
-    const node = sheet(plugin.title, plugin.description, () => layer.close());
+    const node = sheet(tr(plugin.title), tr(plugin.description), () => layer.close());
     const entries = settingKeys(plugin);
     const list = h("div", { class: "settings-list" });
     const render = () => {
@@ -2695,15 +2735,15 @@ button { font: inherit; color: inherit; }
       list.toggleAttribute("data-off", !isEnabled(plugin));
     };
     render();
-    node.append(h("div", { class: "separator" }));
-    node.append(h("div", { class: "field" }, h("div", { class: "field-label" }, t("设置", "Settings")), entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
+    const body = h("div", { class: "sheet-body" }, section(t("设置", "Settings"), entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
     const storable = entries.filter(([, def]) => def.type !== "action").map(([key]) => key);
     if (storable.length) {
-      node.append(h("div", { class: "footer" }, button("secondary", t("恢复默认", "Reset"), () => confirmDialog(t("恢复默认设置", "Reset settings"), t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."), t("恢复默认", "Reset"), () => {
+      body.append(section(t("重置", "Reset"), row(t("恢复默认设置", "Reset to defaults"), t("把这个插件的设置恢复为默认值", "Restore this plugin's settings to their defaults"), button("secondary", t("恢复默认", "Reset"), () => confirmDialog(t("恢复默认设置", "Reset settings"), t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."), t("恢复默认", "Reset"), () => {
         resetValues(plugin.name, storable);
         render();
-      }))));
+      })))));
     }
+    node.append(body);
     layer = pushLayer("nested", node);
     node.tabIndex = -1;
     node.focus();
@@ -2720,14 +2760,14 @@ button { font: inherit; color: inherit; }
     }, { active: starred, filled: starred }), !plugin.required && iconButton(Icons.pin, pinned ? t("取消置顶", "Unpin from top") : t("置顶", "Pin to top"), () => {
       toggleInList("pinned", plugin.name);
       refresh();
-    }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)), switchControl(enabled, plugin.title, (value) => {
+    }, { active: pinned, filled: pinned }), hasSettings(plugin) && iconButton(Icons.sliders, t("配置", "Configure"), () => openPluginDialog(plugin)), switchControl(enabled, tr(plugin.title), (value) => {
       setEnabled(plugin, value);
       refresh();
     }, plugin.required));
-    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title: plugin.title }, plugin.title), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), controls), h("div", { class: "card-desc", title: plugin.description }, plugin.description)), h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
+    return h("div", { class: cls, "data-plugin": plugin.name }, h("div", { class: "card-body" }, h("div", { class: "card-head" }, h("div", { class: "card-name" }, h("span", { class: "card-icon" }, icon(plugin.icon ?? Icons.plug)), h("span", { class: "card-title", title: tr(plugin.title) }, tr(plugin.title)), crashed && h("span", { class: "badge danger", title: t("此插件启动失败", "This plugin failed to start") }, icon(Icons.alert)), plugin.required && h("span", { class: "badge", title: t("NotionAI++ 运行必需", "Required for NotionAI++ to work") }, icon(Icons.lock))), controls), h("div", { class: "card-desc", title: tr(plugin.description) }, tr(plugin.description))), h("div", { class: "card-footer" }, h("span", {}, plugin.name)));
   }
   function pluginsTab() {
-    const all = allPlugins().slice().sort((a, b) => a.title.localeCompare(b.title));
+    const all = allPlugins().slice().sort((a, b) => tr(a.title).localeCompare(tr(b.title)));
     const user = all.filter((p) => !p.required);
     const required = all.filter((p) => p.required);
     const state = { category: readList("starred").length ? "favorites" : "all", search: "", filter: "all" };
@@ -2742,7 +2782,7 @@ button { font: inherit; color: inherit; }
       if (state.filter !== "all" && isEnabled(p) !== (state.filter === "enabled"))
         return false;
       const q = state.search.trim().toLowerCase();
-      return !q || `${p.title} ${p.name} ${p.description}`.toLowerCase().includes(q);
+      return !q || [p.title, p.name, p.description].map(both).join(" ").toLowerCase().includes(q);
     };
     const render = () => {
       tabs.replaceChildren(...categories.map((c) => h("button", {
@@ -2795,12 +2835,26 @@ button { font: inherit; color: inherit; }
     render();
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
+  var LANGUAGE_KEY = "language";
+  function preferencesTab() {
+    const current = String(getValue(SELF, LANGUAGE_KEY) ?? "auto");
+    const language = selectControl(t("界面语言", "Language"), [
+      { value: "auto", label: t("跟随 Notion", "Same as Notion") },
+      { value: "zh", label: "中文" },
+      { value: "en", label: "English" }
+    ], current, (value) => {
+      setValue(SELF, LANGUAGE_KEY, value);
+      openSettings("preferences");
+    });
+    return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
+  }
   function aboutTab() {
-    const version = "[20261007] v1.1.4";
+    const version = "[20261007] v1.2.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
     { id: "plugins", icon: Icons.plug, title: () => t("插件", "Plugins"), hint: () => t("开关各项功能；点滑杆图标进行配置。", "Toggle features. Click the sliders icon to configure."), render: pluginsTab },
+    { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab }
   ];
   function close() {
@@ -2828,7 +2882,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.1.4";
+    const version = "[20261007] v1.2.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -2854,8 +2908,8 @@ button { font: inherit; color: inherit; }
   }
   var settings_default = definePlugin({
     name: SELF,
-    title: "设置面板 / Settings",
-    description: "NotionAI++ 设置面板与脚本管理器菜单命令。",
+    title: { zh: "设置面板", en: "Settings" },
+    description: { zh: "NotionAI++ 设置面板与脚本管理器菜单命令。", en: "The NotionAI++ settings panel and its userscript manager menu command." },
     icon: Icons.cog,
     enabledByDefault: true,
     required: true,
@@ -4597,35 +4651,35 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   var settings5 = definePluginSettings({
     usageStats: {
       type: "boolean",
-      label: "记录每日用量 / Daily usage stats",
-      description: "按天记录月度额度的使用量；悬停最小化圆环显示今天，点卡片里的统计按钮查看历史 / Log monthly-allowance use per day; hover the minimized rings for today, open history from the card",
+      label: { zh: "记录每日用量", en: "Daily usage stats" },
+      description: { zh: "按天记录月度额度的使用量", en: "Log how much of the monthly allowance is used each day" },
       default: true
     },
     hoverStatsDelay: {
       type: "number",
-      label: "悬停显示今日用量的延迟（秒） / Hover delay for today (seconds)",
+      label: { zh: "悬停显示今日用量的延迟（秒）", en: "Delay before showing today on hover, in seconds" },
       default: HOVER_DELAY.default,
       min: HOVER_DELAY.min,
       max: HOVER_DELAY.max
     },
     retainDays: {
       type: "number",
-      label: "保留历史天数 / Days of history to keep",
+      label: { zh: "保留历史天数", en: "Days of history to keep" },
       default: RETAIN.default,
       min: RETAIN.min,
       max: RETAIN.max
     },
     openStats: {
       type: "action",
-      label: "按日期查看用量 / Usage by date",
-      button: "打开 / Open",
+      label: { zh: "按日期查看用量", en: "Usage by date" },
+      button: { zh: "打开", en: "Open" },
       run: () => openStats(stats)
     },
     clearStats: {
       type: "action",
-      label: "清空用量历史 / Clear usage history",
-      description: "删除本设备上记录的每日用量 / Delete the daily usage recorded on this device",
-      button: "清空… / Clear…",
+      label: { zh: "清空用量历史", en: "Clear usage history" },
+      description: { zh: "删除本设备上记录的每日用量", en: "Delete the daily usage recorded on this device" },
+      button: { zh: "清空…", en: "Clear…" },
       run: () => openStats(stats, { confirmClearNow: true })
     }
   });
@@ -4656,8 +4710,11 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
   }
   var usage_default = definePlugin({
     name: "usageMeter",
-    title: "AI 用量 / AI usage",
-    description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
+    title: { zh: "AI 用量", en: "AI usage" },
+    description: {
+      zh: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
+      en: "Shows Notion AI's 6-hour and monthly usage, plan and trial status, and logs monthly use per day. Minimized, two rings sit at the bottom center of the AI composer."
+    },
     icon: Icons.gauge,
     tags: ["composer"],
     enabledByDefault: true,
@@ -4695,7 +4752,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.1.4";
+    win[FLAG] = "[20261007] v1.2.0";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4705,7 +4762,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.1.4"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.2.0"} started`);
   }
   boot();
 })();

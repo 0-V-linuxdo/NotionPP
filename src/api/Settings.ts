@@ -6,6 +6,7 @@
 
 import { isRecord, safeJson } from "@utils/guards";
 import { Logger } from "@utils/Logger";
+import type { Text } from "@utils/page";
 
 const logger = new Logger("Settings");
 
@@ -15,23 +16,23 @@ export type OptionValue = string | number | boolean;
 
 export interface BooleanOption {
     type: "boolean";
-    label: string;
-    description?: string;
+    label: Text;
+    description?: Text;
     default: boolean;
 }
 
 export interface SelectOption {
     type: "select";
-    label: string;
-    description?: string;
+    label: Text;
+    description?: Text;
     default: string;
-    options: { value: string; label: string }[];
+    options: { value: string; label: Text }[];
 }
 
 export interface ColorOption {
     type: "color";
-    label: string;
-    description?: string;
+    label: Text;
+    description?: Text;
     /** #rrggbb */
     default: string;
 }
@@ -40,8 +41,8 @@ export const isHexColor = (value: unknown): value is string => typeof value === 
 
 export interface NumberOption {
     type: "number";
-    label: string;
-    description?: string;
+    label: Text;
+    description?: Text;
     default: number;
     min: number;
     max: number;
@@ -50,9 +51,9 @@ export interface NumberOption {
 /** A button in the settings dialog; it stores nothing. */
 export interface ActionOption {
     type: "action";
-    label: string;
-    description?: string;
-    button: string;
+    label: Text;
+    description?: Text;
+    button: Text;
     run(): void;
 }
 

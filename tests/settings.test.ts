@@ -11,6 +11,7 @@ import { getValue, reloadFromStorage, SETTINGS_KEY } from "@api/Settings";
 import focusHighlight from "@plugins/focusHighlight";
 import chatNavigator from "@plugins/navigator";
 import settingsPlugin, { openSettings, SETTINGS_HOST_ID } from "@plugins/settings";
+import { tr } from "@utils/page";
 
 const root = () => document.getElementById(SETTINGS_HOST_ID)!.shadowRoot!;
 const card = (name: string) => root().querySelector<HTMLElement>(`.card[data-plugin="${name}"]`)!;
@@ -26,7 +27,7 @@ describe("settings dialog", () => {
 
     test("renders Void++-style nav, category tabs and a plugin card grid", () => {
         openSettings();
-        expect([...root().querySelectorAll(".nav-item")].map(n => n.getAttribute("aria-current"))).toEqual(["page", null]);
+        expect([...root().querySelectorAll(".nav-item")].map(n => n.getAttribute("aria-current"))).toEqual(["page", null, null]);
         expect(root().querySelectorAll(".tab").length).toBeGreaterThanOrEqual(2);
         expect(root().querySelector(".tab.active")!.textContent).toMatch(/All|全部/);
         const grids = root().querySelectorAll(".grid");
@@ -65,13 +66,13 @@ describe("settings dialog", () => {
         const buttons = card(focusHighlight.name).querySelectorAll<HTMLButtonElement>(".icon-btn");
         buttons[buttons.length - 1].click();
         const sheet = root().querySelector(".layer-nested .sheet")!;
-        expect(sheet.querySelector(".sheet-title")!.textContent).toBe(focusHighlight.title);
+        expect(sheet.querySelector(".sheet-title")!.textContent).toBe(tr(focusHighlight.title));
         const color = sheet.querySelector<HTMLInputElement>("input[type=color]")!;
         color.value = "#ff0000";
         color.dispatchEvent(new Event("input"));
         const key = Object.keys(focusHighlight.settings!.def).find(k => focusHighlight.settings!.def[k].type === "color")!;
         expect(getValue(focusHighlight.name, key)).toBe("#ff0000");
-        [...sheet.querySelectorAll<HTMLButtonElement>(".footer .btn")].at(-1)!.click();
+        [...sheet.querySelectorAll<HTMLButtonElement>(".section .btn")].at(-1)!.click();
         root().querySelector<HTMLButtonElement>(".layer-confirm .btn-danger")!.click();
         expect(getValue(focusHighlight.name, key)).toBeUndefined();
         expect(root().querySelector(".layer-confirm")).toBeNull();
@@ -88,5 +89,31 @@ describe("settings dialog", () => {
         expect(document.getElementById(SETTINGS_HOST_ID)).not.toBeNull();
         esc();
         expect(document.getElementById(SETTINGS_HOST_ID)).toBeNull();
+    });
+
+    test("plugin dialog shows one language, and the language preference switches it", () => {
+        const openNavigator = () => {
+            openSettings();
+            const buttons = card(chatNavigator.name).querySelectorAll<HTMLButtonElement>(".icon-btn");
+            buttons[buttons.length - 1].click();
+            return root().querySelector(".layer-nested .sheet")!;
+        };
+        document.documentElement.lang = "en";
+        let sheet = openNavigator();
+        const titles = () => [...sheet.querySelectorAll(".s-title")].map(node => node.textContent);
+        expect(sheet.querySelector(".sheet-title")!.textContent).toBe("Chat navigator");
+        expect(titles()).toContain("Jump effect");
+        expect(titles().some(text => / \/ /.test(text ?? ""))).toBe(false);
+        expect([...sheet.querySelectorAll("option")].some(o => /[\u4e00-\u9fff]/.test(o.textContent ?? ""))).toBe(false);
+
+        openSettings("preferences");
+        const language = root().querySelector<HTMLSelectElement>(".prefs select")!;
+        language.value = "zh";
+        language.dispatchEvent(new Event("change"));
+        expect(getValue("settings", "language")).toBe("zh");
+        expect(root().querySelector(".content-head h2")!.textContent).toBe("偏好设置");
+        sheet = openNavigator();
+        expect(sheet.querySelector(".sheet-title")!.textContent).toBe("对话目录");
+        expect(titles()).toContain("跳转定位效果");
     });
 });

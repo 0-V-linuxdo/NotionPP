@@ -17,35 +17,35 @@ import { activeMonthly } from "./verdict";
 export const settings = definePluginSettings({
     usageStats: {
         type: "boolean",
-        label: "记录每日用量 / Daily usage stats",
-        description: "按天记录月度额度的使用量；悬停最小化圆环显示今天，点卡片里的统计按钮查看历史 / Log monthly-allowance use per day; hover the minimized rings for today, open history from the card",
+        label: { zh: "记录每日用量", en: "Daily usage stats" },
+        description: { zh: "按天记录月度额度的使用量", en: "Log how much of the monthly allowance is used each day" },
         default: true,
     },
     hoverStatsDelay: {
         type: "number",
-        label: "悬停显示今日用量的延迟（秒） / Hover delay for today (seconds)",
+        label: { zh: "悬停显示今日用量的延迟（秒）", en: "Delay before showing today on hover, in seconds" },
         default: HOVER_DELAY.default,
         min: HOVER_DELAY.min,
         max: HOVER_DELAY.max,
     },
     retainDays: {
         type: "number",
-        label: "保留历史天数 / Days of history to keep",
+        label: { zh: "保留历史天数", en: "Days of history to keep" },
         default: RETAIN.default,
         min: RETAIN.min,
         max: RETAIN.max,
     },
     openStats: {
         type: "action",
-        label: "按日期查看用量 / Usage by date",
-        button: "打开 / Open",
+        label: { zh: "按日期查看用量", en: "Usage by date" },
+        button: { zh: "打开", en: "Open" },
         run: () => openStats(stats),
     },
     clearStats: {
         type: "action",
-        label: "清空用量历史 / Clear usage history",
-        description: "删除本设备上记录的每日用量 / Delete the daily usage recorded on this device",
-        button: "清空… / Clear…",
+        label: { zh: "清空用量历史", en: "Clear usage history" },
+        description: { zh: "删除本设备上记录的每日用量", en: "Delete the daily usage recorded on this device" },
+        button: { zh: "清空…", en: "Clear…" },
         run: () => openStats(stats, { confirmClearNow: true }),
     },
 });
@@ -78,8 +78,11 @@ function mount() {
 
 export default definePlugin({
     name: "usageMeter",
-    title: "AI 用量 / AI usage",
-    description: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
+    title: { zh: "AI 用量", en: "AI usage" },
+    description: {
+        zh: "显示 Notion AI 6 小时与月度用量、套餐与试用状态，并按天统计月度额度的使用量；最小化后双圆环贴在 AI 输入框底部中央。",
+        en: "Shows Notion AI's 6-hour and monthly usage, plan and trial status, and logs monthly use per day. Minimized, two rings sit at the bottom center of the AI composer.",
+    },
     icon: Icons.gauge,
     tags: ["composer"],
     enabledByDefault: true,

@@ -30,18 +30,18 @@ const THINKING_LABEL = /^(?:\d+\s*(?:steps?|个?步骤?)|thought|thinking|reason
 export const settings = definePluginSettings({
     mode: {
         type: "select",
-        label: "折叠时机 / When to collapse",
-        description: "回复完成后折叠，或生成过程中就折叠 / After the reply finishes, or while it is still streaming",
+        label: { zh: "折叠时机", en: "When to collapse" },
+        description: { zh: "回复完成后折叠，或生成过程中就折叠", en: "After the reply finishes, or while it is still writing" },
         default: "finished",
         options: [
-            { value: "finished", label: "回复完成后 / When the reply finishes" },
-            { value: "immediate", label: "立即（含生成中）/ Immediately, even while streaming" },
+            { value: "finished", label: { zh: "回复完成后", en: "When the reply finishes" } },
+            { value: "immediate", label: { zh: "立即（含生成中）", en: "Immediately, even while streaming" } },
         ],
     },
     collapseHistory: {
         type: "boolean",
-        label: "折叠历史回复 / Collapse earlier replies",
-        description: "打开对话时，也折叠已经展开的旧回复思考 / Also collapse expanded thinking in replies already on the page",
+        label: { zh: "折叠历史回复", en: "Collapse earlier replies" },
+        description: { zh: "打开对话时，也折叠已经展开的旧回复思考", en: "Also collapse expanded thinking in replies already on the page" },
         default: true,
     },
 });
@@ -110,8 +110,11 @@ function claim(event: Event) {
 
 export default definePlugin({
     name: "AutoCollapseThinking",
-    title: "自动折叠 AI 思考",
-    description: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+    title: { zh: "自动折叠 AI 思考", en: "Auto-collapse AI thinking" },
+    description: {
+        zh: "Notion AI 回复完成后，自动折叠它的思考步骤（“N steps”）。手动展开过的不会再被折叠。",
+        en: "Collapses Notion AI's thinking steps (\"N steps\") once a reply finishes. Steps you expand stay open.",
+    },
     icon: Icons.collapse,
     tags: ["chat"],
     enabledByDefault: true,
