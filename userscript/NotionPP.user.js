@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.3.4
+// @version      20261007.1.3.5
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2623,13 +2623,28 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const id = owner?.getAttribute(USER_STEP);
     return id ? `${id}:assistant` : null;
   }
+  var STROKE = "1.8";
+  function starIcon(native) {
+    const svg = svgIcon(Icons.star);
+    svg.setAttribute("stroke-width", STROKE);
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => name && !/Small$|Large$/.test(name));
+    if (classes?.length)
+      svg.setAttribute("class", classes.join(" "));
+    const size = native?.getBoundingClientRect();
+    const px = size && size.height ? Math.round(size.height) : 16;
+    svg.style.cssText = `${native?.getAttribute("style") ?? ""};width:${px}px;height:${px}px;display:block;flex-shrink:0;fill:none;stroke:currentColor`;
+    return svg;
+  }
   function paint(button, starred) {
     button.setAttribute("aria-pressed", String(starred));
     const label = starred ? t("取消星标", "Unstar") : t("加星标", "Star");
     button.setAttribute("aria-label", label);
     button.title = label;
-    button.style.color = starred ? STAR_COLOR : "";
-    button.querySelector("svg")?.setAttribute("fill", starred ? "currentColor" : "none");
+    const svg = button.querySelector("svg");
+    if (!svg)
+      return;
+    svg.style.color = starred ? STAR_COLOR : "";
+    svg.style.fill = starred ? "currentColor" : "none";
   }
   var mirrors = new WeakMap;
   function mirror(copy, button) {
@@ -2655,11 +2670,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     wrapper.setAttribute(MARK, id);
     const button = copy.cloneNode(false);
     button.removeAttribute("id");
-    const svg = svgIcon(Icons.star);
-    const size = copy.querySelector("svg")?.getBoundingClientRect();
-    const px = size && size.width ? Math.round(size.width) : 16;
-    svg.style.cssText = `width:${px}px;height:${px}px;display:block;flex-shrink:0`;
-    button.append(svg);
+    button.append(starIcon(copy.querySelector("svg")));
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3483,7 +3494,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.3.4";
+    const version = "[20261007] v1.3.5";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -3516,7 +3527,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.3.4";
+    const version = "[20261007] v1.3.5";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5270,7 +5281,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.3.4";
+    win[FLAG] = "[20261007] v1.3.5";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5292,7 +5303,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.3.4"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.3.5"} started`);
   }
   boot();
 })();

@@ -44,13 +44,35 @@ export function messageIdFor(button: Element, steps: HTMLElement[]): string | nu
     return id ? `${id}:assistant` : null;
 }
 
+/** Notion's 16px icons are filled shapes about 1.2px thick; 1.8 in the 24-unit star draws the same. */
+const STROKE = "1.8";
+
+/**
+ * The star in the same dress as its neighbours: the native icon's classes give it Notion's
+ * secondary icon color, size and hover behaviour, so only the starred state stands out.
+ */
+export function starIcon(native: SVGElement | null): SVGSVGElement {
+    const svg = svgIcon(Icons.star);
+    svg.setAttribute("stroke-width", STROKE);
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter(name => name && !/Small$|Large$/.test(name));
+    if (classes?.length) svg.setAttribute("class", classes.join(" "));
+    const size = native?.getBoundingClientRect();
+    const px = size && size.height ? Math.round(size.height) : 16;
+    // Inline, so the borrowed classes (which fill Notion's solid icons) cannot fill or unstroke the outline.
+    svg.style.cssText = `${native?.getAttribute("style") ?? ""};width:${px}px;height:${px}px;display:block;flex-shrink:0;fill:none;stroke:currentColor`;
+    return svg;
+}
+
 function paint(button: HTMLElement, starred: boolean) {
     button.setAttribute("aria-pressed", String(starred));
     const label = starred ? t("取消星标", "Unstar") : t("加星标", "Star");
     button.setAttribute("aria-label", label);
     button.title = label;
-    button.style.color = starred ? STAR_COLOR : "";
-    button.querySelector("svg")?.setAttribute("fill", starred ? "currentColor" : "none");
+    const svg = button.querySelector("svg");
+    if (!svg) return;
+    // On the icon itself: Notion's icon classes set its color, which a button color would not reach.
+    svg.style.color = starred ? STAR_COLOR : "";
+    svg.style.fill = starred ? "currentColor" : "none";
 }
 
 const mirrors = new WeakMap<HTMLElement, MutationObserver>();
@@ -80,11 +102,7 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
     wrapper.setAttribute(MARK, id);
     const button = copy.cloneNode(false) as HTMLElement;
     button.removeAttribute("id");
-    const svg = svgIcon(Icons.star);
-    const size = copy.querySelector("svg")?.getBoundingClientRect();
-    const px = size && size.width ? Math.round(size.width) : 16;
-    svg.style.cssText = `width:${px}px;height:${px}px;display:block;flex-shrink:0`;
-    button.append(svg);
+    button.append(starIcon(copy.querySelector("svg")));
     button.addEventListener("click", event => {
         event.preventDefault();
         event.stopPropagation();
