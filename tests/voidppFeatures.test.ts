@@ -186,5 +186,8 @@ describe("starred list", () => {
         placeButton(row, star);
         const group = document.getElementById("group")!;
         expect([...group.children].map(c => c.id || c.className || c.querySelector("[aria-label]")?.getAttribute("aria-label"))).toEqual(["strip", "star", "Start new chat", "Share"]);
+        // Chats without a details panel have no side-panel toggle; Share still finds the row.
+        document.querySelector("[data-testid='agent-chat-side-panel-toggle']")!.parentElement!.remove();
+        expect(controlRow()?.id).toBe("row");
     });
 });

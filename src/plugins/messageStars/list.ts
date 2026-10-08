@@ -14,6 +14,7 @@ import { Icons, svgIcon } from "@utils/icons";
 import { t } from "@utils/page";
 import { debounce } from "@utils/time";
 
+import { CHAT_SHARE } from "../hideShare";
 import { jumpTo } from "../navigator";
 import { type ChatMessage, collectMessages, summarize } from "../navigator/messages";
 import { starsOf, toggleStar } from "./store";
@@ -89,11 +90,14 @@ export function starEntries(ids: Set<string>, messages: ChatMessage[]): StarEntr
     return [...shown, ...rest];
 }
 
-/** The chat header's button group: the row holding the side-panel toggle, Pin chat and More. */
+/** The chat header's button row: Start new chat and Share in a group, then Pin chat, the panel toggle and More. */
 export function controlRow(root: ParentNode = document): HTMLElement | null {
-    const toggle = root.querySelector(PANEL_TOGGLE);
-    const wrapper = toggle?.parentElement;
-    return wrapper?.parentElement ?? null;
+    // Share sits in the first group (with Start new chat) and is in the DOM even when hidden;
+    // the side-panel toggle is missing when the chat has no details panel.
+    const share = root.querySelector(CHAT_SHARE);
+    const group = share?.parentElement?.parentElement;
+    if (group?.parentElement) return group.parentElement;
+    return root.querySelector(PANEL_TOGGLE)?.parentElement?.parentElement ?? null;
 }
 
 /**
