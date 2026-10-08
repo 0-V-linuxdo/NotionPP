@@ -7,12 +7,14 @@
 import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
 import { definePlugin } from "@api/PluginManager";
+import { definePluginSettings } from "@api/Settings";
 import { currentChatId } from "@api/Reply";
 import { Icons, svgIcon } from "@utils/icons";
 import { pageWindow, t } from "@utils/page";
 import { debounce } from "@utils/time";
 
 import { copyRole, USER_STEP } from "../navigator/messages";
+import { startList, stopList } from "./list";
 import { setStarsActive, STARS_KEY, starsOf, toggleStar } from "./store";
 
 /*
@@ -25,6 +27,15 @@ const STAR_COLOR = "#d9730d";
 const RESCAN_MS = 200;
 
 let cleanups: (() => void)[] = [];
+
+export const settings = definePluginSettings({
+    headerList: {
+        type: "boolean",
+        label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
+        description: { zh: "在对话右上角按钮的左边放一个星标按钮，悬停或点击列出本对话加星的消息", en: "A star left of the chat's top-right buttons; hover or click it to list this chat's starred messages" },
+        default: true,
+    },
+});
 
 function topSteps(): HTMLElement[] {
     return [...document.querySelectorAll<HTMLElement>(`[${USER_STEP}]`)].filter(step => !step.parentElement?.closest(`[${USER_STEP}]`));
@@ -171,9 +182,10 @@ export default definePlugin({
     name: "messageStars",
     title: { zh: "消息星标", en: "Message stars" },
     description: {
-        zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，方便回头找。",
-        en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator.",
+        zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
+        en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back.",
     },
+    settings,
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
@@ -193,10 +205,16 @@ export default definePlugin({
             () => pageWindow.removeEventListener("storage", onStorage),
         ];
         scan();
+        if (settings.store.headerList) startList();
     },
     stop() {
+        stopList();
         for (const cleanup of cleanups.splice(0)) cleanup();
         removeAll();
         setStarsActive(false);
+    },
+    onSettingsChange() {
+        stopList();
+        if (settings.store.headerList) startList();
     },
 });

@@ -156,3 +156,35 @@ describe("hide share", () => {
         style.remove();
     });
 });
+
+describe("starred list", () => {
+    test("orders stars by conversation and keeps unloaded ones last", async () => {
+        const { starEntries } = await import("../src/plugins/messageStars/list");
+        const el = document.createElement("div");
+        const msgs = [
+            { id: "a", role: "user" as const, element: el, text: "first" },
+            { id: "a:assistant", role: "assistant" as const, element: el, text: "reply" },
+            { id: "b", role: "user" as const, element: el, text: "second" },
+        ];
+        const entries = starEntries(new Set(["b", "gone:assistant", "a"]), msgs);
+        expect(entries.map(e => e.id)).toEqual(["a", "b", "gone:assistant"]);
+        expect(entries[2]).toEqual({ id: "gone:assistant", role: "assistant", text: null });
+    });
+
+    test("button goes left of the whole top-right cluster", async () => {
+        const { controlRow, placeButton } = await import("../src/plugins/messageStars/list");
+        document.body.innerHTML = `<div id="row">
+            <div id="group"><div class="strip"></div><div data-popup-origin="true"><div role="button" aria-label="Start new chat"></div></div><div data-popup-origin="true"><div role="button" data-testid="share-chat-button" aria-label="Share"></div></div></div>
+            <div data-popup-origin="true"><div role="button" aria-label="Pin chat"></div></div>
+            <div data-popup-origin="true"><div role="button" data-testid="agent-chat-side-panel-toggle" aria-label="Minimize"></div></div>
+        </div>`;
+        const row = controlRow()!;
+        expect(row.id).toBe("row");
+        const star = document.createElement("div");
+        star.id = "star";
+        placeButton(row, star);
+        placeButton(row, star);
+        const group = document.getElementById("group")!;
+        expect([...group.children].map(c => c.id || c.className || c.querySelector("[aria-label]")?.getAttribute("aria-label"))).toEqual(["strip", "star", "Start new chat", "Share"]);
+    });
+});

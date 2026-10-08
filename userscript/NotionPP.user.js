@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.4.0
+// @version      20261007.1.5.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -2602,218 +2602,6 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     });
   }
 
-  // src/plugins/messageStars/store.ts
-  var STARS_KEY = "notionai-pp:stars:v1";
-  var active = false;
-  var starsActive = () => active;
-  function setStarsActive(value) {
-    if (active === value)
-      return;
-    active = value;
-    emit("starsChanged", undefined);
-  }
-  function readAll() {
-    try {
-      const data = safeJson(pageWindow.localStorage.getItem(STARS_KEY) ?? "");
-      if (!isRecord(data))
-        return {};
-      const out = {};
-      for (const [chat, ids] of Object.entries(data)) {
-        if (Array.isArray(ids))
-          out[chat] = ids.filter((id) => typeof id === "string");
-      }
-      return out;
-    } catch {
-      return {};
-    }
-  }
-  var starsOf = (chatId) => new Set(chatId ? readAll()[chatId] ?? [] : []);
-  function toggleStar(chatId, id) {
-    if (!chatId)
-      return false;
-    const all = readAll();
-    const ids = new Set(all[chatId] ?? []);
-    const starred = !ids.delete(id);
-    if (starred)
-      ids.add(id);
-    if (ids.size)
-      all[chatId] = [...ids];
-    else
-      delete all[chatId];
-    try {
-      pageWindow.localStorage.setItem(STARS_KEY, JSON.stringify(all));
-    } catch {}
-    emit("starsChanged", undefined);
-    return starred;
-  }
-
-  // src/plugins/messageStars/index.ts
-  var MARK = "data-npp-star";
-  var STAR_COLOR = "#d9730d";
-  var RESCAN_MS = 200;
-  var cleanups2 = [];
-  function topSteps() {
-    return [...document.querySelectorAll(`[${USER_STEP}]`)].filter((step) => !step.parentElement?.closest(`[${USER_STEP}]`));
-  }
-  function messageIdFor(button, steps) {
-    const role = copyRole(button);
-    if (role === "user")
-      return button.closest(`[${USER_STEP}]`)?.getAttribute(USER_STEP) ?? null;
-    if (role !== "assistant")
-      return null;
-    let owner = null;
-    for (const step of steps) {
-      if (step.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING)
-        owner = step;
-      else
-        break;
-    }
-    const id = owner?.getAttribute(USER_STEP);
-    return id ? `${id}:assistant` : null;
-  }
-  var STROKE = "1.8";
-  function starIcon(native) {
-    const svg = svgIcon(Icons.star);
-    svg.setAttribute("stroke-width", STROKE);
-    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => name && !/Small$|Large$/.test(name));
-    if (classes?.length)
-      svg.setAttribute("class", classes.join(" "));
-    const size = native?.getBoundingClientRect();
-    const px = size && size.height ? Math.round(size.height) : 16;
-    svg.style.cssText = `${native?.getAttribute("style") ?? ""};width:${px}px;height:${px}px;display:block;flex-shrink:0;fill:none;stroke:currentColor`;
-    return svg;
-  }
-  function paint(button, starred) {
-    button.setAttribute("aria-pressed", String(starred));
-    const label = starred ? t("取消星标", "Unstar") : t("加星标", "Star");
-    button.setAttribute("aria-label", label);
-    button.title = label;
-    const svg = button.querySelector("svg");
-    if (!svg)
-      return;
-    svg.style.color = starred ? STAR_COLOR : "";
-    svg.style.fill = starred ? "currentColor" : "none";
-  }
-  var mirrors = new WeakMap;
-  function mirror(copy, button) {
-    const sync = () => {
-      if (button.className !== copy.className)
-        button.className = copy.className;
-      if (button.style.opacity !== copy.style.opacity)
-        button.style.opacity = copy.style.opacity;
-    };
-    sync();
-    const observer = new MutationObserver(() => {
-      if (!button.isConnected)
-        return observer.disconnect();
-      sync();
-    });
-    observer.observe(copy, { attributes: true, attributeFilter: ["class", "style"] });
-    mirrors.get(button)?.disconnect();
-    mirrors.set(button, observer);
-  }
-  function makeButton(copy, id) {
-    const wrapper = copy.parentElement?.cloneNode(false) ?? document.createElement("div");
-    wrapper.removeAttribute("data-popup-origin");
-    wrapper.setAttribute(MARK, id);
-    const button = copy.cloneNode(false);
-    button.removeAttribute("id");
-    button.append(starIcon(copy.querySelector("svg")));
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      paint(button, toggleStar(currentChatId(), id));
-    });
-    button.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ")
-        return;
-      event.preventDefault();
-      button.click();
-    });
-    wrapper.append(button);
-    mirror(copy, button);
-    return wrapper;
-  }
-  function place(row, copyWrapper, star) {
-    let after = copyWrapper;
-    for (let next = after.nextElementSibling;next && next !== star; next = next.nextElementSibling) {
-      if (!isIconWrapper(next))
-        break;
-      after = next;
-    }
-    if (after.nextElementSibling !== star)
-      row.insertBefore(star, after.nextElementSibling);
-    if (row.style.width.endsWith("px"))
-      row.style.width = "auto";
-  }
-  var isIconWrapper = (node) => !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? "")) && !!node.querySelector("[role='button'][aria-label], button[aria-label]") && !node.textContent?.trim();
-  function scan3() {
-    const chatId = currentChatId();
-    const stars = starsOf(chatId);
-    const steps = topSteps();
-    for (const copy of document.querySelectorAll("[role='button'][aria-label], button[aria-label]")) {
-      if (copy.closest(`[${MARK}]`))
-        continue;
-      const row = copy.parentElement?.parentElement;
-      if (!row || !copyRole(copy))
-        continue;
-      const id = chatId ? messageIdFor(copy, steps) : null;
-      let ours = [...row.children].find((child) => child.hasAttribute(MARK)) ?? null;
-      if (ours && (!id || ours.getAttribute(MARK) !== id)) {
-        ours.remove();
-        ours = null;
-      }
-      if (!id)
-        continue;
-      if (ours) {
-        const button = ours.firstElementChild;
-        if (button.className !== copy.className || button.style.opacity !== copy.style.opacity)
-          mirror(copy, button);
-      }
-      ours ??= makeButton(copy, id);
-      place(row, copy.parentElement, ours);
-      paint(ours.firstElementChild, stars.has(id));
-    }
-  }
-  function removeAll() {
-    for (const node of document.querySelectorAll(`[${MARK}]`))
-      node.remove();
-  }
-  var messageStars_default = definePlugin({
-    name: "messageStars",
-    title: { zh: "消息星标", en: "Message stars" },
-    description: {
-      zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，方便回头找。",
-      en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator."
-    },
-    icon: Icons.star,
-    tags: ["chat"],
-    enabledByDefault: true,
-    start() {
-      setStarsActive(true);
-      const rescan = debounce(scan3, RESCAN_MS, RESCAN_MS * 4);
-      const onStorage = (event) => event.key === STARS_KEY && scan3();
-      pageWindow.addEventListener("storage", onStorage);
-      cleanups2 = [
-        onDomChange((mutations) => {
-          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK))))
-            return;
-          rescan();
-        }),
-        on("starsChanged", scan3),
-        () => rescan.cancel(),
-        () => pageWindow.removeEventListener("storage", onStorage)
-      ];
-      scan3();
-    },
-    stop() {
-      for (const cleanup of cleanups2.splice(0))
-        cleanup();
-      removeAll();
-      setStarsActive(false);
-    }
-  });
-
   // src/plugins/navigator/effects.ts
   var EFFECTS = [
     { value: "none", zh: "无（只滚动）", en: "None (scroll only)" },
@@ -2955,9 +2743,54 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   <div class="menu"><div class="head"></div><ul></ul></div>
 </nav>`;
 
+  // src/plugins/messageStars/store.ts
+  var STARS_KEY = "notionai-pp:stars:v1";
+  var active = false;
+  var starsActive = () => active;
+  function setStarsActive(value) {
+    if (active === value)
+      return;
+    active = value;
+    emit("starsChanged", undefined);
+  }
+  function readAll() {
+    try {
+      const data = safeJson(pageWindow.localStorage.getItem(STARS_KEY) ?? "");
+      if (!isRecord(data))
+        return {};
+      const out = {};
+      for (const [chat, ids] of Object.entries(data)) {
+        if (Array.isArray(ids))
+          out[chat] = ids.filter((id) => typeof id === "string");
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  }
+  var starsOf = (chatId) => new Set(chatId ? readAll()[chatId] ?? [] : []);
+  function toggleStar(chatId, id) {
+    if (!chatId)
+      return false;
+    const all = readAll();
+    const ids = new Set(all[chatId] ?? []);
+    const starred = !ids.delete(id);
+    if (starred)
+      ids.add(id);
+    if (ids.size)
+      all[chatId] = [...ids];
+    else
+      delete all[chatId];
+    try {
+      pageWindow.localStorage.setItem(STARS_KEY, JSON.stringify(all));
+    } catch {}
+    emit("starsChanged", undefined);
+    return starred;
+  }
+
   // src/plugins/navigator/index.ts
   var NAV_HOST_ID = "notionai-pp-navigator";
-  var RESCAN_MS2 = 250;
+  var RESCAN_MS = 250;
   var RESCAN_MAX_MS = 1200;
   var ACTIVE_RATIO = 0.4;
   var SCROLL_OFFSET = 72;
@@ -2987,7 +2820,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var messages = [];
   var signature = "";
   var activeId = "";
-  var cleanups3 = [];
+  var cleanups2 = [];
   var panelObserver = null;
   var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
@@ -3134,6 +2967,12 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     }
     setActive(current);
   }
+  function jumpTo(id) {
+    if (!overlay2 || !messages.some((m) => m.id === id && m.element.isConnected))
+      return false;
+    jump(id);
+    return true;
+  }
   function jump(id) {
     const message = messages.find((m) => m.id === id);
     if (!message?.element.isConnected)
@@ -3169,7 +3008,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     start() {
       overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
       overlay2.host.hidden = true;
-      const rescan = debounce(build, RESCAN_MS2, RESCAN_MAX_MS);
+      const rescan = debounce(build, RESCAN_MS, RESCAN_MAX_MS);
       const onScroll = frameThrottle(updateActive);
       window.addEventListener("scroll", onScroll, { capture: true, passive: true });
       const onResize = frameThrottle(() => {
@@ -3184,7 +3023,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       }
       document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
       document.addEventListener("animationend", onLayout, { capture: true, passive: true });
-      cleanups3 = [
+      cleanups2 = [
         onDomChange(onLayout),
         onDomChange(rescan),
         () => document.removeEventListener("transitionend", onLayout, { capture: true }),
@@ -3209,7 +3048,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       build();
     },
     stop() {
-      for (const cleanup of cleanups3.splice(0))
+      for (const cleanup of cleanups2.splice(0))
         cleanup();
       overlay2?.destroy();
       overlay2 = null;
@@ -3223,8 +3062,481 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     }
   });
 
-  // src/plugins/replyNotification/index.ts
+  // src/plugins/messageStars/list.ts
+  var LIST_MARK = "data-npp-star-list";
+  var HOST_ID = "notionai-pp-star-list";
+  var PANEL_TOGGLE = "[data-testid='agent-chat-side-panel-toggle']";
+  var STAR_COLOR = "#d9730d";
+  var HOVER_OPEN_MS = 120;
+  var HOVER_CLOSE_MS = 180;
+  var SCROLL_OFFSET2 = 72;
+  var CSS3 = `
+:host {
+  all: initial;
+  --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
+  --shadow: 0 10px 30px rgba(15,15,15,.16);
+  position: fixed; top: 0; left: 0; z-index: 2147483000; display: block;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:host([data-theme="dark"]) {
+  --bg: #252525; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
+  --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+.panel {
+  width: min(300px, calc(100vw - 16px)); max-height: min(420px, calc(100vh - 64px)); overflow-y: auto; padding: 6px;
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
+  overscroll-behavior: contain;
+}
+.head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; }
+.head svg { width: 14px; height: 14px; color: ${STAR_COLOR}; fill: currentColor; flex: none; }
+.count { margin-left: auto; font-variant-numeric: tabular-nums; }
+ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.row:hover, .row:focus-within { background: var(--hover); }
+button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.jump { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 4px 6px 8px; font-size: 13px; text-align: left; }
+.role { flex: none; min-width: 22px; color: var(--subtle); font-size: 11px; }
+.snip { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row.missing .snip { color: var(--subtle); font-style: italic; }
+.unstar { display: flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 5px; color: ${STAR_COLOR}; }
+.unstar:hover { background: var(--hover); }
+.unstar svg { width: 14px; height: 14px; fill: currentColor; }
+.empty { padding: 6px 8px 8px; color: var(--subtle); font-size: 13px; }
+:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
+`;
+  var overlay3 = null;
+  var button2 = null;
+  var pinned = false;
+  var hovering = false;
+  var hoverTimer = 0;
+  var cleanups3 = [];
+  function starEntries(ids, messages) {
+    const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text }));
+    const seen = new Set(shown.map((entry) => entry.id));
+    const rest = [...ids].filter((id) => !seen.has(id)).map((id) => ({ id, role: id.endsWith(":assistant") ? "assistant" : "user", text: null }));
+    return [...shown, ...rest];
+  }
+  function controlRow(root = document) {
+    const toggle = root.querySelector(PANEL_TOGGLE);
+    const wrapper = toggle?.parentElement;
+    return wrapper?.parentElement ?? null;
+  }
+  function placeButton(row, wrapper) {
+    const first = row.firstElementChild;
+    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !first.querySelector(PANEL_TOGGLE) ? first : null;
+    const parent = group ?? row;
+    const before = [...parent.children].find((child) => child !== wrapper && child.querySelector("[role='button'], button")) ?? null;
+    if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before)
+      parent.insertBefore(wrapper, before);
+  }
+  function headerIcon(native) {
+    const svg = svgIcon(Icons.star);
+    svg.setAttribute("stroke-width", "1.5");
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => /^x[0-9a-z]+$/.test(name));
+    if (classes?.length)
+      svg.setAttribute("class", classes.join(" "));
+    const ink = native?.style.fill || "currentColor";
+    svg.style.cssText = `width:20px;height:20px;display:block;flex-shrink:0;fill:none;stroke:${ink}`;
+    svg.dataset.ink = ink;
+    return svg;
+  }
+  function paintButton() {
+    if (!button2)
+      return;
+    const count = starsOf(currentChatId()).size;
+    const svg = button2.querySelector("svg");
+    if (svg) {
+      svg.style.stroke = count ? STAR_COLOR : svg.dataset.ink ?? "currentColor";
+      svg.style.fill = count ? STAR_COLOR : "none";
+    }
+    const label = count ? t(`已加星标的消息（${count}）`, `Starred messages (${count})`) : t("已加星标的消息", "Starred messages");
+    button2.setAttribute("aria-label", label);
+    button2.setAttribute("aria-expanded", String(isOpen()));
+    button2.title = label;
+  }
+  function makeButton(row) {
+    const sample = row.querySelector("[aria-label='Pin chat'], [role='button'][aria-label]");
+    const sampleWrapper = sample?.parentElement;
+    if (!sample || !sampleWrapper)
+      return null;
+    const wrapper = sampleWrapper.cloneNode(false);
+    wrapper.removeAttribute("data-popup-origin");
+    wrapper.setAttribute(LIST_MARK, "");
+    const btn = sample.cloneNode(false);
+    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "data-testid"])
+      btn.removeAttribute(name);
+    btn.setAttribute("aria-haspopup", "dialog");
+    btn.append(headerIcon(sample.querySelector("svg")));
+    btn.addEventListener("pointerenter", () => hoverSoon(true));
+    btn.addEventListener("pointerleave", () => hoverSoon(false));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pinned = !isOpen() || !pinned;
+      hovering = pinned;
+      render();
+    });
+    btn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ")
+        return;
+      event.preventDefault();
+      btn.click();
+    });
+    wrapper.append(btn);
+    button2 = btn;
+    return wrapper;
+  }
+  var isOpen = () => pinned || hovering;
+  function hoverSoon(open) {
+    clearTimeout(hoverTimer);
+    if (!open && pinned)
+      return;
+    hoverTimer = window.setTimeout(() => {
+      hovering = open;
+      render();
+    }, open ? HOVER_OPEN_MS : HOVER_CLOSE_MS);
+  }
+  function close() {
+    pinned = false;
+    hovering = false;
+    clearTimeout(hoverTimer);
+    render();
+  }
+  function scrollToMessage(id) {
+    if (jumpTo(id))
+      return;
+    const target = collectMessages().find((m) => m.id === id)?.element;
+    if (!target)
+      return;
+    const scroller = scrollParentOf(target);
+    const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
+    const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET2;
+    scroller.scrollTo({ top, behavior: "smooth" });
+  }
+  function ensureOverlay() {
+    if (overlay3)
+      return overlay3;
+    overlay3 = createOverlay(HOST_ID, CSS3, `<div class="panel" role="dialog"></div>`);
+    overlay3.host.hidden = true;
+    overlay3.host.addEventListener("pointerenter", () => hoverSoon(true));
+    overlay3.host.addEventListener("pointerleave", () => hoverSoon(false));
+    return overlay3;
+  }
+  function fillPanel(panel) {
+    const entries = starEntries(starsOf(currentChatId()), collectMessages());
+    const head = document.createElement("div");
+    head.className = "head";
+    const count = document.createElement("span");
+    count.className = "count";
+    count.textContent = String(entries.length);
+    head.append(svgIcon(Icons.star), document.createTextNode(t("已加星标", "Starred")), count);
+    const list = document.createElement("ul");
+    for (const entry of entries) {
+      const row = document.createElement("li");
+      row.className = entry.text === null ? "row missing" : "row";
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.className = "jump";
+      const role = document.createElement("span");
+      role.className = "role";
+      role.textContent = entry.role === "user" ? t("你", "You") : "AI";
+      const snip = document.createElement("span");
+      snip.className = "snip";
+      snip.textContent = entry.text === null ? t("（未加载，向上滚动后可跳转）", "(not loaded yet; scroll up to reach it)") : summarize(entry.text, 80);
+      if (entry.text)
+        jump.title = summarize(entry.text, 400);
+      jump.append(role, snip);
+      jump.addEventListener("click", () => {
+        scrollToMessage(entry.id);
+        close();
+      });
+      const unstar = document.createElement("button");
+      unstar.type = "button";
+      unstar.className = "unstar";
+      unstar.title = t("取消星标", "Unstar");
+      unstar.setAttribute("aria-label", unstar.title);
+      unstar.append(svgIcon(Icons.star));
+      unstar.addEventListener("click", () => toggleStar(currentChatId(), entry.id));
+      row.append(jump, unstar);
+      list.append(row);
+    }
+    if (entries.length)
+      panel.replaceChildren(head, list);
+    else {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.");
+      panel.replaceChildren(head, empty);
+    }
+  }
+  function render() {
+    paintButton();
+    const open = isOpen() && !!button2?.isConnected;
+    if (!open) {
+      if (overlay3)
+        overlay3.host.hidden = true;
+      return;
+    }
+    const { host, root } = ensureOverlay();
+    fillPanel(root.querySelector(".panel"));
+    host.hidden = false;
+    const anchor = button2.getBoundingClientRect();
+    const panel = root.querySelector(".panel");
+    const width = panel.offsetWidth || 300;
+    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+    host.style.left = `${Math.round(left)}px`;
+    host.style.top = `${Math.round(anchor.bottom + 6)}px`;
+  }
+  function sync() {
+    const row = currentChatId() ? controlRow() : null;
+    let wrapper = document.querySelector(`[${LIST_MARK}]`);
+    if (!row) {
+      wrapper?.remove();
+      button2 = null;
+      if (isOpen())
+        close();
+      return;
+    }
+    if (wrapper && !row.contains(wrapper)) {
+      wrapper.remove();
+      wrapper = null;
+    }
+    wrapper ??= makeButton(row);
+    if (!wrapper)
+      return;
+    placeButton(row, wrapper);
+    paintButton();
+  }
+  function startList() {
+    const resync = debounce(sync, 150, 600);
+    const onKey = (event) => event.key === "Escape" && isOpen() && close();
+    const onDown = (event) => {
+      if (!isOpen())
+        return;
+      const path = event.composedPath();
+      if (button2 && path.includes(button2) || overlay3 && path.includes(overlay3.host))
+        return;
+      close();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown, true);
+    cleanups3 = [
+      onDomChange((mutations) => {
+        if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(LIST_MARK) || node.id === HOST_ID))))
+          return;
+        resync();
+      }),
+      on("starsChanged", () => isOpen() ? render() : paintButton()),
+      onRouteChange(() => {
+        close();
+        resync();
+      }),
+      () => resync.cancel(),
+      () => document.removeEventListener("keydown", onKey, true),
+      () => document.removeEventListener("pointerdown", onDown, true)
+    ];
+    sync();
+  }
+  function stopList() {
+    for (const cleanup of cleanups3.splice(0))
+      cleanup();
+    clearTimeout(hoverTimer);
+    pinned = false;
+    hovering = false;
+    document.querySelector(`[${LIST_MARK}]`)?.remove();
+    button2 = null;
+    overlay3?.destroy();
+    overlay3 = null;
+  }
+
+  // src/plugins/messageStars/index.ts
+  var MARK = "data-npp-star";
+  var STAR_COLOR2 = "#d9730d";
+  var RESCAN_MS2 = 200;
+  var cleanups4 = [];
   var settings7 = definePluginSettings({
+    headerList: {
+      type: "boolean",
+      label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
+      description: { zh: "在对话右上角按钮的左边放一个星标按钮，悬停或点击列出本对话加星的消息", en: "A star left of the chat's top-right buttons; hover or click it to list this chat's starred messages" },
+      default: true
+    }
+  });
+  function topSteps() {
+    return [...document.querySelectorAll(`[${USER_STEP}]`)].filter((step) => !step.parentElement?.closest(`[${USER_STEP}]`));
+  }
+  function messageIdFor(button, steps) {
+    const role = copyRole(button);
+    if (role === "user")
+      return button.closest(`[${USER_STEP}]`)?.getAttribute(USER_STEP) ?? null;
+    if (role !== "assistant")
+      return null;
+    let owner = null;
+    for (const step of steps) {
+      if (step.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING)
+        owner = step;
+      else
+        break;
+    }
+    const id = owner?.getAttribute(USER_STEP);
+    return id ? `${id}:assistant` : null;
+  }
+  var STROKE = "1.8";
+  function starIcon(native) {
+    const svg = svgIcon(Icons.star);
+    svg.setAttribute("stroke-width", STROKE);
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => name && !/Small$|Large$/.test(name));
+    if (classes?.length)
+      svg.setAttribute("class", classes.join(" "));
+    const size = native?.getBoundingClientRect();
+    const px = size && size.height ? Math.round(size.height) : 16;
+    svg.style.cssText = `${native?.getAttribute("style") ?? ""};width:${px}px;height:${px}px;display:block;flex-shrink:0;fill:none;stroke:currentColor`;
+    return svg;
+  }
+  function paint(button, starred) {
+    button.setAttribute("aria-pressed", String(starred));
+    const label = starred ? t("取消星标", "Unstar") : t("加星标", "Star");
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    const svg = button.querySelector("svg");
+    if (!svg)
+      return;
+    svg.style.color = starred ? STAR_COLOR2 : "";
+    svg.style.fill = starred ? "currentColor" : "none";
+  }
+  var mirrors = new WeakMap;
+  function mirror(copy, button) {
+    const sync = () => {
+      if (button.className !== copy.className)
+        button.className = copy.className;
+      if (button.style.opacity !== copy.style.opacity)
+        button.style.opacity = copy.style.opacity;
+    };
+    sync();
+    const observer = new MutationObserver(() => {
+      if (!button.isConnected)
+        return observer.disconnect();
+      sync();
+    });
+    observer.observe(copy, { attributes: true, attributeFilter: ["class", "style"] });
+    mirrors.get(button)?.disconnect();
+    mirrors.set(button, observer);
+  }
+  function makeButton2(copy, id) {
+    const wrapper = copy.parentElement?.cloneNode(false) ?? document.createElement("div");
+    wrapper.removeAttribute("data-popup-origin");
+    wrapper.setAttribute(MARK, id);
+    const button = copy.cloneNode(false);
+    button.removeAttribute("id");
+    button.append(starIcon(copy.querySelector("svg")));
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      paint(button, toggleStar(currentChatId(), id));
+    });
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ")
+        return;
+      event.preventDefault();
+      button.click();
+    });
+    wrapper.append(button);
+    mirror(copy, button);
+    return wrapper;
+  }
+  function place(row, copyWrapper, star) {
+    let after = copyWrapper;
+    for (let next = after.nextElementSibling;next && next !== star; next = next.nextElementSibling) {
+      if (!isIconWrapper(next))
+        break;
+      after = next;
+    }
+    if (after.nextElementSibling !== star)
+      row.insertBefore(star, after.nextElementSibling);
+    if (row.style.width.endsWith("px"))
+      row.style.width = "auto";
+  }
+  var isIconWrapper = (node) => !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? "")) && !!node.querySelector("[role='button'][aria-label], button[aria-label]") && !node.textContent?.trim();
+  function scan3() {
+    const chatId = currentChatId();
+    const stars = starsOf(chatId);
+    const steps = topSteps();
+    for (const copy of document.querySelectorAll("[role='button'][aria-label], button[aria-label]")) {
+      if (copy.closest(`[${MARK}]`))
+        continue;
+      const row = copy.parentElement?.parentElement;
+      if (!row || !copyRole(copy))
+        continue;
+      const id = chatId ? messageIdFor(copy, steps) : null;
+      let ours = [...row.children].find((child) => child.hasAttribute(MARK)) ?? null;
+      if (ours && (!id || ours.getAttribute(MARK) !== id)) {
+        ours.remove();
+        ours = null;
+      }
+      if (!id)
+        continue;
+      if (ours) {
+        const button = ours.firstElementChild;
+        if (button.className !== copy.className || button.style.opacity !== copy.style.opacity)
+          mirror(copy, button);
+      }
+      ours ??= makeButton2(copy, id);
+      place(row, copy.parentElement, ours);
+      paint(ours.firstElementChild, stars.has(id));
+    }
+  }
+  function removeAll() {
+    for (const node of document.querySelectorAll(`[${MARK}]`))
+      node.remove();
+  }
+  var messageStars_default = definePlugin({
+    name: "messageStars",
+    title: { zh: "消息星标", en: "Message stars" },
+    description: {
+      zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
+      en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back."
+    },
+    settings: settings7,
+    icon: Icons.star,
+    tags: ["chat"],
+    enabledByDefault: true,
+    start() {
+      setStarsActive(true);
+      const rescan = debounce(scan3, RESCAN_MS2, RESCAN_MS2 * 4);
+      const onStorage = (event) => event.key === STARS_KEY && scan3();
+      pageWindow.addEventListener("storage", onStorage);
+      cleanups4 = [
+        onDomChange((mutations) => {
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK))))
+            return;
+          rescan();
+        }),
+        on("starsChanged", scan3),
+        () => rescan.cancel(),
+        () => pageWindow.removeEventListener("storage", onStorage)
+      ];
+      scan3();
+      if (settings7.store.headerList)
+        startList();
+    },
+    stop() {
+      stopList();
+      for (const cleanup of cleanups4.splice(0))
+        cleanup();
+      removeAll();
+      setStarsActive(false);
+    },
+    onSettingsChange() {
+      stopList();
+      if (settings7.store.headerList)
+        startList();
+    }
+  });
+
+  // src/plugins/replyNotification/index.ts
+  var settings8 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -3257,8 +3569,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     }
   });
   var audio = null;
-  var cleanups4 = [];
-  function chime(volume = settings7.store.volume) {
+  var cleanups5 = [];
+  function chime(volume = settings8.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -3295,7 +3607,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings7.store.sound
+        silent: settings8.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -3304,20 +3616,20 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     } catch {}
   }
   function notify2({ error }) {
-    if (settings7.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings8.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings7.store.sound)
+    if (settings8.store.sound)
       chime();
-    if (settings7.store.desktop)
+    if (settings8.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings7.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings8.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings7.store.sound)
+    if (settings8.store.sound)
       chime();
-    if (settings7.store.desktop)
+    if (settings8.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -3330,18 +3642,18 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings7,
+    settings: settings8,
     start() {
-      cleanups4 = [watchReplies(), on("replyEnd", notify2)];
+      cleanups5 = [watchReplies(), on("replyEnd", notify2)];
     },
     stop() {
-      for (const cleanup of cleanups4.splice(0))
+      for (const cleanup of cleanups5.splice(0))
         cleanup();
       audio?.close();
       audio = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings7.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings8.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
@@ -3369,9 +3681,9 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     home: () => t("首页", "Home"),
     appearance: () => t("外观", "Appearance")
   };
-  var overlay3 = null;
+  var overlay4 = null;
   var layers = [];
-  var cleanups5 = [];
+  var cleanups6 = [];
   var settingKeys = (plugin) => Object.entries(plugin.settings?.def ?? {});
   var hasSettings = (plugin) => settingKeys(plugin).length > 0;
   function pushLayer(kind, content, onClose) {
@@ -3387,7 +3699,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       }
     };
     el.addEventListener("mousedown", (event) => event.target === el && entry.close());
-    overlay3.root.append(el);
+    overlay4.root.append(el);
     layers.push(entry);
     return entry;
   }
@@ -3542,7 +3854,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.4.0";
+    const version = "[20261007] v1.5.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -3550,16 +3862,16 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     { id: "preferences", icon: Icons.sliders, title: () => t("偏好设置", "Preferences"), hint: () => "", render: preferencesTab },
     { id: "about", icon: Icons.info, title: () => t("关于", "About"), hint: () => "", render: aboutTab }
   ];
-  function close() {
+  function close2() {
     for (const layer of layers.splice(0))
       layer.el.remove();
-    overlay3?.destroy();
-    overlay3 = null;
+    overlay4?.destroy();
+    overlay4 = null;
   }
   function openSettings(tab = "plugins") {
-    close();
-    overlay3 = createOverlay(SETTINGS_HOST_ID, CSS, "");
-    const { root } = overlay3;
+    close2();
+    overlay4 = createOverlay(SETTINGS_HOST_ID, CSS, "");
+    const { root } = overlay4;
     const content = h("div", { class: "content" });
     const navItems = new Map;
     const select = (id) => {
@@ -3571,11 +3883,11 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
           item.removeAttribute("aria-current");
       }
       const hint = def.hint();
-      const closeBtn = iconButton(Icons.x, t("关闭", "Close"), close);
+      const closeBtn = iconButton(Icons.x, t("关闭", "Close"), close2);
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.4.0";
+    const version = "[20261007] v1.5.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -3583,7 +3895,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     }), h("div", { class: "version" }, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "NotionAI++"), version && ` · ${version}`, h("br"), t("用户脚本", "Userscript")));
     const dialog = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-label": t("NotionAI++ 设置", "NotionAI++ settings") }, nav, content);
     const backdrop = h("div", { class: "layer layer-root" }, dialog);
-    backdrop.addEventListener("mousedown", (event) => event.target === backdrop && close());
+    backdrop.addEventListener("mousedown", (event) => event.target === backdrop && close2());
     root.append(backdrop);
     root.addEventListener("keydown", (event) => {
       if (event.key !== "Escape")
@@ -3593,7 +3905,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       if (top)
         top.close();
       else
-        close();
+        close2();
     });
     select(tab);
     dialog.tabIndex = -1;
@@ -3607,7 +3919,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups5.push(on("openSettings", () => openSettings()));
+      cleanups6.push(on("openSettings", () => openSettings()));
       if (typeof GM_registerMenuCommand === "function") {
         try {
           GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -3615,9 +3927,9 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       }
     },
     stop() {
-      for (const cleanup of cleanups5.splice(0))
+      for (const cleanup of cleanups6.splice(0))
         cleanup();
-      close();
+      close2();
     }
   });
 
@@ -3625,7 +3937,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var SIZE = 32;
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2" };
-  var settings8 = definePluginSettings({
+  var settings9 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -3639,7 +3951,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   var ours = "";
   var angle = 0;
   var timer2 = 0;
-  var cleanups6 = [];
+  var cleanups7 = [];
   var iconLink = () => document.querySelector("link[rel~='icon']");
   function remember2() {
     const link = iconLink();
@@ -3734,18 +4046,18 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    settings: settings8,
+    settings: settings9,
     start() {
       remember2();
       const onVisible = () => seen();
       document.addEventListener("visibilitychange", onVisible);
       window.addEventListener("focus", onVisible);
-      cleanups6 = [
+      cleanups7 = [
         watchReplies(),
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error }) => {
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings8.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings9.store.showDone ? "done" : "idle");
         }),
         onDomChange(() => {
           const link = iconLink();
@@ -3757,7 +4069,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       ];
     },
     stop() {
-      for (const cleanup of cleanups6.splice(0))
+      for (const cleanup of cleanups7.splice(0))
         cleanup();
       setState("idle");
       original2 = null;
@@ -4540,7 +4852,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 
   // src/plugins/usage/statsDialog.ts
   var STATS_HOST_ID = "notionai-pp-usage-stats";
-  var CSS3 = `${CSS}
+  var CSS4 = `${CSS}
 .sheet > .stack { gap: .875rem; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .toggle-row b { font-size: .875rem; font-weight: 500; }
@@ -4572,10 +4884,10 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 .repair .input { width: 6rem; }
 .foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 `;
-  var overlay4 = null;
+  var overlay5 = null;
   function closeStats() {
-    overlay4?.destroy();
-    overlay4 = null;
+    overlay5?.destroy();
+    overlay5 = null;
   }
   function iconButton2(markup, label, onclick) {
     const button = el("button", { type: "button", class: "icon-btn close", title: label, "aria-label": label });
@@ -4645,8 +4957,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
   function openStats(ctx, { confirmClearNow = false } = {}) {
     closeStats();
     ctx.refresh();
-    overlay4 = createOverlay(STATS_HOST_ID, CSS3, "");
-    const { root } = overlay4;
+    overlay5 = createOverlay(STATS_HOST_ID, CSS4, "");
+    const { root } = overlay5;
     const body = el("div", { class: "stack" });
     const sheet = el("div", { class: "sheet sheet-sm", role: "dialog", "aria-modal": "true" }, iconButton2(Icons.x, t("关闭", "Close"), closeStats), el("div", { class: "sheet-head" }, el("h3", { class: "sheet-title", text: t("按日期查看用量", "Usage by date") }), el("p", { class: "sheet-desc", text: t("每天用掉的月度额度百分比，仅保存在本设备。", "Share of the monthly allowance used each day, stored on this device.") })), body);
     const backdrop = el("div", { class: "layer layer-root" }, sheet);
@@ -4956,7 +5268,7 @@ button { font: inherit; }
 </div>`;
 
   // src/plugins/usage/ui.ts
-  var HOST_ID = "notionai-pp-usage";
+  var HOST_ID2 = "notionai-pp-usage";
   var KEYS = {
     anchor: "notionai-pp:usage:anchor:v1",
     legacyAnchor: "notion-ai-usage:position:v2"
@@ -4986,7 +5298,7 @@ button { font: inherit; }
     constructor(service, stats) {
       this.service = service;
       this.stats = stats;
-      this.overlay = createOverlay(HOST_ID, USAGE_CSS, USAGE_HTML);
+      this.overlay = createOverlay(HOST_ID2, USAGE_CSS, USAGE_HTML);
       const { root } = this.overlay;
       this.q = (selector) => root.querySelector(selector);
       this.bind();
@@ -5144,7 +5456,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings9 = definePluginSettings({
+  var settings10 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -5191,19 +5503,19 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings9.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings10.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings9.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings10.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings9.store.usageStats,
-    setEnabled: (value) => void (settings9.store.usageStats = value),
-    retain: () => settings9.store.retainDays,
-    hoverDelay: () => settings9.store.hoverStatsDelay,
-    showPlan: () => settings9.store.showPlan,
+    enabled: () => settings10.store.usageStats,
+    setEnabled: (value) => void (settings10.store.usageStats = value),
+    retain: () => settings10.store.retainDays,
+    hoverDelay: () => settings10.store.hoverStatsDelay,
+    showPlan: () => settings10.store.showPlan,
     refresh: record2
   };
   function mount() {
@@ -5222,7 +5534,7 @@ button { font: inherit; }
     tags: ["composer"],
     enabledByDefault: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings9,
+    settings: settings10,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -5253,7 +5565,7 @@ button { font: inherit; }
   var MARK2 = "data-npp-chat-column";
   var COMPOSER3 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings10 = definePluginSettings({
+  var settings11 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -5292,7 +5604,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       style.id = STYLE_ID4;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css2(settings10.store.width);
+    style.textContent = css2(settings11.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -5304,7 +5616,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings10,
+    settings: settings11,
     start() {
       apply3();
       mark();
@@ -5329,7 +5641,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.4.0";
+    win[FLAG] = "[20261007] v1.5.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -5352,7 +5664,7 @@ ${COMPOSER3} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.4.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.5.0"} started`);
   }
   boot();
 })();

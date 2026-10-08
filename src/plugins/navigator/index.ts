@@ -203,6 +203,13 @@ function updateActive() {
     setActive(current);
 }
 
+/** For the starred list: jump with the navigator's scroll and effect while it is running. */
+export function jumpTo(id: string): boolean {
+    if (!overlay || !messages.some(m => m.id === id && m.element.isConnected)) return false;
+    jump(id);
+    return true;
+}
+
 function jump(id: string) {
     const message = messages.find(m => m.id === id);
     if (!message?.element.isConnected) return;
