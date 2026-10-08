@@ -6,7 +6,7 @@
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { cleanLines, collectMessages, summarize } from "@plugins/navigator/messages";
+import { type ChatMessage, cleanLines, collectMessages, outlineLabels, summarize } from "@plugins/navigator/messages";
 
 afterEach(() => void (document.body.innerHTML = ""));
 
@@ -50,6 +50,48 @@ describe("chat navigator detection", () => {
         expect(messages[1].element.classList.contains("body")).toBe(true);
         expect(messages[1].text).toBe("汇总表已经改成数据库了");
         expect(messages[3].text).toBe("图片已补上");
+    });
+
+    test("a picked option fills the empty user step after a choice question", () => {
+        document.body.innerHTML = `
+          <div>
+            <div><div><div data-agent-chat-user-step-id="u1"><div><div class="bubble"><div><div data-content-editable-leaf="true">continue where you left</div></div></div><div>3:07 AM</div></div></div></div></div>
+            <div>
+              <div><div><div><div role="button" aria-expanded="false" aria-controls=":ra:"><div>查看视图接口用法</div></div></div>
+                <div><div role="button" aria-expanded="false" aria-controls=":rc:"><div>9 steps</div></div></div></div></div>
+              <div><div><div><div class="question">新图鉴现在放在两个页面的最底部，接下来怎么处理？</div>
+                <div class="picked" data-content-editable-leaf="true" contenteditable="false">用新图鉴替换旧图鉴</div></div></div></div>
+              <div><div role="button" aria-label="Copy response"></div><div role="button">Undo</div></div>
+            </div>
+            <div><div><div data-agent-chat-user-step-id="u2"></div></div></div>
+            <div><div class="col"><div><div role="button" aria-expanded="false" aria-controls=":rd:"><div>2 steps</div></div></div><div class="body">原版页面的图鉴已经换好了</div></div></div>
+          </div>`;
+        const messages = collectMessages();
+        expect(messages.map(m => [m.role, m.text])).toEqual([
+            ["user", "continue where you left"],
+            ["assistant", "新图鉴现在放在两个页面的最底部，接下来怎么处理？"],
+            ["user", "用新图鉴替换旧图鉴"],
+            ["assistant", "原版页面的图鉴已经换好了"],
+        ]);
+        expect(messages[2].element.classList.contains("picked")).toBe(true);
+    });
+
+    test("an empty user step with nothing to recover is left out", () => {
+        document.body.innerHTML = `<div>
+          <div><div data-agent-chat-user-step-id="u1"><div data-content-editable-leaf="true">Hi</div></div></div>
+          <div><div class="body">Hello there</div></div>
+          <div><div data-agent-chat-user-step-id="u2"></div></div>
+          <div><div class="body">Anything else?</div></div></div>`;
+        expect(collectMessages().map(m => [m.role, m.text])).toEqual([["user", "Hi"], ["assistant", "Hello there"], ["assistant", "Anything else?"]]);
+    });
+
+    test("a re-sent prompt shows where it differs from the earlier one", () => {
+        const msg = (role: "user" | "assistant", text: string) => ({ id: text, role, element: document.body, text }) as ChatMessage;
+        const first = "问题描述: 当前的页面,采用瀑布流,不太合适! 要求: 联网搜索,深入分析问题原因! 然后重写布局!";
+        const labels = outlineLabels([msg("user", first), msg("assistant", "两个页面的布局都已重写"), msg("user", `${first} 注意: 保留卡片布局!`), msg("user", "continue")]);
+        expect(labels[0]).toBe(summarize(first));
+        expect(labels[2]).toBe("问题描述: 当前… 注意: 保留卡片布局!");
+        expect(labels[3]).toBe("continue");
     });
 
     test("noise lines are removed and summaries are truncated", () => {

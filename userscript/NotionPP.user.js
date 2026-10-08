@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.1.1
+// @version      20261007.1.1.2
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1972,26 +1972,47 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function regionsOf(turn) {
     return [...turn.querySelectorAll(TOGGLE2)].map((toggle) => toggle.getAttribute("aria-controls")).map((id) => id ? document.getElementById(id) : null).filter((node) => !!node && turn.contains(node));
   }
+  function assistantTurns(turn, turnSet) {
+    const out = [];
+    for (let sibling = turn.nextElementSibling;sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
+      if (sibling instanceof HTMLElement)
+        out.push(sibling);
+    }
+    return out;
+  }
+  function pickedOption(turns) {
+    for (let i = turns.length - 1;i >= 0; i--) {
+      const leaves = turns[i].querySelectorAll(LEAF);
+      const last = leaves[leaves.length - 1];
+      if (last?.textContent?.trim())
+        return last;
+    }
+    return null;
+  }
   function fromUserSteps(root) {
     const steps = [...root.querySelectorAll(`[${USER_STEP}]`)].filter((step) => !step.parentElement?.closest(`[${USER_STEP}]`));
     if (!steps.length)
       return [];
     const turns = steps.map(turnOf);
     const turnSet = new Set(turns);
+    const replies = turns.map((turn) => assistantTurns(turn, turnSet));
+    const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
     const messages = [];
-    turns.forEach((turn, index) => {
-      const step = steps[index];
+    steps.forEach((step, index) => {
       const id = step.getAttribute(USER_STEP) || `user-${index}`;
-      messages.push({ id, role: "user", element: userBubble(step), text: userText(step) });
-      for (let sibling = turn.nextElementSibling;sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
-        if (!(sibling instanceof HTMLElement))
-          continue;
+      const answer = answers[index];
+      const text = answer?.textContent?.trim() || userText(step);
+      if (text)
+        messages.push({ id, role: "user", element: answer ?? userBubble(step), text });
+      const nextAnswer = answers[index + 1];
+      for (const sibling of replies[index]) {
+        const skip = [...sibling.querySelectorAll(TOGGLE2), ...regionsOf(sibling), ...nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : []];
         const body = assistantBody(sibling);
-        const bodyText = readText(body, body === sibling ? regionsOf(sibling) : []);
-        const text = bodyText || readText(sibling, regionsOf(sibling));
-        if (!text)
+        const bodyText = readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
+        const reply = bodyText || readText(sibling, skip);
+        if (!reply)
           continue;
-        messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text });
+        messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
         break;
       }
     });
@@ -2053,6 +2074,27 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function summarize(text, max = 60) {
     const line = text.replace(/\s+/g, " ").trim();
     return line.length > max ? `${line.slice(0, max)}…` : line;
+  }
+  var SHARED_PREFIX_MIN = 16;
+  var LABEL_HEAD = 8;
+  function outlineLabels(messages, max = 60) {
+    const flat = messages.map((message) => message.text.replace(/\s+/g, " ").trim());
+    return flat.map((text, index) => {
+      let shared = 0;
+      for (let j = 0;j < index; j++) {
+        if (messages[j].role !== messages[index].role)
+          continue;
+        const other = flat[j];
+        let k = 0;
+        while (k < text.length && k < other.length && text[k] === other[k])
+          k++;
+        shared = Math.max(shared, k);
+      }
+      if (shared < SHARED_PREFIX_MIN || shared >= text.length)
+        return summarize(text, max);
+      const cut = Math.max(LABEL_HEAD, text.lastIndexOf(" ", shared) + 1);
+      return summarize(`${text.slice(0, LABEL_HEAD)}… ${text.slice(cut)}`, max);
+    });
   }
 
   // src/plugins/navigator/styles.ts
@@ -2179,7 +2221,8 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       line.dataset.role = message.role;
       return line;
     }));
-    q("ul").replaceChildren(...next.map((message) => {
+    const labels = outlineLabels(next);
+    q("ul").replaceChildren(...next.map((message, index) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "item";
@@ -2190,7 +2233,7 @@ button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
       mark.textContent = message.role === "user" ? "❓" : "\uD83E\uDD16";
       const label = document.createElement("span");
       label.className = "label";
-      label.textContent = summarize(message.text);
+      label.textContent = labels[index];
       button.title = summarize(message.text, 400);
       button.append(mark, label);
       button.addEventListener("click", () => jump(message.id));
@@ -2722,7 +2765,7 @@ button { font: inherit; color: inherit; }
     return h("div", { class: "tab-root" }, tabs, h("div", { class: "search-bar" }, search, filter), list);
   }
   function aboutTab() {
-    const version = "[20261007] v1.1.1";
+    const version = "[20261007] v1.1.2";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -2754,7 +2797,7 @@ button { font: inherit; color: inherit; }
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.1.1";
+    const version = "[20261007] v1.1.2";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -4621,7 +4664,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.1.1";
+    win[FLAG] = "[20261007] v1.1.2";
     installHooks();
     registerPlugins([settings_default, usage_default, navigator_default, autoCollapseThinking_default, focusHighlight_default, greetingCustomizer_default]);
     startPlugins("DocumentStart" /* DocumentStart */);
@@ -4631,7 +4674,7 @@ svg.i { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-widt
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.1.1"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.1.2"} started`);
   }
   boot();
 })();

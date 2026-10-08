@@ -83,23 +83,49 @@ function regionsOf(turn: Element): Element[] {
         .filter((node): node is HTMLElement => !!node && turn.contains(node));
 }
 
+function assistantTurns(turn: Element, turnSet: Set<Element>): HTMLElement[] {
+    const out: HTMLElement[] = [];
+    for (let sibling = turn.nextElementSibling; sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
+        if (sibling instanceof HTMLElement) out.push(sibling);
+    }
+    return out;
+}
+
+/**
+ * When the assistant asks a multiple-choice question, Notion renders the picked option as a leaf at
+ * the end of that reply and leaves the user step that follows it empty.
+ */
+function pickedOption(turns: HTMLElement[]): HTMLElement | null {
+    for (let i = turns.length - 1; i >= 0; i--) {
+        const leaves = turns[i].querySelectorAll<HTMLElement>(LEAF);
+        const last = leaves[leaves.length - 1];
+        if (last?.textContent?.trim()) return last;
+    }
+    return null;
+}
+
 function fromUserSteps(root: ParentNode): ChatMessage[] {
     const steps = [...root.querySelectorAll<HTMLElement>(`[${USER_STEP}]`)].filter(step => !step.parentElement?.closest(`[${USER_STEP}]`));
     if (!steps.length) return [];
     const turns = steps.map(turnOf);
     const turnSet = new Set(turns);
+    const replies = turns.map(turn => assistantTurns(turn, turnSet));
+    // Steps whose text lives in the reply before them: the picked option of a choice question.
+    const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
     const messages: ChatMessage[] = [];
-    turns.forEach((turn, index) => {
-        const step = steps[index];
+    steps.forEach((step, index) => {
         const id = step.getAttribute(USER_STEP) || `user-${index}`;
-        messages.push({ id, role: "user", element: userBubble(step), text: userText(step) });
-        for (let sibling = turn.nextElementSibling; sibling && !turnSet.has(sibling); sibling = sibling.nextElementSibling) {
-            if (!(sibling instanceof HTMLElement)) continue;
+        const answer = answers[index];
+        const text = answer?.textContent?.trim() || userText(step);
+        if (text) messages.push({ id, role: "user", element: answer ?? userBubble(step), text });
+        const nextAnswer = answers[index + 1];
+        for (const sibling of replies[index]) {
+            const skip = [...sibling.querySelectorAll(TOGGLE), ...regionsOf(sibling), ...(nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : [])];
             const body = assistantBody(sibling);
-            const bodyText = readText(body, body === sibling ? regionsOf(sibling) : []);
-            const text = bodyText || readText(sibling, regionsOf(sibling));
-            if (!text) continue;
-            messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text });
+            const bodyText = readText(body, body === sibling ? skip : skip.filter(node => body.contains(node)));
+            const reply = bodyText || readText(sibling, skip);
+            if (!reply) continue;
+            messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
             break;
         }
     });
@@ -155,4 +181,29 @@ export function collectMessages(root: ParentNode = document): ChatMessage[] {
 export function summarize(text: string, max = 60): string {
     const line = text.replace(/\s+/g, " ").trim();
     return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
+const SHARED_PREFIX_MIN = 16;
+const LABEL_HEAD = 8;
+
+/**
+ * Outline labels, one per message. A message that repeats the opening of an earlier one of the same
+ * role (a prompt re-sent with an extra line) shows where it differs, so the two entries can be told apart.
+ */
+export function outlineLabels(messages: ChatMessage[], max = 60): string[] {
+    const flat = messages.map(message => message.text.replace(/\s+/g, " ").trim());
+    return flat.map((text, index) => {
+        let shared = 0;
+        for (let j = 0; j < index; j++) {
+            if (messages[j].role !== messages[index].role) continue;
+            const other = flat[j];
+            let k = 0;
+            while (k < text.length && k < other.length && text[k] === other[k]) k++;
+            shared = Math.max(shared, k);
+        }
+        if (shared < SHARED_PREFIX_MIN || shared >= text.length) return summarize(text, max);
+        // Back up to the start of the word or clause where the texts part ways.
+        const cut = Math.max(LABEL_HEAD, text.lastIndexOf(" ", shared) + 1);
+        return summarize(`${text.slice(0, LABEL_HEAD)}… ${text.slice(cut)}`, max);
+    });
 }

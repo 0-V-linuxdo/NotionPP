@@ -14,7 +14,7 @@ import { isAiRoute, t } from "@utils/page";
 import { debounce, frameThrottle } from "@utils/time";
 
 import { EFFECTS, type Effect, playEffect, previewEffect } from "./effects";
-import { type ChatMessage, collectMessages, summarize } from "./messages";
+import { type ChatMessage, collectMessages, outlineLabels, summarize } from "./messages";
 import { NAV_CSS, NAV_HTML } from "./styles";
 import { Icons } from "@utils/icons";
 
@@ -91,7 +91,8 @@ function build() {
         line.dataset.role = message.role;
         return line;
     }));
-    q("ul").replaceChildren(...next.map(message => {
+    const labels = outlineLabels(next);
+    q("ul").replaceChildren(...next.map((message, index) => {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "item";
@@ -102,7 +103,7 @@ function build() {
         mark.textContent = message.role === "user" ? "❓" : "🤖";
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = summarize(message.text);
+        label.textContent = labels[index];
         button.title = summarize(message.text, 400);
         button.append(mark, label);
         button.addEventListener("click", () => jump(message.id));
