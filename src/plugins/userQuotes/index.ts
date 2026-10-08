@@ -126,7 +126,8 @@ function drawLeaf(leaf: HTMLElement, markers: Range[], texts: Range[]) {
         const top = Math.min(...rects.map(rect => rect.top));
         const bottom = Math.max(...rects.map(rect => rect.bottom));
         const bar = document.createElement("div");
-        bar.style.left = `${marker.getBoundingClientRect().left - origin.left + 1}px`;
+        // in the bubble's side padding, so wrapped lines of a long quote don't run under it
+        bar.style.left = `${marker.getBoundingClientRect().left - origin.left - 8}px`;
         bar.style.top = `${top - origin.top + 2}px`;
         bar.style.height = `${Math.max(0, bottom - top - 4)}px`;
         bars.push(bar);

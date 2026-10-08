@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.8.0
+// @version      20261007.1.8.1
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -4360,7 +4360,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.8.0";
+    const version = "[20261007] v1.8.1";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4394,7 +4394,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.8.0";
+    const version = "[20261007] v1.8.1";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -6287,7 +6287,7 @@ ${settings14.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(
       const top = Math.min(...rects.map((rect) => rect.top));
       const bottom = Math.max(...rects.map((rect) => rect.bottom));
       const bar = document.createElement("div");
-      bar.style.left = `${marker.getBoundingClientRect().left - origin.left + 1}px`;
+      bar.style.left = `${marker.getBoundingClientRect().left - origin.left - 8}px`;
       bar.style.top = `${top - origin.top + 2}px`;
       bar.style.height = `${Math.max(0, bottom - top - 4)}px`;
       bars.push(bar);
@@ -6455,7 +6455,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.8.0";
+    win[FLAG] = "[20261007] v1.8.1";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6482,7 +6482,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.8.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.8.1"} started`);
   }
   boot();
 })();

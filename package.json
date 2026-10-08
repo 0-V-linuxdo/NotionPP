@@ -1,6 +1,6 @@
 {
   "name": "notionpp",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "description": "NotionAI++ — a clean-room userscript for Notion AI: usage meter docked to the AI composer and a Notion-style chat navigator.",
   "type": "module",
