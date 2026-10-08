@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.7.0
+// @version      20261007.1.8.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -564,6 +564,7 @@
     sidebar: `<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>`,
     droplet: `<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>`,
     activity: `<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>`,
+    quote: `<path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12v6"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -4359,7 +4360,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)));
   }
   function aboutTab() {
-    const version = "[20261007] v1.7.0";
+    const version = "[20261007] v1.8.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -4393,7 +4394,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.7.0";
+    const version = "[20261007] v1.8.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -6190,12 +6191,195 @@ button { font: inherit; }
     }
   });
 
+  // src/plugins/userQuotes/index.ts
+  var STYLE_ID5 = "notionai-pp-user-quotes";
+  var HOST = "data-npp-quote-host";
+  var LAYER = "data-npp-quote-layer";
+  var MARKER_HL = "npp-quote-marker";
+  var TEXT_HL = "npp-quote-text";
+  var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]:not([contenteditable='true'])`;
+  var settings14 = definePluginSettings({
+    dim: {
+      type: "boolean",
+      label: { zh: "引用文字变淡", en: "Dim quoted text" },
+      default: true
+    }
+  });
+  function quoteLines(text) {
+    const result = [];
+    let offset = 0;
+    text.split(`
+`).forEach((line, index) => {
+      const match = /^([ \t]*)>[ \t]?/.exec(line);
+      if (match)
+        result.push({ start: offset + match[1].length, body: offset + match[0].length, end: offset + line.length, line: index });
+      offset += line.length + 1;
+    });
+    return result;
+  }
+  function quoteBlocks(lines) {
+    const blocks = [];
+    for (const line of lines) {
+      const last = blocks.at(-1);
+      if (last && last.at(-1).line === line.line - 1)
+        last.push(line);
+      else
+        blocks.push([line]);
+    }
+    return blocks;
+  }
+  function rangeAt(root, start, end) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let seen = 0;
+    let started = false;
+    for (let node = walker.nextNode();node; node = walker.nextNode()) {
+      const length = node.textContent?.length ?? 0;
+      if (!started && start <= seen + length) {
+        range.setStart(node, start - seen);
+        started = true;
+      }
+      if (started && end <= seen + length) {
+        range.setEnd(node, end - seen);
+        return range;
+      }
+      seen += length;
+    }
+    return null;
+  }
+  var highlights = () => globalThis.CSS?.highlights;
+  var Highlight = () => globalThis.Highlight;
+  function css3() {
+    return `[${HOST}] { position: relative; }
+[${LAYER}] { position: absolute; inset: 0; pointer-events: none; }
+[${LAYER}] > div { position: absolute; width: 3px; border-radius: 2px; background: var(--c-texTer, rgba(127,127,127,.6)); opacity: .7; }
+::highlight(${MARKER_HL}) { color: transparent; }
+${settings14.store.dim ? `::highlight(${TEXT_HL}) { color: var(--c-texSec, rgba(127,127,127,.9)); }` : ""}`;
+  }
+  function drawLeaf(leaf, markers, texts) {
+    const host = leaf.parentElement;
+    if (!host)
+      return;
+    let layer = host.querySelector(`:scope > [${LAYER}]`);
+    const lines = quoteLines(leaf.textContent ?? "");
+    if (!lines.length) {
+      layer?.remove();
+      host.removeAttribute(HOST);
+      return;
+    }
+    host.setAttribute(HOST, "");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.setAttribute(LAYER, "");
+      layer.setAttribute("aria-hidden", "true");
+      host.append(layer);
+    }
+    const origin = host.getBoundingClientRect();
+    const bars = [];
+    for (const block of quoteBlocks(lines)) {
+      const marker = rangeAt(leaf, block[0].start, block[0].start + 1);
+      const whole = rangeAt(leaf, block[0].start, block.at(-1).end);
+      if (!marker || !whole)
+        continue;
+      const rects = [...whole.getClientRects()].filter((rect) => rect.height > 0);
+      if (!rects.length)
+        continue;
+      const top = Math.min(...rects.map((rect) => rect.top));
+      const bottom = Math.max(...rects.map((rect) => rect.bottom));
+      const bar = document.createElement("div");
+      bar.style.left = `${marker.getBoundingClientRect().left - origin.left + 1}px`;
+      bar.style.top = `${top - origin.top + 2}px`;
+      bar.style.height = `${Math.max(0, bottom - top - 4)}px`;
+      bars.push(bar);
+      for (const line of block) {
+        const markerRange = rangeAt(leaf, line.start, line.body);
+        const textRange = rangeAt(leaf, line.body, line.end);
+        if (markerRange)
+          markers.push(markerRange);
+        if (textRange && line.end > line.body)
+          texts.push(textRange);
+      }
+    }
+    layer.replaceChildren(...bars);
+  }
+  function render2() {
+    const markers = [];
+    const texts = [];
+    const live = new Set;
+    for (const leaf of document.querySelectorAll(LEAF2)) {
+      drawLeaf(leaf, markers, texts);
+      if (leaf.parentElement)
+        live.add(leaf.parentElement);
+    }
+    for (const host of document.querySelectorAll(`[${HOST}]`)) {
+      if (!live.has(host))
+        clear(host);
+    }
+    const registry = highlights();
+    const HL = Highlight();
+    if (registry && HL) {
+      registry.set(MARKER_HL, new HL(...markers));
+      registry.set(TEXT_HL, new HL(...texts));
+    }
+  }
+  function clear(host) {
+    host.removeAttribute(HOST);
+    host.querySelector(`:scope > [${LAYER}]`)?.remove();
+  }
+  var schedule4 = debounce(render2, 150, 500);
+  var stopDom5 = null;
+  function applyStyle() {
+    let style = document.getElementById(STYLE_ID5);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID5;
+      (document.head ?? document.documentElement).append(style);
+    }
+    style.textContent = css3();
+  }
+  var userQuotes_default = definePlugin({
+    name: "userQuotes",
+    title: { zh: "引用行样式", en: "Quote lines" },
+    description: {
+      zh: "提问里以 > 开头的行显示成引用：左侧一条竖线，> 符号隐藏，文字稍淡，和自己的话区分开。",
+      en: "Lines of your questions that start with > show as quotes: a bar on the left, the > hidden and the text dimmed."
+    },
+    icon: Icons.quote,
+    tags: ["chat", "appearance"],
+    enabledByDefault: true,
+    settings: settings14,
+    start() {
+      applyStyle();
+      render2();
+      stopDom5 = onDomChange((mutations) => {
+        if (mutations.every((m) => m.target.hasAttribute?.(LAYER)))
+          return;
+        schedule4();
+      });
+      window.addEventListener("resize", schedule4);
+    },
+    stop() {
+      stopDom5?.();
+      stopDom5 = null;
+      schedule4.cancel();
+      window.removeEventListener("resize", schedule4);
+      for (const host of document.querySelectorAll(`[${HOST}]`))
+        clear(host);
+      highlights()?.delete(MARKER_HL);
+      highlights()?.delete(TEXT_HL);
+      document.getElementById(STYLE_ID5)?.remove();
+    },
+    onSettingsChange() {
+      applyStyle();
+    }
+  });
+
   // src/plugins/widerChat/index.ts
-  var STYLE_ID5 = "notionai-pp-wider-chat";
+  var STYLE_ID6 = "notionai-pp-wider-chat";
   var MARK3 = "data-npp-chat-column";
   var COMPOSER4 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings14 = definePluginSettings({
+  var settings15 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -6205,7 +6389,7 @@ button { font: inherit; }
       max: 2400
     }
   });
-  var stopDom5 = null;
+  var stopDom6 = null;
   function columnOf(step) {
     for (let node = step.parentElement;node && node !== document.body; node = node.parentElement) {
       const cap = node.style.maxWidth;
@@ -6223,18 +6407,18 @@ button { font: inherit; }
       column.setAttribute(MARK3, "");
     }
   }
-  function css3(width) {
+  function css4(width) {
     return `[${MARK3}] { max-width: ${width}px !important; }
 ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
   }
   function apply4() {
-    let style = document.getElementById(STYLE_ID5);
+    let style = document.getElementById(STYLE_ID6);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID5;
+      style.id = STYLE_ID6;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css3(settings14.store.width);
+    style.textContent = css4(settings15.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -6246,16 +6430,16 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings14,
+    settings: settings15,
     start() {
       apply4();
       mark2();
-      stopDom5 = onDomChange(mark2);
+      stopDom6 = onDomChange(mark2);
     },
     stop() {
-      stopDom5?.();
-      stopDom5 = null;
-      document.getElementById(STYLE_ID5)?.remove();
+      stopDom6?.();
+      stopDom6 = null;
+      document.getElementById(STYLE_ID6)?.remove();
       for (const node of document.querySelectorAll(`[${MARK3}]`))
         node.removeAttribute(MARK3);
     },
@@ -6271,7 +6455,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.7.0";
+    win[FLAG] = "[20261007] v1.8.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -6288,7 +6472,8 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       greetingCustomizer_default,
       composerLook_default,
       sidebarTweaks_default,
-      healthCheck_default
+      healthCheck_default,
+      userQuotes_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -6297,7 +6482,7 @@ ${COMPOSER4} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger5.info(`NotionAI++ ${"[20261007] v1.7.0"} started`);
+    logger5.info(`NotionAI++ ${"[20261007] v1.8.0"} started`);
   }
   boot();
 })();

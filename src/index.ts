@@ -24,6 +24,7 @@ import settings from "@plugins/settings/index";
 import sidebarTweaks from "@plugins/sidebarTweaks/index";
 import tabStatus from "@plugins/tabStatus/index";
 import usageMeter from "@plugins/usage/index";
+import userQuotes from "@plugins/userQuotes/index";
 import widerChat from "@plugins/widerChat/index";
 
 declare const VERSION: string;
@@ -39,7 +40,7 @@ function boot() {
     registerPlugins([
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
         inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
-        composerLook, sidebarTweaks, healthCheck,
+        composerLook, sidebarTweaks, healthCheck, userQuotes,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);
