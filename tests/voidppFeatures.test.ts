@@ -121,3 +121,18 @@ describe("star placement", () => {
         expect(user.style.width).toBe("auto");
     });
 });
+
+describe("star visibility", () => {
+    test("shows and hides with the copy button", async () => {
+        chat();
+        history.replaceState(null, "", "/chat?t=c1");
+        const copy = document.querySelector<HTMLElement>("[aria-label='Copy text']")!;
+        copy.style.opacity = "0";
+        scan();
+        const star = document.querySelector<HTMLElement>("[data-npp-star] > *")!;
+        expect(star.style.opacity).toBe("0");
+        copy.style.opacity = "1";
+        await frame();
+        expect(star.style.opacity).toBe("1");
+    });
+});

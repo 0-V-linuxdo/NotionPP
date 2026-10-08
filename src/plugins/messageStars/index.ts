@@ -53,6 +53,27 @@ function paint(button: HTMLElement, starred: boolean) {
     button.querySelector("svg")?.setAttribute("fill", starred ? "currentColor" : "none");
 }
 
+const mirrors = new WeakMap<HTMLElement, MutationObserver>();
+
+/**
+ * Notion hides the prompt toolbar's copy button (an inline opacity: 0) until the prompt is
+ * hovered; the star follows the copy button's classes and opacity so it shows and hides with it.
+ */
+function mirror(copy: HTMLElement, button: HTMLElement) {
+    const sync = () => {
+        if (button.className !== copy.className) button.className = copy.className;
+        if (button.style.opacity !== copy.style.opacity) button.style.opacity = copy.style.opacity;
+    };
+    sync();
+    const observer = new MutationObserver(() => {
+        if (!button.isConnected) return observer.disconnect();
+        sync();
+    });
+    observer.observe(copy, { attributes: true, attributeFilter: ["class", "style"] });
+    mirrors.get(button)?.disconnect();
+    mirrors.set(button, observer);
+}
+
 function makeButton(copy: HTMLElement, id: string): HTMLElement {
     const wrapper = (copy.parentElement?.cloneNode(false) ?? document.createElement("div")) as HTMLElement;
     wrapper.removeAttribute("data-popup-origin");
@@ -75,6 +96,7 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
         button.click();
     });
     wrapper.append(button);
+    mirror(copy, button);
     return wrapper;
 }
 
@@ -113,6 +135,10 @@ export function scan() {
             ours = null;
         }
         if (!id) continue;
+        if (ours) {
+            const button = ours.firstElementChild as HTMLElement;
+            if (button.className !== copy.className || button.style.opacity !== copy.style.opacity) mirror(copy, button);
+        }
         ours ??= makeButton(copy, id);
         place(row, copy.parentElement!, ours);
         paint(ours.firstElementChild as HTMLElement, stars.has(id));
