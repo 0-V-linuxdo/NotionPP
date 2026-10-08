@@ -4,8 +4,16 @@
  * SPDX-License-Identifier: MIT
  */
 
+export interface ReplyEvent {
+    /** The chat's id (the `t` query parameter), or "" for a chat that has none yet. */
+    chatId: string;
+}
+
 export interface EventMap {
     openSettings: void;
+    replyStart: ReplyEvent;
+    replyEnd: ReplyEvent & { error: boolean };
+    starsChanged: void;
 }
 
 type Handler<K extends keyof EventMap> = (payload: EventMap[K]) => void;

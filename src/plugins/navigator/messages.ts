@@ -141,7 +141,7 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
     return messages;
 }
 
-function copyRole(button: Element): Role | null {
+export function copyRole(button: Element): Role | null {
     const label = [button.getAttribute("aria-label"), button.getAttribute("title"), button.getAttribute("data-testid")].filter(Boolean).join(" ");
     if (COPY_ASSISTANT.test(label)) return "assistant";
     if (COPY_USER.test(label)) return "user";

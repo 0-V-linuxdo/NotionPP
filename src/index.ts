@@ -13,9 +13,14 @@ import { isTopmostNotionDocument, pageWindow } from "@utils/page";
 import autoCollapseThinking from "@plugins/autoCollapseThinking/index";
 import focusHighlight from "@plugins/focusHighlight/index";
 import greetingCustomizer from "@plugins/greetingCustomizer/index";
+import inputHistory from "@plugins/inputHistory/index";
+import messageStars from "@plugins/messageStars/index";
 import chatNavigator from "@plugins/navigator/index";
+import replyNotification from "@plugins/replyNotification/index";
 import settings from "@plugins/settings/index";
+import tabStatus from "@plugins/tabStatus/index";
 import usageMeter from "@plugins/usage/index";
+import widerChat from "@plugins/widerChat/index";
 
 declare const VERSION: string;
 
@@ -27,7 +32,10 @@ function boot() {
     if (win[FLAG] || !isTopmostNotionDocument()) return;
     win[FLAG] = typeof VERSION === "string" ? VERSION : true;
     installHooks();
-    registerPlugins([settings, usageMeter, chatNavigator, autoCollapseThinking, focusHighlight, greetingCustomizer]);
+    registerPlugins([
+        settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
+        inputHistory, widerChat, autoCollapseThinking, focusHighlight, greetingCustomizer,
+    ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", ready, { once: true });

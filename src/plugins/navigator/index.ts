@@ -5,6 +5,8 @@
  */
 
 import { onDomChange } from "@api/DomWatch";
+import { on } from "@api/Events";
+import { currentChatId } from "@api/Reply";
 import { createOverlay, type Overlay } from "@api/Overlay";
 import { definePlugin } from "@api/PluginManager";
 import { onRouteChange } from "@api/Router";
@@ -17,6 +19,8 @@ import { EFFECTS, type Effect, playEffect, previewEffect } from "./effects";
 import { type ChatMessage, collectMessages, outlineLabels, summarize } from "./messages";
 import { NAV_CSS, NAV_HTML } from "./styles";
 import { Icons } from "@utils/icons";
+
+import { starsActive, starsOf } from "../messageStars/store";
 
 export const NAV_HOST_ID = "notionai-pp-navigator";
 const RESCAN_MS = 250;
@@ -109,7 +113,8 @@ export function railSpan() {
 function build() {
     if (!overlay) return;
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
-    const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}`).join("\u0002");
+    const stars = starsActive() ? starsOf(currentChatId()) : new Set<string>();
+    const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}\u0001${stars.has(m.id) ? 1 : 0}`).join("\u0002");
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
     overlay.host.hidden = !next.length;
@@ -125,6 +130,7 @@ function build() {
         line.className = "line";
         line.dataset.id = message.id;
         line.dataset.role = message.role;
+        line.classList.toggle("starred", stars.has(message.id));
         return line;
     }));
     const labels = outlineLabels(next);
@@ -134,9 +140,10 @@ function build() {
         button.className = "item";
         button.dataset.id = message.id;
         button.dataset.role = message.role;
+        button.classList.toggle("starred", stars.has(message.id));
         const mark = document.createElement("span");
         mark.className = "mark";
-        mark.textContent = message.role === "user" ? "❓" : "🤖";
+        mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "🤖";
         const label = document.createElement("span");
         label.className = "label";
         label.textContent = labels[index];
@@ -239,6 +246,10 @@ export default definePlugin({
                 panelObserver = null;
                 watchedPanels.clear();
             },
+            on("starsChanged", () => {
+                signature = "";
+                build();
+            }),
             onRouteChange(() => {
                 signature = "";
                 rescan();

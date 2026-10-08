@@ -27,7 +27,9 @@ export const NAV_CSS = `
 .lines { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; transition: transform .2s ease; }
 .line { width: 16px; height: 2px; border-radius: 2px; background: var(--line); transition: width .2s, background .2s; }
 .line[data-role="assistant"] { width: 10px; opacity: .7; }
+.line.starred { background: #d9730d; opacity: 1; }
 .line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
+.line.starred.active { background: #d9730d; box-shadow: 0 0 3px #d9730d; }
 .menu {
   position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
   border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
