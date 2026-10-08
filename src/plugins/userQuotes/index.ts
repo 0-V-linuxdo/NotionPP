@@ -167,6 +167,8 @@ function clear(host: Element) {
 
 const schedule = debounce(render, 150, 500);
 let stopDom: (() => void) | null = null;
+/** Text edited in place (an edited question) changes no child lists, so DomWatch misses it. */
+let textWatch: MutationObserver | null = null;
 
 function applyStyle() {
     let style = document.getElementById(STYLE_ID);
@@ -197,11 +199,17 @@ export default definePlugin({
             if (mutations.every(m => (m.target as Element).hasAttribute?.(LAYER))) return;
             schedule();
         });
+        textWatch = new MutationObserver(mutations => {
+            if (mutations.some(m => m.target.parentElement?.closest(`[${USER_STEP}]`))) schedule();
+        });
+        textWatch.observe(document.documentElement, { characterData: true, subtree: true });
         window.addEventListener("resize", schedule);
     },
     stop() {
         stopDom?.();
         stopDom = null;
+        textWatch?.disconnect();
+        textWatch = null;
         schedule.cancel();
         window.removeEventListener("resize", schedule);
         for (const host of document.querySelectorAll(`[${HOST}]`)) clear(host);
