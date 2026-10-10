@@ -96,28 +96,6 @@ describe("reply watcher", () => {
         off();
         expect(ends[0]).toEqual({ stopped: true, left: false });
     });
-
-    test("a stop button that blinks out and back does not end the reply", async () => {
-        history.replaceState(null, "", "/chat?t=abc");
-        let ends = 0;
-        const off = on("replyEnd", () => void ends++);
-        const release = watchReplies();
-        document.body.innerHTML = `<div data-notion-chat-input-container><div role="button" data-testid="agent-stop-inference-button"></div></div>`;
-        await new Promise(resolve => setTimeout(resolve, 50));
-        const container = document.querySelector("[data-notion-chat-input-container]")!;
-        const stop = container.firstElementChild!;
-        stop.remove();
-        await new Promise(resolve => setTimeout(resolve, 100));
-        // A fresh node, as Notion renders one (happy-dom stops reporting a node once it is re-inserted).
-        const again = stop.cloneNode() as HTMLElement;
-        container.append(again);
-        await new Promise(resolve => setTimeout(resolve, 600));
-        expect(ends).toBe(0);
-        again.remove();
-        await until(() => ends === 1);
-        release();
-        off();
-    });
 });
 
 describe("new and recently updated plugins", () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.10.0
+// @version      20261007.1.11.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -748,6 +748,8 @@
     shield: `<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m4.243 5.21 14.39 12.472"/>`,
     music: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
     code: `<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>`,
+    checkCircle: `<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>`,
+    panelRight: `<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -765,12 +767,170 @@
     return svg;
   }
 
+  // src/plugins/autoAllow/index.ts
+  var logger4 = new Logger("AutoAllow");
+  var QUESTION = /^\s*(?:do you trust|是否信任|你信任|您信任)/i;
+  var ALLOW = /^\s*(?:allow once|允许一次|仅允许一次|本次允许)\s*$/i;
+  var settings = definePluginSettings({
+    scope: {
+      type: "select",
+      label: { zh: "适用范围", en: "Applies to" },
+      default: "all",
+      options: [
+        { value: "all", label: { zh: "所有网站", en: "Every site" } },
+        { value: "https", label: { zh: "只限 https 网址", en: "Only https addresses" } }
+      ]
+    }
+  });
+  var answered = new WeakSet;
+  var stopDom = null;
+  function findPrompts(root = document) {
+    const out = [];
+    for (const button of root.querySelectorAll("button, [role='button']")) {
+      if (!ALLOW.test(button.textContent ?? ""))
+        continue;
+      let card = button.parentElement;
+      while (card && card !== document.body && !QUESTION.test(card.textContent ?? ""))
+        card = card.parentElement;
+      if (!card || card === document.body)
+        continue;
+      if ([...card.querySelectorAll("button, [role='button']")].filter((node) => ALLOW.test(node.textContent ?? "")).length !== 1)
+        continue;
+      const question = [...card.querySelectorAll("*")].find((node) => QUESTION.test(node.textContent ?? "") && !node.querySelector("button, [role='button']"));
+      const site = (question?.textContent ?? "").replace(QUESTION, "").replace(/[?？]\s*$/, "").trim();
+      const url = (card.textContent ?? "").match(/https?:\/\/\S+/)?.[0] ?? "";
+      out.push({ allow: button, site, url });
+    }
+    return out;
+  }
+  function scan() {
+    for (const prompt of findPrompts()) {
+      if (answered.has(prompt.allow))
+        continue;
+      if (settings.store.scope === "https" && prompt.url && !prompt.url.startsWith("https://"))
+        continue;
+      answered.add(prompt.allow);
+      logger4.info(`Allowing once: ${prompt.site || prompt.url || "(unknown site)"}`);
+      prompt.allow.click();
+    }
+  }
+  var autoAllow_default = definePlugin({
+    name: "autoAllow",
+    title: { zh: "自动同意访问网址", en: "Auto-allow site access" },
+    description: {
+      zh: "Notion AI 询问「Do you trust 某网站?」时，自动点「Allow once」，长任务不用停下来等你。这会跳过 Notion 的安全确认，所以默认关闭。",
+      en: `When Notion AI asks "Do you trust a site?", clicks Allow once for you so long tasks keep going. This skips Notion's safety check, so it is off by default.`
+    },
+    icon: Icons.checkCircle,
+    tags: ["chat"],
+    enabledByDefault: false,
+    updatedAt: "2026-10-10",
+    settings,
+    start() {
+      answered = new WeakSet;
+      stopDom = onDomChange(scan);
+      scan();
+    },
+    stop() {
+      stopDom?.();
+      stopDom = null;
+    }
+  });
+
+  // src/api/Events.ts
+  var handlers = new Map;
+  function on(event, handler) {
+    if (!handlers.has(event))
+      handlers.set(event, new Set);
+    handlers.get(event).add(handler);
+    return () => void handlers.get(event)?.delete(handler);
+  }
+  function emit(event, payload) {
+    for (const handler of [...handlers.get(event) ?? []])
+      handler(payload);
+  }
+
+  // src/api/Reply.ts
+  var STOP_BUTTON = "[data-testid='agent-stop-inference-button']";
+  var INFERENCE_PATH = /\/api\/v3\/runInferenceTranscript$/;
+  var END_GRACE_MS = 400;
+  var state = "idle";
+  var failed = false;
+  var stopped = false;
+  var chatId = "";
+  var endTimer = 0;
+  var users = 0;
+  var stopDom2 = null;
+  var stopNet = null;
+  var currentChatId = () => new URL(pageWindow.location.href).searchParams.get("t") ?? "";
+  var replyState = () => state;
+  var currentChatTitle = () => document.title.replace(/\s*\|\s*Notion\s*$/, "").trim();
+  function check() {
+    const streaming = !!document.querySelector(STOP_BUTTON);
+    if (streaming) {
+      clearTimeout(endTimer);
+      endTimer = 0;
+      if (state === "idle") {
+        state = "streaming";
+        failed = false;
+        stopped = false;
+        chatId = currentChatId();
+        emit("replyStart", { chatId });
+      }
+    } else if (state === "streaming" && !endTimer) {
+      endTimer = setTimeout(finish, END_GRACE_MS);
+    }
+  }
+  function finish() {
+    endTimer = 0;
+    if (state !== "streaming" || document.querySelector(STOP_BUTTON))
+      return;
+    state = "idle";
+    const now = currentChatId();
+    emit("replyEnd", { chatId: now || chatId, error: failed, stopped, left: !!chatId && !!now && now !== chatId });
+  }
+  function onPress(event) {
+    if (event.target?.closest?.(STOP_BUTTON))
+      stopped = true;
+  }
+  function watchReplies() {
+    if (users++ === 0) {
+      stopDom2 = onDomChange(check);
+      stopNet = observeNetwork({
+        matches: (url, method) => method === "POST" && INFERENCE_PATH.test(url.pathname),
+        onExchange(exchange) {
+          exchange.response.then((response) => {
+            if (!response?.ok)
+              failed = true;
+          });
+        }
+      });
+      document.addEventListener("click", onPress, true);
+      check();
+    }
+    let released = false;
+    return () => {
+      if (released)
+        return;
+      released = true;
+      if (--users > 0)
+        return;
+      stopDom2?.();
+      stopNet?.();
+      stopDom2 = stopNet = null;
+      document.removeEventListener("click", onPress, true);
+      clearTimeout(endTimer);
+      endTimer = 0;
+      state = "idle";
+    };
+  }
+
   // src/plugins/autoCollapseThinking/index.ts
   var TOGGLE = "[role='button'][aria-expanded][aria-controls]";
   var STEP_TITLE = ".notion-agent-tool-use-title";
   var STREAMING = "[role='status'], .nds-shimmer-text";
   var THINKING_LABEL = /^(?:\d+\s*(?:steps?|个?步骤?)|thought|thinking|reasoning|已?思考|推理)/i;
-  var settings = definePluginSettings({
+  var settings2 = definePluginSettings({
     mode: {
       type: "select",
       label: { zh: "折叠时机", en: "When to collapse" },
@@ -790,9 +950,12 @@
   });
   var userOwned = new WeakSet;
   var seenAtStart = new WeakSet;
-  var stopDom = null;
+  var stopDom3 = null;
   var attrObserver = null;
   var scheduled2 = false;
+  var releaseReplies = null;
+  var offReply = [];
+  var timers = [];
   function panelOf(toggle) {
     const id = toggle.getAttribute("aria-controls");
     return id ? toggle.ownerDocument.getElementById(id) : null;
@@ -800,7 +963,11 @@
   function labelOf(toggle) {
     return (toggle.textContent ?? "").replace(/\s+/g, " ").trim();
   }
-  var isStreaming = (toggle) => !!toggle.querySelector(STREAMING);
+  var isStreaming = (toggle) => !!toggle.querySelector(STREAMING) || replyState() === "streaming" && isLastGroup(toggle);
+  function isLastGroup(toggle) {
+    const all = [...document.querySelectorAll(TOGGLE)].filter((node) => !node.closest(".notion-sidebar, nav") && !node.querySelector(STEP_TITLE));
+    return all[all.length - 1] === toggle;
+  }
   function isThinkingToggle(toggle) {
     if (!toggle.matches(TOGGLE))
       return false;
@@ -822,13 +989,13 @@
       return false;
     if (!isThinkingToggle(toggle))
       return false;
-    if (seenAtStart.has(toggle) && !settings.store.collapseHistory)
+    if (seenAtStart.has(toggle) && !settings2.store.collapseHistory)
       return false;
-    if (settings.store.mode !== "immediate" && isStreaming(toggle))
+    if (settings2.store.mode !== "immediate" && isStreaming(toggle))
       return false;
     return true;
   }
-  function scan(root = document) {
+  function scan2(root = document) {
     for (const toggle of root.querySelectorAll(TOGGLE)) {
       if (shouldCollapse(toggle))
         toggle.click();
@@ -840,7 +1007,7 @@
     scheduled2 = true;
     requestAnimationFrame(() => {
       scheduled2 = false;
-      scan();
+      scan2();
     });
   }
   function claim(event) {
@@ -862,7 +1029,8 @@
     icon: Icons.collapse,
     tags: ["chat"],
     enabledByDefault: true,
-    settings,
+    updatedAt: "2026-10-10",
+    settings: settings2,
     start() {
       userOwned = new WeakSet;
       seenAtStart = new WeakSet;
@@ -872,25 +1040,38 @@
       }
       document.addEventListener("click", claim, true);
       document.addEventListener("keydown", claim, true);
-      stopDom = onDomChange(schedule);
+      stopDom3 = onDomChange(schedule);
+      const afterReply = () => {
+        schedule();
+        for (const delay of [300, 1000])
+          timers.push(setTimeout(schedule, delay));
+      };
+      releaseReplies = watchReplies();
+      offReply = [on("replyEnd", afterReply), on("replyStart", schedule)];
       attrObserver = new MutationObserver(schedule);
       attrObserver.observe(document.documentElement, {
         subtree: true,
         attributes: true,
         attributeFilter: ["aria-expanded"]
       });
-      scan();
+      scan2();
     },
     stop() {
+      releaseReplies?.();
+      releaseReplies = null;
+      for (const off of offReply.splice(0))
+        off();
+      for (const timer of timers.splice(0))
+        clearTimeout(timer);
       document.removeEventListener("click", claim, true);
       document.removeEventListener("keydown", claim, true);
-      stopDom?.();
-      stopDom = null;
+      stopDom3?.();
+      stopDom3 = null;
       attrObserver?.disconnect();
       attrObserver = null;
     },
     onSettingsChange() {
-      scan();
+      scan2();
     }
   });
 
@@ -998,7 +1179,7 @@
   var POLL_MS = 1000;
   var last2 = "";
   var installed2 = false;
-  function check() {
+  function check2() {
     const href = pageWindow.location.href;
     if (href === last2)
       return;
@@ -1015,7 +1196,7 @@
       return;
     installed2 = true;
     last2 = pageWindow.location.href;
-    const schedule = () => queueMicrotask(check);
+    const schedule = () => queueMicrotask(check2);
     const nav = pageWindow.navigation;
     if (nav && typeof nav.addEventListener === "function") {
       nav.addEventListener("navigatesuccess", schedule);
@@ -1031,7 +1212,7 @@
     }
     pageWindow.addEventListener("popstate", schedule);
     pageWindow.addEventListener("hashchange", schedule);
-    setInterval(check, POLL_MS);
+    setInterval(check2, POLL_MS);
   }
   function onRouteChange(listener) {
     install();
@@ -1237,7 +1418,7 @@
   var DOUBLE_CLICK_PX = 20;
   var LEGACY_KEYS = { light: "notionAiFocusHighlightColorLight", dark: "notionAiFocusHighlightColorDark" };
   var LEGACY_SHARED_KEY = "notionAiFocusHighlightColor";
-  var settings2 = definePluginSettings({
+  var settings3 = definePluginSettings({
     lightColor: {
       type: "color",
       label: { zh: "普通模式", en: "Light mode" },
@@ -1250,7 +1431,7 @@
     }
   });
   var colorKey = (theme) => theme === "dark" ? "darkColor" : "lightColor";
-  var colorFor = (theme) => settings2.store[colorKey(theme)];
+  var colorFor = (theme) => settings3.store[colorKey(theme)];
   var boxes = new Set;
   var lastEditor = null;
   var lastContextMenu = null;
@@ -1272,7 +1453,7 @@
     }
     return [...found].filter((box) => box !== document.body && box !== document.documentElement);
   }
-  function scan2() {
+  function scan3() {
     const next = new Set(findPromptBoxes());
     for (const box of boxes)
       if (!next.has(box))
@@ -1288,7 +1469,7 @@
     scheduled3 = true;
     requestAnimationFrame(() => {
       scheduled3 = false;
-      scan2();
+      scan3();
     });
   }
   function renderStyle() {
@@ -1363,7 +1544,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     const input = root.querySelector("input");
     const apply = () => {
       if (isHexColor(input.value))
-        settings2.store[colorKey(currentTheme())] = input.value.toLowerCase();
+        settings3.store[colorKey(currentTheme())] = input.value.toLowerCase();
     };
     input.addEventListener("input", apply);
     input.addEventListener("change", apply);
@@ -1433,7 +1614,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     icon: Icons.highlighter,
     tags: ["composer", "appearance"],
     enabledByDefault: true,
-    settings: settings2,
+    settings: settings3,
     start() {
       migrateLegacy();
       renderStyle();
@@ -1447,7 +1628,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
           syncPanel();
         })
       ];
-      scan2();
+      scan3();
     },
     stop() {
       for (const cleanup of cleanups.splice(0))
@@ -1511,6 +1692,11 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   function cleanLines(raw) {
     return raw.split(/\n+/).map((line) => line.replace(/\s+/g, " ").trim()).filter((line) => line && !DATE_RE.test(line) && !NOISE_RE.test(line));
   }
+  var CODE_LINE = /^(?:(?:window|document|self|globalThis|var|let|const|function|import|export|return)\b|[\w$]+(?:\.[\w$]+)+\s*=|[{}[\]<]|\$ |#!|\/\/)|[;{]\s*$/;
+  var isCodeLine = (line) => CODE_LINE.test(line);
+  var proseOf = (text) => text.split(`
+`).filter((line) => !isCodeLine(line)).join(`
+`);
   var isDateText = (text) => DATE_RE.test(text.replace(/\s+/g, " ").trim());
   function readText(element, skip = []) {
     if (!skip.length)
@@ -1614,7 +1800,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
         const skip = [...sibling.querySelectorAll(TOGGLE2), ...regionsOf(sibling), ...nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : []];
         const body = assistantBody(sibling);
         const bodyText = readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
-        const reply = bodyText || readText(sibling, skip);
+        const reply = proseOf(bodyText) || proseOf(readText(sibling, skip));
         if (reply) {
           messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
           break;
@@ -1713,7 +1899,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   var BAR = "data-npp-fold-bar";
   var CODE = ".notion-code-block, pre";
   var COMPOSER = "[data-notion-chat-input-container]";
-  var settings3 = definePluginSettings({
+  var settings4 = definePluginSettings({
     height: {
       type: "number",
       label: { zh: "折叠后的高度（像素）", en: "Folded height (px)" },
@@ -1759,8 +1945,8 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     bar.textContent = folded ? t(`展开全部代码（${lines} 行）`, `Show all ${lines} lines`) : t("收起代码", "Fold code");
     bar.setAttribute("aria-expanded", String(!folded));
   }
-  function scan3() {
-    const limit = settings3.store.height;
+  function scan4() {
+    const limit = settings4.store.height;
     for (const block of chatCodeBlocks()) {
       let bar = block.nextElementSibling?.hasAttribute(BAR) ? block.nextElementSibling : null;
       if (!block.hasAttribute(MARK)) {
@@ -1788,7 +1974,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       style.id = STYLE_ID2;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css(settings3.store.height);
+    style.textContent = css(settings4.store.height);
   }
   var cleanups2 = [];
   var codeFold_default = definePlugin({
@@ -1802,10 +1988,10 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings3,
+    settings: settings4,
     start() {
       applyStyle();
-      const rescan = debounce(scan3, 250, 1000);
+      const rescan = debounce(scan4, 250, 1000);
       cleanups2 = [
         onDomChange((mutations) => {
           if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(BAR))))
@@ -1814,7 +2000,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
         }),
         () => rescan.cancel()
       ];
-      scan3();
+      scan4();
     },
     stop() {
       for (const cleanup of cleanups2.splice(0))
@@ -1824,7 +2010,55 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     },
     onSettingsChange() {
       applyStyle();
-      scan3();
+      scan4();
+    }
+  });
+
+  // src/plugins/autoHidePanel/index.ts
+  var PANEL_TOGGLE = "[data-testid='agent-chat-side-panel-toggle']";
+  var OPEN_LABEL = /minimi[sz]e|collapse|close|hide|收起|隐藏|关闭|最小化/i;
+  var STEP = "[data-agent-chat-user-step-id]";
+  function panelOpen(toggle) {
+    const expanded = toggle.getAttribute("aria-expanded");
+    if (expanded === "true" || expanded === "false")
+      return expanded === "true";
+    const pressed = toggle.getAttribute("aria-pressed");
+    if (pressed === "true" || pressed === "false")
+      return pressed === "true";
+    return OPEN_LABEL.test(`${toggle.getAttribute("aria-label") ?? ""} ${toggle.getAttribute("title") ?? ""}`);
+  }
+  var handled = new Set;
+  var cleanups3 = [];
+  function check3() {
+    const chat = currentChatId() || location.pathname;
+    if (handled.has(chat))
+      return;
+    const toggle = document.querySelector(PANEL_TOGGLE);
+    if (!toggle || !document.querySelector(STEP))
+      return;
+    handled.add(chat);
+    if (panelOpen(toggle))
+      toggle.click();
+  }
+  var autoHidePanel_default = definePlugin({
+    name: "autoHidePanel",
+    title: { zh: "自动隐藏右侧栏", en: "Auto-hide the side panel" },
+    description: {
+      zh: "打开 Notion AI 对话时，自动收起右侧的面板（Skills、详情），让对话占满宽度。在这个对话里手动再打开，不会被再次收起。",
+      en: "Closes the panel on the right of a Notion AI chat (Skills, details) when the chat opens, so the conversation gets the full width. Reopen it by hand and it stays open in that chat."
+    },
+    icon: Icons.panelRight,
+    tags: ["chat", "appearance"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-10",
+    start() {
+      handled = new Set;
+      cleanups3 = [onDomChange(check3), onRouteChange(check3)];
+      check3();
+    },
+    stop() {
+      for (const cleanup of cleanups3.splice(0))
+        cleanup();
     }
   });
 
@@ -1832,7 +2066,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   var STYLE_ID3 = "notionai-pp-composer-look";
   var MARK2 = "data-npp-composer-box";
   var COMPOSER2 = "[data-notion-chat-input-container]";
-  var settings4 = definePluginSettings({
+  var settings5 = definePluginSettings({
     opacity: {
       type: "number",
       label: { zh: "背景不透明度（%）", en: "Background opacity (%)" },
@@ -1878,7 +2112,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       if (box && !box.hasAttribute(MARK2))
         box.setAttribute(MARK2, "");
     }
-    if (settings4.store.noFade && !document.querySelector(`[${FADE_MARK}]`))
+    if (settings5.store.noFade && !document.querySelector(`[${FADE_MARK}]`))
       chatScroller()?.setAttribute(FADE_MARK, "");
   }
   function css2(opacity, blur, noFade = false) {
@@ -1891,7 +2125,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
 [${FADE_MARK}] { mask-image: none !important; -webkit-mask-image: none !important; }` : "";
     return `[${MARK2}] { ${rules.join(" ")} }${fade}`;
   }
-  var stopDom2 = null;
+  var stopDom4 = null;
   function apply() {
     let style = document.getElementById(STYLE_ID3);
     if (!style) {
@@ -1899,8 +2133,8 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       style.id = STYLE_ID3;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css2(settings4.store.opacity, settings4.store.blur, settings4.store.noFade);
-    if (!settings4.store.noFade)
+    style.textContent = css2(settings5.store.opacity, settings5.store.blur, settings5.store.noFade);
+    if (!settings5.store.noFade)
       for (const node of document.querySelectorAll(`[${FADE_MARK}]`))
         node.removeAttribute(FADE_MARK);
     mark();
@@ -1916,14 +2150,14 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     tags: ["composer", "appearance"],
     enabledByDefault: false,
     updatedAt: "2026-10-08",
-    settings: settings4,
+    settings: settings5,
     start() {
       apply();
-      stopDom2 = onDomChange(mark);
+      stopDom4 = onDomChange(mark);
     },
     stop() {
-      stopDom2?.();
-      stopDom2 = null;
+      stopDom4?.();
+      stopDom4 = null;
       document.getElementById(STYLE_ID3)?.remove();
       for (const node of document.querySelectorAll(`[${MARK2}], [${FADE_MARK}]`))
         node.removeAttribute(MARK2), node.removeAttribute(FADE_MARK);
@@ -2597,7 +2831,7 @@ button { font: inherit; color: inherit; }
   // src/plugins/greetingCustomizer/index.ts
   var STYLE_ID4 = "notionai-pp-greeting-style";
   var RIGHT_DOUBLE_MS = 400;
-  var settings5 = definePluginSettings({
+  var settings6 = definePluginSettings({
     manage: {
       type: "action",
       label: { zh: "问候语列表", en: "Greetings" },
@@ -2634,7 +2868,7 @@ button { font: inherit; color: inherit; }
       max: 3600
     }
   });
-  var stopDom3 = null;
+  var stopDom5 = null;
   var stopRoute = null;
   var timer = null;
   var wasHome = false;
@@ -2666,10 +2900,10 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function apply2(advance = false) {
     const greetings = loadGreetings();
     const current = loadIndex();
-    const index = pickIndex(greetings.length, settings5.store.order, current, advance);
+    const index = pickIndex(greetings.length, settings6.store.order, current, advance);
     if (index !== current)
       saveIndex(index);
-    const clickable = settings5.store.mode === "manual" && greetings.length > 1;
+    const clickable = settings6.store.mode === "manual" && greetings.length > 1;
     upsertStyle(buildCss(greetings[index] ?? greetings[0], clickable));
     syncTitle();
   }
@@ -2677,14 +2911,14 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const target = document.querySelector(TARGET_SELECTOR);
     if (!target)
       return;
-    const want = settings5.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
+    const want = settings6.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
     if (want)
       target.title = want;
     else
       target.removeAttribute("title");
   }
   function syncTimer() {
-    const want = running && settings5.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
+    const want = running && settings6.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
     if (!want) {
       if (timer)
         clearInterval(timer);
@@ -2693,7 +2927,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
     if (timer)
       return;
-    timer = setInterval(() => apply2(true), settings5.store.intervalSec * 1000);
+    timer = setInterval(() => apply2(true), settings6.store.intervalSec * 1000);
   }
   function restartTimer() {
     if (timer)
@@ -2701,11 +2935,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     timer = null;
     syncTimer();
   }
-  function check2() {
+  function check4() {
     const home = isHomePath();
     const marked = syncMark();
     if (home && !wasHome)
-      apply2(settings5.store.mode === "refresh");
+      apply2(settings6.store.mode === "refresh");
     else if (marked)
       syncTitle();
     wasHome = home;
@@ -2715,7 +2949,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function onClick(event) {
     if (event.button !== 0 || !targetOf(event))
       return;
-    if (settings5.store.mode !== "manual" || loadGreetings().length <= 1)
+    if (settings6.store.mode !== "manual" || loadGreetings().length <= 1)
       return;
     if (String(window.getSelection?.() ?? "").trim())
       return;
@@ -2735,9 +2969,9 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   }
   function openGreetingManager() {
-    const store = settings5.store;
+    const store = settings6.store;
     openManager({
-      defs: { mode: settings5.def.mode, order: settings5.def.order, intervalSec: settings5.def.intervalSec },
+      defs: { mode: settings6.def.mode, order: settings6.def.order, intervalSec: settings6.def.intervalSec },
       get: (key) => store[key],
       set: (key, value) => void (store[key] = value)
     }, loadIndex);
@@ -2752,24 +2986,24 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,
-    settings: settings5,
+    settings: settings6,
     start() {
       running = true;
       wasHome = false;
       lastRightClick = 0;
       document.addEventListener("click", onClick, true);
       document.addEventListener("contextmenu", onContextMenu2, true);
-      stopDom3 = onDomChange(check2);
-      stopRoute = onRouteChange(check2);
-      check2();
+      stopDom5 = onDomChange(check4);
+      stopRoute = onRouteChange(check4);
+      check4();
     },
     stop() {
       running = false;
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("contextmenu", onContextMenu2, true);
-      stopDom3?.();
+      stopDom5?.();
       stopRoute?.();
-      stopDom3 = stopRoute = null;
+      stopDom5 = stopRoute = null;
       syncTimer();
       clearMarks();
       document.getElementById(STYLE_ID4)?.remove();
@@ -2783,99 +3017,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   });
 
-  // src/api/Events.ts
-  var handlers = new Map;
-  function on(event, handler) {
-    if (!handlers.has(event))
-      handlers.set(event, new Set);
-    handlers.get(event).add(handler);
-    return () => void handlers.get(event)?.delete(handler);
-  }
-  function emit(event, payload) {
-    for (const handler of [...handlers.get(event) ?? []])
-      handler(payload);
-  }
-
-  // src/api/Reply.ts
-  var STOP_BUTTON = "[data-testid='agent-stop-inference-button']";
-  var INFERENCE_PATH = /\/api\/v3\/runInferenceTranscript$/;
-  var END_GRACE_MS = 400;
-  var state = "idle";
-  var failed = false;
-  var stopped = false;
-  var chatId = "";
-  var endTimer = 0;
-  var users = 0;
-  var stopDom4 = null;
-  var stopNet = null;
-  var currentChatId = () => new URL(pageWindow.location.href).searchParams.get("t") ?? "";
-  var replyState = () => state;
-  var currentChatTitle = () => document.title.replace(/\s*\|\s*Notion\s*$/, "").trim();
-  function check3() {
-    const streaming = !!document.querySelector(STOP_BUTTON);
-    if (streaming) {
-      clearTimeout(endTimer);
-      endTimer = 0;
-      if (state === "idle") {
-        state = "streaming";
-        failed = false;
-        stopped = false;
-        chatId = currentChatId();
-        emit("replyStart", { chatId });
-      }
-    } else if (state === "streaming" && !endTimer) {
-      endTimer = setTimeout(finish, END_GRACE_MS);
-    }
-  }
-  function finish() {
-    endTimer = 0;
-    if (state !== "streaming" || document.querySelector(STOP_BUTTON))
-      return;
-    state = "idle";
-    const now = currentChatId();
-    emit("replyEnd", { chatId: now || chatId, error: failed, stopped, left: !!chatId && !!now && now !== chatId });
-  }
-  function onPress(event) {
-    if (event.target?.closest?.(STOP_BUTTON))
-      stopped = true;
-  }
-  function watchReplies() {
-    if (users++ === 0) {
-      stopDom4 = onDomChange(check3);
-      stopNet = observeNetwork({
-        matches: (url, method) => method === "POST" && INFERENCE_PATH.test(url.pathname),
-        onExchange(exchange) {
-          exchange.response.then((response) => {
-            if (!response?.ok)
-              failed = true;
-          });
-        }
-      });
-      document.addEventListener("click", onPress, true);
-      check3();
-    }
-    let released = false;
-    return () => {
-      if (released)
-        return;
-      released = true;
-      if (--users > 0)
-        return;
-      stopDom4?.();
-      stopNet?.();
-      stopDom4 = stopNet = null;
-      document.removeEventListener("click", onPress, true);
-      clearTimeout(endTimer);
-      endTimer = 0;
-      state = "idle";
-    };
-  }
-
   // src/plugins/hideShare/index.ts
   var STYLE_ID5 = "notionai-pp-hide-share";
   var CHAT_SHARE = "[data-testid='share-chat-button']";
   var PAGE_SHARE = ".notion-topbar-share-menu";
-  var settings6 = definePluginSettings({
+  var settings7 = definePluginSettings({
     pages: {
       type: "boolean",
       label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
@@ -2894,7 +3040,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       style.id = STYLE_ID5;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css3(settings6.store.pages);
+    style.textContent = css3(settings7.store.pages);
   }
   var hideShare_default = definePlugin({
     name: "hideShare",
@@ -2906,7 +3052,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.shareOff,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings6,
+    settings: settings7,
     start() {
       apply3();
     },
@@ -3074,7 +3220,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     writeStored({ version, failed, at: Date.now() });
     showNote(failed, version);
   }
-  var settings7 = definePluginSettings({
+  var settings8 = definePluginSettings({
     runNow: {
       type: "action",
       label: { zh: "立即自检", en: "Check now" },
@@ -3092,7 +3238,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     },
     icon: Icons.activity,
     enabledByDefault: true,
-    settings: settings7,
+    settings: settings8,
     start() {
       schedule3();
       stopRoute2 = onRouteChange(() => schedule3());
@@ -3113,7 +3259,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   var EDITOR2 = `${COMPOSER3} [contenteditable='true']`;
   var SEND = "[data-testid='agent-send-message-button']";
   var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
-  var settings8 = definePluginSettings({
+  var settings9 = definePluginSettings({
     max: {
       type: "number",
       label: { zh: "最多保存条数", en: "Prompts to keep" },
@@ -3207,7 +3353,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   function record(editor) {
     if (!editor)
       return;
-    save(remember(load(), textOf(editor), settings8.store.max));
+    save(remember(load(), textOf(editor), settings9.store.max));
     reset();
   }
   function consume(event) {
@@ -3435,7 +3581,7 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
     tags: ["composer"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings8,
+    settings: settings9,
     start() {
       document.addEventListener("keydown", onKeyDown, true);
       document.addEventListener("click", onClick2, true);
@@ -3463,7 +3609,7 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
       if (key !== "max")
         return;
       const list = load();
-      const capped = capHistory(list, settings8.store.max);
+      const capped = capHistory(list, settings9.store.max);
       if (capped.length !== list.length)
         save(capped);
     }
@@ -3731,7 +3877,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var COMPOSER4 = "[data-notion-chat-input-container]";
   var SPAN_GAP = 12;
   var MIN_SPAN = 120;
-  var settings9 = definePluginSettings({
+  var settings10 = definePluginSettings({
     showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
     keyboard: {
       type: "boolean",
@@ -3753,7 +3899,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       type: "action",
       label: { zh: "预览效果", en: "Preview effect" },
       button: { zh: "预览", en: "Preview" },
-      run: () => previewEffect(settings9.store.effect)
+      run: () => previewEffect(settings10.store.effect)
     }
   });
   var overlay2 = null;
@@ -3761,12 +3907,12 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   var signature = "";
   var activeId = "";
   var pinnedId = "";
-  var cleanups3 = [];
+  var cleanups4 = [];
   var panelObserver = null;
   var watchedPanels = new Set;
   var q = (selector) => overlay2.root.querySelector(selector);
   function visibleMessages(all) {
-    return settings9.store.showAssistant ? all : all.filter((message) => message.role === "user");
+    return settings10.store.showAssistant ? all : all.filter((message) => message.role === "user");
   }
   function placeRail() {
     if (!overlay2)
@@ -3790,12 +3936,26 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
         continue;
       right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
     }
+    right = Math.max(right, paneInset(width));
     overlay2.host.style.setProperty("--nav-right", `${right}px`);
     const span = railSpan();
     if (span) {
       overlay2.host.style.setProperty("--nav-top", `${span.top}px`);
       overlay2.host.style.setProperty("--nav-height", `${span.height}px`);
     }
+  }
+  function paneInset(width = viewport().width) {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return 0;
+    const pane = scrollParentOf(first);
+    if (pane === document.scrollingElement || pane === document.documentElement)
+      return 0;
+    const pad = parseFloat(getComputedStyle(pane).paddingRight) || 0;
+    if (pad < 120)
+      return 0;
+    const box = pane.getBoundingClientRect();
+    return Math.max(0, Math.round(width - (box.right - pad) + RAIL_MARGIN));
   }
   function railSpan() {
     const first = messages.find((m) => m.element.isConnected)?.element;
@@ -3811,7 +3971,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
   }
   function streamingState(list, streaming = replyState() === "streaming") {
-    if (!streaming || !settings9.store.showAssistant)
+    if (!streaming || !settings10.store.showAssistant)
       return { id: "", pending: false };
     const last = list[list.length - 1];
     if (last?.role === "assistant")
@@ -3858,7 +4018,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
   }
   function onKeyDown2(event) {
-    if (!settings9.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
+    if (!settings10.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
       return;
     if (event.defaultPrevented || event.altKey || event.shiftKey)
       return;
@@ -4044,7 +4204,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
           return settle();
         }
         cleanup();
-        playEffect(target, settings9.store.effect);
+        playEffect(target, settings10.store.effect);
       }, SETTLE_MS2);
     }
     function userTookOver(event) {
@@ -4072,7 +4232,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings9,
+    settings: settings10,
     start() {
       overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
       overlay2.host.hidden = true;
@@ -4095,7 +4255,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       const unpin = () => void (pinnedId = "");
       for (const type of ["wheel", "touchmove", "pointerdown"])
         window.addEventListener(type, unpin, { capture: true, passive: true });
-      cleanups3 = [
+      cleanups4 = [
         watchReplies(),
         on("replyStart", () => rescan()),
         on("replyEnd", () => rescan()),
@@ -4130,7 +4290,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     },
     stop() {
       cancelJump?.();
-      for (const cleanup of cleanups3.splice(0))
+      for (const cleanup of cleanups4.splice(0))
         cleanup();
       overlay2?.destroy();
       overlay2 = null;
@@ -4148,7 +4308,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
   // src/plugins/messageStars/list.ts
   var LIST_MARK = "data-npp-star-list";
   var HOST_ID = "notionai-pp-star-list";
-  var PANEL_TOGGLE = "[data-testid='agent-chat-side-panel-toggle']";
+  var PANEL_TOGGLE2 = "[data-testid='agent-chat-side-panel-toggle']";
   var STAR_COLOR = "#d9730d";
   var HOVER_OPEN_MS = 120;
   var HOVER_CLOSE_MS = 180;
@@ -4201,7 +4361,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var pendingTimer = 0;
   var hovering = false;
   var hoverTimer = 0;
-  var cleanups4 = [];
+  var cleanups5 = [];
   function starEntries(ids, messages, saved = {}) {
     const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text, loaded: true }));
     const seen = new Set(shown.map((entry) => entry.id));
@@ -4220,11 +4380,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const group = wrapper?.parentElement;
     if (group?.parentElement)
       return group.parentElement;
-    return root.querySelector(PANEL_TOGGLE)?.parentElement?.parentElement ?? null;
+    return root.querySelector(PANEL_TOGGLE2)?.parentElement?.parentElement ?? null;
   }
   function placeButton(row, wrapper) {
     const first = row.firstElementChild;
-    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE) ? first : null;
+    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE2) ? first : null;
     const parent = group ?? row;
     const before = [...parent.children].find((child) => child !== wrapper && child.hasAttribute("data-popup-origin")) ?? null;
     if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before)
@@ -4505,7 +4665,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     };
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown, true);
-    cleanups4 = [
+    cleanups5 = [
       onDomChange((mutations) => {
         if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(LIST_MARK) || node.id === HOST_ID))))
           return;
@@ -4523,7 +4683,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     sync();
   }
   function stopList() {
-    for (const cleanup of cleanups4.splice(0))
+    for (const cleanup of cleanups5.splice(0))
       cleanup();
     clearTimeout(pendingTimer);
     pending = null;
@@ -4541,8 +4701,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var MARK3 = "data-npp-star";
   var STAR_COLOR2 = "#d9730d";
   var RESCAN_MS2 = 200;
-  var cleanups5 = [];
-  var settings10 = definePluginSettings({
+  var cleanups6 = [];
+  var settings11 = definePluginSettings({
     headerList: {
       type: "boolean",
       label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
@@ -4646,7 +4806,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       row.style.width = "auto";
   }
   var isIconWrapper = (node) => !(node instanceof HTMLElement && /flex:\s*1/.test(node.getAttribute("style") ?? "")) && !!node.querySelector("[role='button'][aria-label], button[aria-label]") && !node.textContent?.trim();
-  function scan4() {
+  function scan5() {
     const chatId = currentChatId();
     const stars = starsOf(chatId);
     const steps = topSteps();
@@ -4685,47 +4845,47 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
       en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back."
     },
-    settings: settings10,
+    settings: settings11,
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
     start() {
       setStarsActive(true);
-      const rescan = debounce(scan4, RESCAN_MS2, RESCAN_MS2 * 4);
-      const onStorage = (event) => event.key === STARS_KEY && scan4();
+      const rescan = debounce(scan5, RESCAN_MS2, RESCAN_MS2 * 4);
+      const onStorage = (event) => event.key === STARS_KEY && scan5();
       pageWindow.addEventListener("storage", onStorage);
-      cleanups5 = [
+      cleanups6 = [
         onDomChange((mutations) => {
           if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK3))))
             return;
           rescan();
         }),
-        on("starsChanged", scan4),
+        on("starsChanged", scan5),
         () => rescan.cancel(),
         () => pageWindow.removeEventListener("storage", onStorage)
       ];
-      scan4();
-      if (settings10.store.headerList)
+      scan5();
+      if (settings11.store.headerList)
         startList();
     },
     stop() {
       stopList();
-      for (const cleanup of cleanups5.splice(0))
+      for (const cleanup of cleanups6.splice(0))
         cleanup();
       removeAll2();
       setStarsActive(false);
     },
     onSettingsChange() {
       stopList();
-      if (settings10.store.headerList)
+      if (settings11.store.headerList)
         startList();
     }
   });
 
   // src/plugins/noTelemetry/index.ts
-  var logger4 = new Logger("NoTelemetry");
-  var settings11 = definePluginSettings({
+  var logger5 = new Logger("NoTelemetry");
+  var settings12 = definePluginSettings({
     events: {
       type: "boolean",
       label: { zh: "Notion 事件统计", en: "Notion event tracking" },
@@ -4795,14 +4955,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     updatedAt: "2026-10-08",
     restartNeeded: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings11,
+    settings: settings12,
     start() {
       stopBlocking = blockRequests((url) => {
         const category = categoryOf(url);
-        if (!category || !settings11.store[category])
+        if (!category || !settings12.store[category])
           return false;
         if (!counts[category]++)
-          logger4.info(`blocking ${category} reports (${url.hostname})`);
+          logger5.info(`blocking ${category} reports (${url.hostname})`);
         return true;
       });
     },
@@ -4813,7 +4973,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   });
 
   // src/plugins/replyNotification/index.ts
-  var settings12 = definePluginSettings({
+  var settings13 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -4911,8 +5071,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   }
   function play() {
-    const volume = settings12.store.volume;
-    if (settings12.store.source !== "file")
+    const volume = settings13.store.volume;
+    if (settings13.store.source !== "file")
       return chime(volume);
     playFile(volume).then((ok) => ok || chime(volume));
   }
@@ -4936,7 +5096,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
           return;
         }
         setValue("replyNotification", "source", "file");
-        playFile(settings12.store.volume).then((ok) => {
+        playFile(settings13.store.volume).then((ok) => {
           if (!ok)
             pageWindow.alert(t("这个文件无法播放，已改回内置提示音。", "This file can't be played; switched back to the built-in chime."));
           if (!ok)
@@ -4947,8 +5107,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     });
     input.click();
   }
-  var cleanups6 = [];
-  function chime(volume = settings12.store.volume) {
+  var cleanups7 = [];
+  function chime(volume = settings13.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -4983,7 +5143,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
         body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings12.store.sound
+        silent: settings13.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -5000,20 +5160,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     if (chatId === last3.chatId && now - last3.at < REPEAT_MS)
       return;
     last3 = { chatId, at: now };
-    if (settings12.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings13.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings12.store.sound)
+    if (settings13.store.sound)
       play();
-    if (settings12.store.desktop)
+    if (settings13.store.desktop)
       desktop(error);
   }
   async function test() {
-    if (settings12.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings13.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings12.store.sound)
+    if (settings13.store.sound)
       play();
-    if (settings12.store.desktop)
+    if (settings13.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
@@ -5027,20 +5187,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings12,
+    settings: settings13,
     start() {
       const prime = () => {
-        if (!settings12.store.sound)
+        if (!settings13.store.sound)
           return;
         context();
-        if (settings12.store.source === "file")
+        if (settings13.store.source === "file")
           decodeFile();
         document.removeEventListener("pointerdown", prime, true);
         document.removeEventListener("keydown", prime, true);
       };
       document.addEventListener("pointerdown", prime, true);
       document.addEventListener("keydown", prime, true);
-      cleanups6 = [
+      cleanups7 = [
         watchReplies(),
         on("replyEnd", notify2),
         () => document.removeEventListener("pointerdown", prime, true),
@@ -5048,14 +5208,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       ];
     },
     stop() {
-      for (const cleanup of cleanups6.splice(0))
+      for (const cleanup of cleanups7.splice(0))
         cleanup();
       audio?.close();
       audio = null;
       decoded = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings12.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings13.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
@@ -5105,7 +5265,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
 
   // src/plugins/settings/notionSettings.ts
-  var logger5 = new Logger("NotionSettings");
+  var logger6 = new Logger("NotionSettings");
   var SWITCHER = ".notion-sidebar-switcher";
   var GEAR_ITEM = "[role='dialog'] [role='button']:has(svg.gear), [role='menu'] [role='menuitem']:has(svg.gear)";
   var tabSelector = (id) => `[role='dialog'] [data-testid='settings-tab-${id}']`;
@@ -5159,7 +5319,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       close();
       openNotionSettings(id).then((ok) => {
         if (!ok)
-          logger5.warn(`could not open Notion settings page "${id}"`);
+          logger6.warn(`could not open Notion settings page "${id}"`);
       });
     };
     return h("div", { class: "tab-root notion-settings" }, section(t("Notion 自带设置", "Notion's own settings"), ...NOTION_PAGES.map((page) => row(t(page.zh, page.en), t(page.desc.zh, page.desc.en), button("secondary", t("打开", "Open"), () => open(page.id))))));
@@ -5277,7 +5437,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   };
   var overlay4 = null;
   var layers = [];
-  var cleanups7 = [];
+  var cleanups8 = [];
   var settingKeys = (plugin) => Object.entries(plugin.settings?.def ?? {});
   var hasSettings = (plugin) => settingKeys(plugin).length > 0;
   function pushLayer(kind, content, onClose) {
@@ -5468,7 +5628,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.10.0");
+    const backup = collectBackup("[20261007] v1.11.0");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5496,7 +5656,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.10.0";
+    const version = "[20261007] v1.11.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5531,7 +5691,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.10.0";
+    const version = "[20261007] v1.11.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5563,7 +5723,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups7.push(on("openSettings", () => openSettings()), startQuickCss());
+      cleanups8.push(on("openSettings", () => openSettings()), startQuickCss());
       if (typeof GM_registerMenuCommand === "function") {
         try {
           GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -5571,7 +5731,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       }
     },
     stop() {
-      for (const cleanup of cleanups7.splice(0))
+      for (const cleanup of cleanups8.splice(0))
         cleanup();
       stopQuickCss();
       close2();
@@ -5585,7 +5745,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var INTERACTIVE2 = "a, button, input, textarea, select, label, [contenteditable=''], [contenteditable='true'], " + "[role='button'], [role='link'], [role='menuitem'], [role='treeitem'], [role='option'], [role='tab'], [role='checkbox'], [role='switch'], [draggable='true']";
   var ACTIVE_CURSORS = new Set(["pointer", "text", "col-resize", "ew-resize", "row-resize", "grab", "grabbing", "move"]);
   var SLOP = 6;
-  var settings13 = definePluginSettings({
+  var settings14 = definePluginSettings({
     clickToToggle: {
       type: "boolean",
       label: { zh: "点击侧栏空白处收起/固定", en: "Click empty sidebar space to toggle" },
@@ -5638,7 +5798,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return true;
   }
   function onClick3(event) {
-    if (!settings13.store.clickToToggle)
+    if (!settings14.store.clickToToggle)
       return;
     const target = event.target instanceof Element ? event.target : null;
     const sidebar = target?.closest(SIDEBAR);
@@ -5654,7 +5814,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var stopWait = null;
   var collapsedOnce = false;
   function collapseOnLoad() {
-    if (collapsedOnce || !settings13.store.defaultCollapsed)
+    if (collapsedOnce || !settings14.store.defaultCollapsed)
       return;
     const attempt = () => {
       const sidebar = document.querySelector(SIDEBAR);
@@ -5690,7 +5850,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.sidebar,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings13,
+    settings: settings14,
     start() {
       document.addEventListener("click", onClick3, true);
       collapseOnLoad();
@@ -5706,7 +5866,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2", draft: "#9b9a97" };
   var EDITOR3 = "[data-notion-chat-input-container] [contenteditable='true']";
-  var settings14 = definePluginSettings({
+  var settings15 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -5724,13 +5884,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var originals = new Map;
   var base = null;
   var ours = "";
+  var painted = new Set;
   var angle = 0;
   var timer3 = 0;
-  var cleanups8 = [];
+  var cleanups9 = [];
   var iconLinks = () => [...document.querySelectorAll("link[rel~='icon']")];
   function remember2() {
     for (const link of iconLinks()) {
-      if (link.href === ours)
+      if (link.href === ours || painted.has(link.href))
         continue;
       originals.set(link, link.href);
     }
@@ -5795,16 +5956,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       return;
     }
     const image = await loadBase();
+    if (!image || state2 === "idle")
+      return;
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = SIZE;
     const ctx = canvas.getContext("2d");
     if (!ctx)
       return;
-    if (image)
-      ctx.drawImage(image, 0, 0, SIZE, SIZE);
+    ctx.drawImage(image, 0, 0, SIZE, SIZE);
     drawBadge(ctx, state2, angle);
     try {
       ours = canvas.toDataURL("image/png");
+      painted.add(ours);
+      if (painted.size > 64)
+        painted.delete(painted.values().next().value);
       for (const link of originals.keys())
         link.href = ours;
     } catch {}
@@ -5825,7 +5990,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     if (document.visibilityState === "visible") {
       if (state2 === "done" || state2 === "error" || state2 === "draft")
         setState("idle");
-    } else if (state2 === "idle" && settings14.store.showDraft && hasDraft()) {
+    } else if (state2 === "idle" && settings15.store.showDraft && hasDraft()) {
       setState("draft");
     }
   }
@@ -5839,21 +6004,21 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    updatedAt: "2026-10-08",
-    settings: settings14,
+    updatedAt: "2026-10-10",
+    settings: settings15,
     start() {
       remember2();
       const onVisible = () => seen2();
       document.addEventListener("visibilitychange", onVisible);
       window.addEventListener("focus", onVisible);
-      cleanups8 = [
+      cleanups9 = [
         watchReplies(),
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error, stopped, left }) => {
           if (stopped || left)
             return setState("idle");
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings14.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings15.store.showDone ? "done" : "idle");
         }),
         onRouteChange(() => {
           if (state2 === "done" || state2 === "error" || state2 === "draft")
@@ -5868,7 +6033,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       ];
     },
     stop() {
-      for (const cleanup of cleanups8.splice(0))
+      for (const cleanup of cleanups9.splice(0))
         cleanup();
       setState("idle");
       originals = new Map;
@@ -6174,7 +6339,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   }
 
   // src/plugins/usage/service.ts
-  var logger6 = new Logger("Usage");
+  var logger7 = new Logger("Usage");
   var HEARTBEAT_MS = 30000;
   var POLL_MS2 = 60000;
   var NOT_APPLICABLE_POLL_MS = 6 * 3600000;
@@ -6279,7 +6444,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const stored = storedContext(pageWindow.localStorage);
       if (!stored)
         return;
-      logger6.info("Using the workspace remembered by Notion until a native request arrives.");
+      logger7.info("Using the workspace remembered by Notion until a native request arrives.");
       const headers = stored.userId ? { "x-notion-active-user-header": stored.userId } : {};
       this.acceptContext(stored.spaceId, headers, 0);
       this.schedule(this.usage, 0, () => this.refreshUsage());
@@ -6336,7 +6501,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         if (token.version !== this.version)
           return;
         this.accept(kind, payload, token.sequence);
-      }).catch(() => logger6.debug(`Could not read native ${kind} response.`));
+      }).catch(() => logger7.debug(`Could not read native ${kind} response.`));
     }
     accept(kind, payload, sequence) {
       const track = kind === "current" ? this.usage : this.bill;
@@ -7260,7 +7425,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings15 = definePluginSettings({
+  var settings16 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -7313,20 +7478,20 @@ button { font: inherit; }
   function record2() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings15.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings16.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings15.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings16.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings15.store.usageStats,
-    setEnabled: (value) => void (settings15.store.usageStats = value),
-    retain: () => settings15.store.retainDays,
-    hoverDelay: () => settings15.store.hoverStatsDelay,
-    showPlan: () => settings15.store.showPlan,
-    showPercent: () => settings15.store.showPercent,
+    enabled: () => settings16.store.usageStats,
+    setEnabled: (value) => void (settings16.store.usageStats = value),
+    retain: () => settings16.store.retainDays,
+    hoverDelay: () => settings16.store.hoverStatsDelay,
+    showPlan: () => settings16.store.showPlan,
+    showPercent: () => settings16.store.showPercent,
     refresh: record2
   };
   function mount() {
@@ -7346,7 +7511,7 @@ button { font: inherit; }
     enabledByDefault: true,
     updatedAt: "2026-10-08",
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings15,
+    settings: settings16,
     start() {
       service = new UsageService;
       stopRecording = service.onChange(record2);
@@ -7375,7 +7540,7 @@ button { font: inherit; }
   // src/plugins/userQuotes/index.ts
   var STYLE_ID6 = "notionai-pp-user-quotes";
   var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]`;
-  var settings16 = definePluginSettings({
+  var settings17 = definePluginSettings({
     dim: {
       type: "boolean",
       label: { zh: "引用文字变淡", en: "Dim quoted text" },
@@ -7412,9 +7577,9 @@ button { font: inherit; }
 [${MIRROR}] > div:empty::after { content: "\\200b"; }
 [${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
 [${MIRROR}] .q > div:empty::after { content: "\\200b"; }
-${settings16.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
-${settings16.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
-${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
+${settings17.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
+${settings17.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
+${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
   }
   function buildMirror(text) {
     const fragment = document.createDocumentFragment();
@@ -7474,7 +7639,7 @@ ${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
     }
   }
   var schedule4 = debounce(render2, 120, 400);
-  var stopDom5 = null;
+  var stopDom6 = null;
   var textWatch = null;
   function applyStyle2() {
     let style = document.getElementById(STYLE_ID6);
@@ -7496,11 +7661,11 @@ ${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
     tags: ["chat", "appearance"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings16,
+    settings: settings17,
     start() {
       applyStyle2();
       render2();
-      stopDom5 = onDomChange((mutations) => {
+      stopDom6 = onDomChange((mutations) => {
         if (mutations.every((m) => m.target.closest?.(`[${MIRROR}]`)))
           return;
         schedule4();
@@ -7512,8 +7677,8 @@ ${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
       textWatch.observe(document.documentElement, { characterData: true, subtree: true, attributes: true, attributeFilter: ["contenteditable"] });
     },
     stop() {
-      stopDom5?.();
-      stopDom5 = null;
+      stopDom6?.();
+      stopDom6 = null;
       textWatch?.disconnect();
       textWatch = null;
       schedule4.cancel();
@@ -7533,7 +7698,7 @@ ${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
   var MARK4 = "data-npp-chat-column";
   var COMPOSER5 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings17 = definePluginSettings({
+  var settings18 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -7543,7 +7708,7 @@ ${settings16.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
       max: 2400
     }
   });
-  var stopDom6 = null;
+  var stopDom7 = null;
   function columnOf(step) {
     for (let node = step.parentElement;node && node !== document.body; node = node.parentElement) {
       const cap = node.style.maxWidth;
@@ -7572,7 +7737,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       style.id = STYLE_ID7;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css5(settings17.store.width);
+    style.textContent = css5(settings18.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -7584,15 +7749,15 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings17,
+    settings: settings18,
     start() {
       apply4();
       mark2();
-      stopDom6 = onDomChange(mark2);
+      stopDom7 = onDomChange(mark2);
     },
     stop() {
-      stopDom6?.();
-      stopDom6 = null;
+      stopDom7?.();
+      stopDom7 = null;
       document.getElementById(STYLE_ID7)?.remove();
       for (const node of document.querySelectorAll(`[${MARK4}]`))
         node.removeAttribute(MARK4);
@@ -7604,12 +7769,12 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
 
   // src/index.ts
   var FLAG = "__notionAiPlusPlus";
-  var logger7 = new Logger("Core");
+  var logger8 = new Logger("Core");
   function boot() {
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.10.0";
+    win[FLAG] = "[20261007] v1.11.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7629,7 +7794,9 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       healthCheck_default,
       userQuotes_default,
       noTelemetry_default,
-      codeFold_default
+      codeFold_default,
+      autoAllow_default,
+      autoHidePanel_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -7638,7 +7805,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger7.info(`NotionAI++ ${"[20261007] v1.10.0"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.11.0"} started`);
   }
   boot();
 })();

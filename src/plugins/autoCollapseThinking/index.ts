@@ -5,6 +5,8 @@
  */
 
 import { onDomChange } from "@api/DomWatch";
+import { on } from "@api/Events";
+import { replyState, watchReplies } from "@api/Reply";
 import { definePlugin } from "@api/PluginManager";
 import { definePluginSettings } from "@api/Settings";
 import { Icons } from "@utils/icons";
@@ -53,6 +55,9 @@ let seenAtStart = new WeakSet<Element>();
 let stopDom: (() => void) | null = null;
 let attrObserver: MutationObserver | null = null;
 let scheduled = false;
+let releaseReplies: (() => void) | null = null;
+let offReply: (() => void)[] = [];
+const timers: number[] = [];
 
 function panelOf(toggle: Element): Element | null {
     const id = toggle.getAttribute("aria-controls");
@@ -63,7 +68,16 @@ function labelOf(toggle: Element): string {
     return (toggle.textContent ?? "").replace(/\s+/g, " ").trim();
 }
 
-export const isStreaming = (toggle: Element) => !!toggle.querySelector(STREAMING);
+/**
+ * Still writing: Notion's shimmer or live region is on the toggle, or (as a backstop, in case
+ * Notion renames those) a reply is streaming and this is the last thinking group on the page.
+ */
+export const isStreaming = (toggle: Element) => !!toggle.querySelector(STREAMING) || (replyState() === "streaming" && isLastGroup(toggle));
+
+function isLastGroup(toggle: Element): boolean {
+    const all = [...document.querySelectorAll(TOGGLE)].filter(node => !node.closest(".notion-sidebar, nav") && !node.querySelector(STEP_TITLE));
+    return all[all.length - 1] === toggle;
+}
 
 /** True for the per-reply thinking group, false for sidebar headers, single tool rows, etc. */
 export function isThinkingToggle(toggle: Element): boolean {
@@ -118,6 +132,7 @@ export default definePlugin({
     icon: Icons.collapse,
     tags: ["chat"],
     enabledByDefault: true,
+    updatedAt: "2026-10-10",
     settings,
 
     start() {
@@ -129,6 +144,14 @@ export default definePlugin({
         document.addEventListener("click", claim, true);
         document.addEventListener("keydown", claim, true);
         stopDom = onDomChange(schedule);
+        // The reply's state from the composer's stop button: when it ends, Notion may swap the
+        // group's label and re-expand it a moment later, so look again then.
+        const afterReply = () => {
+            schedule();
+            for (const delay of [300, 1000]) timers.push(setTimeout(schedule, delay) as unknown as number);
+        };
+        releaseReplies = watchReplies();
+        offReply = [on("replyEnd", afterReply), on("replyStart", schedule)];
         // DomWatch only reports childList; Notion re-expanding a group is an attribute change.
         attrObserver = new MutationObserver(schedule);
         attrObserver.observe(document.documentElement, {
@@ -140,6 +163,10 @@ export default definePlugin({
     },
 
     stop() {
+        releaseReplies?.();
+        releaseReplies = null;
+        for (const off of offReply.splice(0)) off();
+        for (const timer of timers.splice(0)) clearTimeout(timer);
         document.removeEventListener("click", claim, true);
         document.removeEventListener("keydown", claim, true);
         stopDom?.();

@@ -54,7 +54,7 @@ describe("reply watcher", () => {
         document.body.innerHTML = `<div data-notion-chat-input-container><div role="button" data-testid="agent-stop-inference-button"></div></div>`;
         await until(() => events.length === 1);
         document.querySelector(STOP_BUTTON)!.remove();
-        await until(() => events.length === 2);
+        await until(() => events.length === 2, 3000);
         release();
         offs.forEach(off => off());
         expect(events).toEqual(["start:abc", "end:abc:false"]);

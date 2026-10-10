@@ -45,6 +45,8 @@ let state: TabState = "idle";
 let originals = new Map<HTMLLinkElement, string>();
 let base: { href: string; image: HTMLImageElement } | null = null;
 let ours = "";
+/** Every badge image we have put on a link, so none is ever mistaken for Notion's own icon. */
+const painted = new Set<string>();
 let angle = 0;
 let timer = 0;
 let cleanups: (() => void)[] = [];
@@ -57,7 +59,8 @@ const iconLinks = () => [...document.querySelectorAll<HTMLLinkElement>("link[rel
  */
 function remember() {
     for (const link of iconLinks()) {
-        if (link.href === ours) continue;
+        // A paint still in flight can leave an older badge on the link; that is ours too.
+        if (link.href === ours || painted.has(link.href)) continue;
         // Notion swapped the icon itself (or this is the first look): that is the new original.
         originals.set(link, link.href);
     }
@@ -117,14 +120,18 @@ async function paint() {
         return;
     }
     const image = await loadBase();
+    // Without Notion's icon underneath, the badge alone reads as a stray letter ("c"); leave the icon be.
+    if (!image || (state as TabState) === "idle") return;
     const canvas = document.createElement("canvas");
     canvas.width = canvas.height = SIZE;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (image) ctx.drawImage(image, 0, 0, SIZE, SIZE);
+    ctx.drawImage(image, 0, 0, SIZE, SIZE);
     drawBadge(ctx, state, angle);
     try {
         ours = canvas.toDataURL("image/png");
+        painted.add(ours);
+        if (painted.size > 64) painted.delete(painted.values().next().value!);
         for (const link of originals.keys()) link.href = ours;
     } catch {}
 }
@@ -161,7 +168,7 @@ export default definePlugin({
     icon: Icons.browser,
     tags: ["chat"],
     enabledByDefault: true,
-    updatedAt: "2026-10-08",
+    updatedAt: "2026-10-10",
     settings,
     start() {
         remember();

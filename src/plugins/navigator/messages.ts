@@ -31,6 +31,17 @@ export function cleanLines(raw: string): string[] {
         .filter(line => line && !DATE_RE.test(line) && !NOISE_RE.test(line));
 }
 
+/**
+ * Raw tool output that Notion shows inside a reply while it works (a fetched page's script,
+ * JSON, a command line): not something to name the reply after in the outline.
+ */
+const CODE_LINE = /^(?:(?:window|document|self|globalThis|var|let|const|function|import|export|return)\b|[\w$]+(?:\.[\w$]+)+\s*=|[{}[\]<]|\$ |#!|\/\/)|[;{]\s*$/;
+
+export const isCodeLine = (line: string) => CODE_LINE.test(line);
+
+/** A reply's text without lines of raw code or tool output; "" when nothing else is left. */
+export const proseOf = (text: string) => text.split("\n").filter(line => !isCodeLine(line)).join("\n");
+
 export const isDateText = (text: string) => DATE_RE.test(text.replace(/\s+/g, " ").trim());
 
 function readText(element: Element, skip: Element[] = []): string {
@@ -138,7 +149,8 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
             const skip = [...sibling.querySelectorAll(TOGGLE), ...regionsOf(sibling), ...(nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : [])];
             const body = assistantBody(sibling);
             const bodyText = readText(body, body === sibling ? skip : skip.filter(node => body.contains(node)));
-            const reply = bodyText || readText(sibling, skip);
+            // A tool result streaming in (a fetched page's script) is not the reply yet.
+            const reply = proseOf(bodyText) || proseOf(readText(sibling, skip));
             if (reply) {
                 messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
                 break;

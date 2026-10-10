@@ -96,12 +96,28 @@ export function placeRail() {
         if (!box || box.left < width / 2 || box.right < width - 80 || box.height < 120) continue;
         right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
     }
+    right = Math.max(right, paneInset(width));
     overlay.host.style.setProperty("--nav-right", `${right}px`);
     const span = railSpan();
     if (span) {
         overlay.host.style.setProperty("--nav-top", `${span.top}px`);
         overlay.host.style.setProperty("--nav-height", `${span.height}px`);
     }
+}
+
+/**
+ * Notion's own right-hand panel in a chat (Skills, details) does not cover the chat: the chat's
+ * scroll pane makes room for it with a large inline-end padding. Keep the rail left of that room.
+ */
+export function paneInset(width = viewport().width): number {
+    const first = messages.find(m => m.element.isConnected)?.element;
+    if (!first) return 0;
+    const pane = scrollParentOf(first);
+    if (pane === document.scrollingElement || pane === document.documentElement) return 0;
+    const pad = parseFloat(getComputedStyle(pane).paddingRight) || 0;
+    if (pad < 120) return 0;
+    const box = pane.getBoundingClientRect();
+    return Math.max(0, Math.round(width - (box.right - pad) + RAIL_MARGIN));
 }
 
 /**
