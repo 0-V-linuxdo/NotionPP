@@ -25,6 +25,8 @@ import { copyRole, USER_STEP } from "../navigator/messages";
 const STORE_KEY = "notionai-pp:health:v1";
 const SETTLE_MS = 6000;
 const ATTEMPTS = 3;
+/** Extra rounds allowed while the page has not rendered anything yet. */
+const MAX_WAITS = 10;
 
 export interface Check {
     id: string;
@@ -187,12 +189,35 @@ let doneThisLoad = false;
 
 const inChat = () => isAiRoute() && !!currentChatId();
 
+/** Nothing at all found: the page is still loading (a background tab may not render), not a new build. */
+export const notReady = (failed: string[], checks = CHECKS) =>
+    failed.length > 0 && checks.every(check => !(check.applies?.() ?? true) || failed.includes(check.id));
+
+let waits = 0;
+let stopVisible: (() => void) | null = null;
+
+function whenVisible() {
+    const onVisible = () => {
+        if (document.hidden) return;
+        document.removeEventListener("visibilitychange", onVisible);
+        stopVisible = null;
+        schedule();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    stopVisible = () => document.removeEventListener("visibilitychange", onVisible);
+}
+
 function schedule(attempt = 1) {
-    if (timer || doneThisLoad || !inChat()) return;
+    if (timer || stopVisible || doneThisLoad || !inChat()) return;
     timer = setTimeout(() => {
         timer = null;
         if (!inChat()) return;
+        if (document.hidden) return whenVisible();
         const failed = failedChecks();
+        if (notReady(failed) && waits < MAX_WAITS) {
+            waits++;
+            return schedule(attempt);
+        }
         if (failed.length && attempt < ATTEMPTS) return schedule(attempt + 1);
         doneThisLoad = true;
         const previous = readStored();
@@ -241,6 +266,8 @@ export default definePlugin({
         stopRoute = null;
         if (timer) clearTimeout(timer);
         timer = null;
+        stopVisible?.();
+        stopVisible = null;
         closeNote();
     },
 });

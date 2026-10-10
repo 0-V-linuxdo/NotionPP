@@ -91,13 +91,21 @@ function userText(step: Element): string {
     return leaves.length ? leaves.join("\n") : readText(step);
 }
 
+/**
+ * The reply text: the last block after the last collapsed step. Steps can sit at different depths
+ * (a task step is wrapped one level deeper than "N steps"), so climb from the last one until a
+ * level has a text block after it. A to-do list shown above the steps is never picked.
+ */
 function assistantBody(turn: HTMLElement): HTMLElement {
     const toggles = turn.querySelectorAll(TOGGLE);
-    const column = toggles.length ? toggles[toggles.length - 1].parentElement?.parentElement : null;
-    if (column && turn.contains(column)) {
-        const bodies = [...column.children].filter((child): child is HTMLElement =>
+    const last = toggles[toggles.length - 1];
+    if (!last) return turn;
+    for (let branch: Element = last; branch.parentElement && branch !== turn; branch = branch.parentElement) {
+        const children = [...branch.parentElement.children];
+        const bodies = children.slice(children.indexOf(branch) + 1).filter((child): child is HTMLElement =>
             child instanceof HTMLElement && !child.querySelector(TOGGLE) && !child.matches(TOGGLE) && readText(child).length > 1);
         if (bodies.length) return bodies[bodies.length - 1];
+        if (branch.parentElement === turn) break;
     }
     return turn;
 }

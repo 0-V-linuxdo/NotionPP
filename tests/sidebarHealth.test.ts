@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { composerBox, css as composerCss } from "@plugins/composerLook/index";
-import { CHECKS, failedChecks, shouldNotify } from "@plugins/healthCheck/index";
+import { CHECKS, failedChecks, notReady, shouldNotify } from "@plugins/healthCheck/index";
 import { isActive, sidebarButton } from "@plugins/sidebarTweaks/index";
 
 afterEach(() => {
@@ -78,5 +78,13 @@ describe("update self-check", () => {
         expect(shouldNotify(["share"], null, 1)).toBe(true);
         expect(shouldNotify(["share"], { version: "a", failed: ["share"], at: 0 }, 1)).toBe(false);
         expect(shouldNotify(["share", "copy"], { version: "a", failed: ["share"], at: 0 }, 2)).toBe(true);
+    });
+
+    test("an empty page means still loading, not a changed build", () => {
+        document.body.innerHTML = "";
+        expect(notReady(failedChecks())).toBe(true);
+        document.body.innerHTML = `<div data-notion-chat-input-container></div>`;
+        expect(notReady(failedChecks())).toBe(false);
+        expect(notReady([])).toBe(false);
     });
 });
