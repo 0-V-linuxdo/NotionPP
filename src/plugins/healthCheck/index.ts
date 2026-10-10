@@ -189,9 +189,11 @@ let doneThisLoad = false;
 
 const inChat = () => isAiRoute() && !!currentChatId();
 
-/** Nothing at all found: the page is still loading (a background tab may not render), not a new build. */
-export const notReady = (failed: string[], checks = CHECKS) =>
-    failed.length > 0 && checks.every(check => !(check.applies?.() ?? true) || failed.includes(check.id));
+/**
+ * Neither the composer nor any message yet: the chat is still loading (a slow or background tab
+ * renders the sidebar long before the chat), not a new build. Waited out for a while before reporting.
+ */
+export const notReady = (failed: string[]) => failed.includes("composer") && failed.includes("messages");
 
 let waits = 0;
 let stopVisible: (() => void) | null = null;

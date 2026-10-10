@@ -80,8 +80,10 @@ describe("update self-check", () => {
         expect(shouldNotify(["share", "copy"], { version: "a", failed: ["share"], at: 0 }, 2)).toBe(true);
     });
 
-    test("an empty page means still loading, not a changed build", () => {
+    test("a page without its chat yet means still loading, not a changed build", () => {
         document.body.innerHTML = "";
+        expect(notReady(failedChecks())).toBe(true);
+        document.body.innerHTML = `<nav class="notion-sidebar-container"></nav>`;
         expect(notReady(failedChecks())).toBe(true);
         document.body.innerHTML = `<div data-notion-chat-input-container></div>`;
         expect(notReady(failedChecks())).toBe(false);

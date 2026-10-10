@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.11.1
+// @version      20261007.1.11.2
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -3199,7 +3199,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   var stopRoute2 = null;
   var doneThisLoad = false;
   var inChat = () => isAiRoute() && !!currentChatId();
-  var notReady = (failed, checks = CHECKS) => failed.length > 0 && checks.every((check) => !(check.applies?.() ?? true) || failed.includes(check.id));
+  var notReady = (failed) => failed.includes("composer") && failed.includes("messages");
   var waits = 0;
   var stopVisible = null;
   function whenVisible() {
@@ -5656,7 +5656,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.11.1");
+    const backup = collectBackup("[20261007] v1.11.2");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5684,7 +5684,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.11.1";
+    const version = "[20261007] v1.11.2";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5719,7 +5719,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.11.1";
+    const version = "[20261007] v1.11.2";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -7802,7 +7802,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.11.1";
+    win[FLAG] = "[20261007] v1.11.2";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7833,7 +7833,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger8.info(`NotionAI++ ${"[20261007] v1.11.1"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.11.2"} started`);
   }
   boot();
 })();
