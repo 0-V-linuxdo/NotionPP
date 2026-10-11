@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.11.4
+// @version      20261007.1.11.5
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1954,21 +1954,29 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     bar.textContent = folded ? t(`展开全部代码（${lines} 行）`, `Show all ${lines} lines`) : t("收起代码", "Fold code");
     bar.setAttribute("aria-expanded", String(!folded));
   }
+  var bars = new WeakMap;
   function scan4() {
     const limit = settings4.store.height;
-    for (const block of chatCodeBlocks()) {
-      let bar = block.nextElementSibling?.hasAttribute(BAR) ? block.nextElementSibling : null;
+    const blocks = chatCodeBlocks();
+    for (const block of blocks) {
       if (!block.hasAttribute(MARK)) {
         if (block.scrollHeight <= limit + 40)
           continue;
         block.setAttribute(MARK, "folded");
       }
+      let bar = bars.get(block) ?? null;
       if (!bar) {
         bar = makeBar(block);
-        block.after(bar);
+        bars.set(block, bar);
       }
+      if (block.nextElementSibling !== bar)
+        block.after(bar);
       label(bar, block);
     }
+    const live = new Set(blocks.map((block) => bars.get(block)));
+    for (const bar of document.querySelectorAll(`[${BAR}]`))
+      if (!live.has(bar))
+        bar.remove();
   }
   function removeAll() {
     for (const bar of document.querySelectorAll(`[${BAR}]`))
@@ -4456,8 +4464,9 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     wrapper.removeAttribute("data-popup-origin");
     wrapper.setAttribute(LIST_MARK, "");
     const btn = sample.cloneNode(false);
-    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "data-testid"])
+    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "aria-disabled", "data-testid"])
       btn.removeAttribute(name);
+    btn.tabIndex = 0;
     btn.setAttribute("aria-haspopup", "dialog");
     btn.append(headerIcon(sample.querySelector("svg")));
     btn.addEventListener("pointerenter", () => hoverSoon(true));
@@ -5664,7 +5673,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.11.4");
+    const backup = collectBackup("[20261007] v1.11.5");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5692,7 +5701,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.11.4";
+    const version = "[20261007] v1.11.5";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5727,7 +5736,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.11.4";
+    const version = "[20261007] v1.11.5";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -7656,11 +7665,13 @@ ${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
       copy.setAttribute(MIRROR, "");
       leaf.after(copy);
     }
+    if (copy.className !== leaf.className)
+      copy.className = leaf.className;
+    const style = [leaf.getAttribute("style")?.trim().replace(/;$/, ""), "cursor: text"].filter(Boolean).join("; ");
+    if (copy.getAttribute("style") !== style)
+      copy.setAttribute("style", style);
     if (copy.dataset.src === text)
       return void leaf.setAttribute(HIDDEN, "");
-    copy.className = leaf.className;
-    copy.setAttribute("style", leaf.getAttribute("style") ?? "");
-    copy.style.cursor = "text";
     copy.dataset.src = text;
     copy.replaceChildren(buildMirror(text));
     leaf.setAttribute(HIDDEN, "");
@@ -7810,7 +7821,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.11.4";
+    win[FLAG] = "[20261007] v1.11.5";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7841,7 +7852,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger8.info(`NotionAI++ ${"[20261007] v1.11.4"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.11.5"} started`);
   }
   boot();
 })();

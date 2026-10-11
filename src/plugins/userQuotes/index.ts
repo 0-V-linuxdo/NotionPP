@@ -114,10 +114,11 @@ function mirror(leaf: HTMLElement) {
         copy.setAttribute(MIRROR, "");
         leaf.after(copy);
     }
+    // Follow the question's look every time, not only when its text changes.
+    if (copy.className !== leaf.className) copy.className = leaf.className;
+    const style = [leaf.getAttribute("style")?.trim().replace(/;$/, ""), "cursor: text"].filter(Boolean).join("; ");
+    if (copy.getAttribute("style") !== style) copy.setAttribute("style", style);
     if (copy.dataset.src === text) return void leaf.setAttribute(HIDDEN, "");
-    copy.className = leaf.className;
-    copy.setAttribute("style", leaf.getAttribute("style") ?? "");
-    copy.style.cursor = "text";
     copy.dataset.src = text;
     copy.replaceChildren(buildMirror(text));
     leaf.setAttribute(HIDDEN, "");

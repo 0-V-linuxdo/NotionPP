@@ -166,7 +166,8 @@ function makeButton(row: HTMLElement): HTMLElement | null {
     wrapper.removeAttribute("data-popup-origin");
     wrapper.setAttribute(LIST_MARK, "");
     const btn = sample.cloneNode(false) as HTMLElement;
-    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "data-testid"]) btn.removeAttribute(name);
+    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "aria-disabled", "data-testid"]) btn.removeAttribute(name);
+    btn.tabIndex = 0;
     btn.setAttribute("aria-haspopup", "dialog");
     btn.append(headerIcon(sample.querySelector("svg")));
     btn.addEventListener("pointerenter", () => hoverSoon(true));

@@ -162,4 +162,16 @@ describe("code folding", () => {
         bar.click();
         expect(block.getAttribute("data-npp-fold")).toBe("open");
     });
+
+    test("the bar stays under its block when Notion adds something after it", () => {
+        document.body.innerHTML = `<div data-agent-chat-user-step-id="u1"></div><div id="box"><pre id="reply">x</pre></div>`;
+        const block = document.getElementById("reply")!;
+        Object.defineProperty(block, "scrollHeight", { value: 2000 });
+        foldScan();
+        block.after(Object.assign(document.createElement("div"), { id: "caption" }));
+        foldScan();
+        const bars = document.querySelectorAll("[data-npp-fold-bar]");
+        expect(bars.length).toBe(1);
+        expect(block.nextElementSibling).toBe(bars[0]);
+    });
 });

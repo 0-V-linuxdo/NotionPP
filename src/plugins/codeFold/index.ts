@@ -76,21 +76,29 @@ function label(bar: HTMLElement, block: HTMLElement) {
 }
 
 /** Folds every new tall block once; a block the reader opened stays open. */
+const bars = new WeakMap<HTMLElement, HTMLElement>();
+
 export function scan() {
     const limit = settings.store.height;
-    for (const block of chatCodeBlocks()) {
-        let bar = block.nextElementSibling?.hasAttribute(BAR) ? block.nextElementSibling as HTMLElement : null;
+    const blocks = chatCodeBlocks();
+    for (const block of blocks) {
         if (!block.hasAttribute(MARK)) {
             // Still streaming in or short: look again later.
             if (block.scrollHeight <= limit + 40) continue;
             block.setAttribute(MARK, "folded");
         }
+        let bar = bars.get(block) ?? null;
         if (!bar) {
             bar = makeBar(block);
-            block.after(bar);
+            bars.set(block, bar);
         }
+        // Keep the bar right under its block, even when Notion adds something after the block later.
+        if (block.nextElementSibling !== bar) block.after(bar);
         label(bar, block);
     }
+    // Bars whose block Notion re-rendered or removed.
+    const live = new Set(blocks.map(block => bars.get(block)));
+    for (const bar of document.querySelectorAll<HTMLElement>(`[${BAR}]`)) if (!live.has(bar)) bar.remove();
 }
 
 function removeAll() {
