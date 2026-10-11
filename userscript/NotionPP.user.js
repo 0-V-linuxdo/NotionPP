@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.11.2
+// @version      20261007.1.11.3
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -1794,6 +1794,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     const replies = turns.map((turn) => assistantTurns(turn, turnSet));
     const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
     const messages = [];
+    const lastIndex = steps.length - 1;
     steps.forEach((step, index) => {
       const id = step.getAttribute(USER_STEP) || `user-${index}`;
       const answer = answers[index];
@@ -1804,15 +1805,18 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       for (const sibling of replies[index]) {
         const skip = [...sibling.querySelectorAll(TOGGLE2), ...regionsOf(sibling), ...nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : []];
         const body = assistantBody(sibling);
-        const bodyText = readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
-        const reply = proseOf(bodyText) || proseOf(readText(sibling, skip));
+        const hasSteps = !!sibling.querySelector(TOGGLE2);
+        const bodyText = body === sibling && hasSteps ? "" : readText(body, body === sibling ? skip : skip.filter((node) => body.contains(node)));
+        const reply = proseOf(bodyText) || (hasSteps ? "" : proseOf(readText(sibling, skip)));
         if (reply) {
           messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
           break;
         }
         const steps = [...sibling.querySelectorAll(TOGGLE2)].map((toggle) => toggle.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
         if (steps.length) {
-          messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text: t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`) });
+          const live = index === lastIndex && !!document.querySelector(STOP_BUTTON);
+          const text = live ? t(`回复中：${steps[steps.length - 1]}`, `Replying: ${steps[steps.length - 1]}`) : t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`);
+          messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text });
           break;
         }
       }
@@ -5656,7 +5660,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.11.2");
+    const backup = collectBackup("[20261007] v1.11.3");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5684,7 +5688,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.11.2";
+    const version = "[20261007] v1.11.3";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5719,7 +5723,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.11.2";
+    const version = "[20261007] v1.11.3";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -7802,7 +7806,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.11.2";
+    win[FLAG] = "[20261007] v1.11.3";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7833,7 +7837,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger8.info(`NotionAI++ ${"[20261007] v1.11.2"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.11.3"} started`);
   }
   boot();
 })();

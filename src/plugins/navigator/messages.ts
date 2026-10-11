@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+import { STOP_BUTTON } from "@api/Reply";
 import { t } from "@utils/page";
 
 export type Role = "user" | "assistant";
@@ -147,6 +148,7 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
     // Steps whose text lives in the reply before them: the picked option of a choice question.
     const answers = steps.map((step, index) => !userText(step) && index > 0 ? pickedOption(replies[index - 1]) : null);
     const messages: ChatMessage[] = [];
+    const lastIndex = steps.length - 1;
     steps.forEach((step, index) => {
         const id = step.getAttribute(USER_STEP) || `user-${index}`;
         const answer = answers[index];
@@ -156,17 +158,23 @@ function fromUserSteps(root: ParentNode): ChatMessage[] {
         for (const sibling of replies[index]) {
             const skip = [...sibling.querySelectorAll(TOGGLE), ...regionsOf(sibling), ...(nextAnswer && sibling.contains(nextAnswer) ? [nextAnswer] : [])];
             const body = assistantBody(sibling);
-            const bodyText = readText(body, body === sibling ? skip : skip.filter(node => body.contains(node)));
+            const hasSteps = !!sibling.querySelector(TOGGLE);
+            // With steps but no text after them, what's left (a to-do list above the steps) is not the reply.
+            const bodyText = body === sibling && hasSteps ? "" : readText(body, body === sibling ? skip : skip.filter(node => body.contains(node)));
             // A tool result streaming in (a fetched page's script) is not the reply yet.
-            const reply = proseOf(bodyText) || proseOf(readText(sibling, skip));
+            const reply = proseOf(bodyText) || (hasSteps ? "" : proseOf(readText(sibling, skip)));
             if (reply) {
                 messages.push({ id: `${id}:assistant`, role: "assistant", element: body, text: reply });
                 break;
             }
-            // A reply cut off before any text still shows its collapsed steps; list it so the turn isn't lost.
             const steps = [...sibling.querySelectorAll(TOGGLE)].map(toggle => toggle.textContent?.replace(/\s+/g, " ").trim()).filter(Boolean);
             if (steps.length) {
-                messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text: t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`) });
+                // Still working: name the step it is on. Cut off before any text: list the steps so the turn isn't lost.
+                const live = index === lastIndex && !!document.querySelector(STOP_BUTTON);
+                const text = live
+                    ? t(`回复中：${steps[steps.length - 1]}`, `Replying: ${steps[steps.length - 1]}`)
+                    : t(`回答已中断（${steps.join(" · ")}）`, `Reply interrupted (${steps.join(" · ")})`);
+                messages.push({ id: `${id}:assistant`, role: "assistant", element: sibling, text });
                 break;
             }
         }

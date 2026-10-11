@@ -43,6 +43,28 @@ describe("outline skips the to-do list", () => {
     });
 });
 
+describe("outline while a reply is still working", () => {
+    test("names the current step, not the to-do list", () => {
+        const turn = (stop: boolean) => `
+          <main>
+            <div><div data-agent-chat-user-step-id="u0"><div data-content-editable-leaf>先查书目</div></div></div>
+            <div><div>书目查好了。</div></div>
+            <div><div data-agent-chat-user-step-id="u1"><div data-content-editable-leaf>补封面</div></div></div>
+            <div><div class="col">
+              <div><div role="button" aria-expanded="false" aria-controls=":a:"><div>2 steps</div></div></div>
+              <div><div><div>检索书目</div><div>Find cover images</div></div></div>
+              <div><div><div role="button" aria-expanded="true" aria-controls=":b:"><div>试用其他图源</div></div></div></div>
+            </div></div>
+          </main>
+          ${stop ? `<button data-testid="agent-stop-inference-button"></button>` : ""}`;
+        document.body.innerHTML = turn(true);
+        expect(collectMessages().filter(message => message.role === "assistant").at(-1)?.text).toBe("Replying: 试用其他图源");
+        document.body.innerHTML = turn(false);
+        expect(collectMessages().filter(message => message.role === "assistant").at(-1)?.text).toBe("Reply interrupted (2 steps · 试用其他图源)");
+        document.body.innerHTML = "";
+    });
+});
+
 describe("auto-allow", () => {
     test("finds the trust prompt's Allow once button and its site", () => {
         document.body.innerHTML = `<div><div class="card">
