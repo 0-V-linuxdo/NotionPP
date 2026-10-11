@@ -113,6 +113,9 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
     wrapper.setAttribute(MARK, id);
     const button = copy.cloneNode(false) as HTMLElement;
     button.removeAttribute("id");
+    // Copy is disabled while the reply streams; the star works either way.
+    button.removeAttribute("aria-disabled");
+    button.tabIndex = 0;
     button.append(starIcon(copy.querySelector("svg")));
     button.addEventListener("click", event => {
         event.preventDefault();
@@ -135,8 +138,11 @@ function makeButton(copy: HTMLElement, id: string): HTMLElement {
  * to fill the row, such as the "Undo" group, which would otherwise push the star to the far end.
  */
 export function place(row: HTMLElement, copyWrapper: HTMLElement, star: HTMLElement) {
+    // Look past the star itself: Notion can add its buttons after we placed it (a reply that just
+    // finished gets Save and feedback after Copy), and the star should move behind them.
     let after: Element = copyWrapper;
-    for (let next = after.nextElementSibling; next && next !== star; next = next.nextElementSibling) {
+    for (let next = after.nextElementSibling; next; next = next.nextElementSibling) {
+        if (next === star) continue;
         if (!isIconWrapper(next)) break;
         after = next;
     }

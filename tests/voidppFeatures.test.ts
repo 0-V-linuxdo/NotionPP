@@ -123,6 +123,23 @@ describe("star placement", () => {
         expect(user.children.length).toBe(2);
         expect(user.style.width).toBe("auto");
     });
+
+    test("moves behind buttons Notion adds after the star was placed", async () => {
+        const { place } = await import("@plugins/messageStars/index");
+        document.body.innerHTML = `
+          <div id="row" style="display:flex">
+            <div class="w"><div role="button" aria-label="Copy response"></div></div>
+            <div id="star"></div>
+            <div class="w"><div role="button" aria-label="Save to private pages"></div></div>
+            <div class="w"><div role="button" aria-label="Share negative feedback"></div></div>
+          </div>`;
+        const row = document.getElementById("row")!;
+        const star = document.getElementById("star")!;
+        place(row, row.firstElementChild as HTMLElement, star);
+        expect(row.lastElementChild).toBe(star);
+        place(row, row.firstElementChild as HTMLElement, star);
+        expect(row.lastElementChild).toBe(star);
+    });
 });
 
 describe("star visibility", () => {
