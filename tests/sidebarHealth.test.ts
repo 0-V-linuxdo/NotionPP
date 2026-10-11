@@ -86,6 +86,8 @@ describe("update self-check", () => {
         document.body.innerHTML = `<nav class="notion-sidebar-container"></nav>`;
         expect(notReady(failedChecks())).toBe(true);
         document.body.innerHTML = `<div data-notion-chat-input-container></div>`;
+        expect(notReady(failedChecks())).toBe(true);
+        document.body.innerHTML = `<div data-notion-chat-input-container></div><div data-agent-chat-user-step-id="u1"></div>`;
         expect(notReady(failedChecks())).toBe(false);
         expect(notReady([])).toBe(false);
     });
