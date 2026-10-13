@@ -52,7 +52,6 @@ button.item:hover { color: var(--text); background: var(--hover); }
 button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
 button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
-.live { flex: 0 0 auto; padding: 0 5px; border: 1px dashed var(--line); border-radius: 4px; color: var(--subtle); font-size: 10.5px; font-style: normal; line-height: 16px; }
 .label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }

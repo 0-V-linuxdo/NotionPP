@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.11.6
+// @version      20261007.1.11.7
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -3789,7 +3789,6 @@ button.item:hover { color: var(--text); background: var(--hover); }
 button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
 button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
 div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
-.live { flex: 0 0 auto; padding: 0 5px; border: 1px dashed var(--line); border-radius: 4px; color: var(--subtle); font-size: 10.5px; font-style: normal; line-height: 16px; }
 .label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
 :focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
@@ -4024,12 +4023,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     line.dataset.role = "assistant";
     return line;
   }
-  var liveTag = () => {
-    const tag = document.createElement("span");
-    tag.className = "live";
-    tag.textContent = t("生成中", "Writing");
-    return tag;
-  };
+  var liveLabel = () => t("正在输出…", "Writing…");
   function pendingItem() {
     const item = document.createElement("li");
     const row = document.createElement("div");
@@ -4040,8 +4034,8 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     mark.textContent = "\uD83E\uDD16";
     const label = document.createElement("span");
     label.className = "label";
-    label.textContent = t("正在回复…", "Writing a reply…");
-    row.append(mark, label, liveTag());
+    label.textContent = liveLabel();
+    row.append(mark, label);
     item.append(row);
     return item;
   }
@@ -4103,7 +4097,7 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const stars = starsActive() ? starsOf(currentChatId()) : new Set;
     const live = streamingState(next);
-    const nextSignature = next.map((m) => `${m.id}\x01${summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02") + `\x03${live.id}\x03${live.pending ? 1 : 0}`;
+    const nextSignature = next.map((m) => `${m.id}\x01${m.id === live.id ? "" : summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02") + `\x03${live.id}\x03${live.pending ? 1 : 0}`;
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
     overlay2.host.hidden = !next.length && !live.pending;
@@ -4137,13 +4131,12 @@ div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8p
       mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "\uD83E\uDD16";
       const label = document.createElement("span");
       label.className = "label";
-      label.textContent = summarize(message.text);
-      if (labels[index] !== label.textContent)
+      const writing = message.id === live.id;
+      label.textContent = writing ? liveLabel() : summarize(message.text);
+      if (!writing && labels[index] !== label.textContent)
         label.dataset.compact = labels[index];
-      button.title = summarize(message.text, 400);
+      button.title = writing ? liveLabel() : summarize(message.text, 400);
       button.append(mark, label);
-      if (message.id === live.id)
-        button.append(liveTag());
       button.addEventListener("click", () => jump(message.id));
       const item = document.createElement("li");
       item.append(button);
@@ -5673,7 +5666,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.11.6");
+    const backup = collectBackup("[20261007] v1.11.7");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5701,7 +5694,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.11.6";
+    const version = "[20261007] v1.11.7";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5736,7 +5729,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.11.6";
+    const version = "[20261007] v1.11.7";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -7821,7 +7814,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.11.6";
+    win[FLAG] = "[20261007] v1.11.7";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7852,7 +7845,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger8.info(`NotionAI++ ${"[20261007] v1.11.6"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.11.7"} started`);
   }
   boot();
 })();

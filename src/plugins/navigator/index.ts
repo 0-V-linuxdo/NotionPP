@@ -155,12 +155,8 @@ function pendingLine() {
     return line;
 }
 
-const liveTag = () => {
-    const tag = document.createElement("span");
-    tag.className = "live";
-    tag.textContent = t("生成中", "Writing");
-    return tag;
-};
+/** Like Void++: a reply still being written is listed by its state, not its half-made (often tool) text. */
+export const liveLabel = () => t("正在输出…", "Writing…");
 
 function pendingItem() {
     const item = document.createElement("li");
@@ -172,8 +168,8 @@ function pendingItem() {
     mark.textContent = "🤖";
     const label = document.createElement("span");
     label.className = "label";
-    label.textContent = t("正在回复…", "Writing a reply…");
-    row.append(mark, label, liveTag());
+    label.textContent = liveLabel();
+    row.append(mark, label);
     item.append(row);
     return item;
 }
@@ -231,7 +227,7 @@ function build() {
     const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
     const stars = starsActive() ? starsOf(currentChatId()) : new Set<string>();
     const live = streamingState(next);
-    const nextSignature = next.map(m => `${m.id}\u0001${summarize(m.text)}\u0001${stars.has(m.id) ? 1 : 0}`).join("\u0002") + `\u0003${live.id}\u0003${live.pending ? 1 : 0}`;
+    const nextSignature = next.map(m => `${m.id}\u0001${m.id === live.id ? "" : summarize(m.text)}\u0001${stars.has(m.id) ? 1 : 0}`).join("\u0002") + `\u0003${live.id}\u0003${live.pending ? 1 : 0}`;
     const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
     messages = next;
     overlay.host.hidden = !next.length && !live.pending;
@@ -264,12 +260,12 @@ function build() {
         mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "🤖";
         const label = document.createElement("span");
         label.className = "label";
-        label.textContent = summarize(message.text);
+        const writing = message.id === live.id;
+        label.textContent = writing ? liveLabel() : summarize(message.text);
         // Only when the whole prompt doesn't fit: show where it differs from an earlier one.
-        if (labels[index] !== label.textContent) label.dataset.compact = labels[index];
-        button.title = summarize(message.text, 400);
+        if (!writing && labels[index] !== label.textContent) label.dataset.compact = labels[index];
+        button.title = writing ? liveLabel() : summarize(message.text, 400);
         button.append(mark, label);
-        if (message.id === live.id) button.append(liveTag());
         button.addEventListener("click", () => jump(message.id));
         const item = document.createElement("li");
         item.append(button);
