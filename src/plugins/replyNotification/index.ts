@@ -8,6 +8,7 @@ import { type EventMap, on } from "@api/Events";
 import { definePlugin } from "@api/PluginManager";
 import { currentChatTitle, watchReplies } from "@api/Reply";
 import { definePluginSettings, setValue } from "@api/Settings";
+import { watchStreams } from "@api/Streams";
 import { Icons } from "@utils/icons";
 import { pageWindow, t } from "@utils/page";
 
@@ -182,11 +183,11 @@ function lastReply(): string {
     return reply ? summarize(reply.text, 120) : "";
 }
 
-function desktop(error: boolean) {
+function desktop(error: boolean, title = chatTitle(), reply = lastReply()) {
     if (typeof Notification !== "function" || Notification.permission !== "granted") return;
     try {
-        const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
-            body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
+        const note = new Notification(error ? t(`回复出错 · ${title}`, `Reply failed · ${title}`) : title, {
+            body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : reply || t("Notion AI 已回复完成", "Notion AI has finished replying"),
             tag: "notionai-pp-reply",
             silent: settings.store.sound,
         });
@@ -212,6 +213,17 @@ function notify({ chatId, error, stopped, left }: EventMap["replyEnd"]) {
     if (settings.store.desktop) desktop(error);
 }
 
+/** A chat left mid-reply finished while the user was elsewhere (Streams.ts follows it there). */
+function notifyElsewhere({ chatId, title, status, stopped, elsewhere }: EventMap["streamEnd"]) {
+    if (!elsewhere || stopped || status === "aborted" || !chatId) return;
+    const now = performance.now();
+    if (chatId === last.chatId && now - last.at < REPEAT_MS) return;
+    last = { chatId, at: now };
+    if (settings.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus()) return;
+    if (settings.store.sound) play();
+    if (settings.store.desktop) desktop(status === "error", title || "Notion AI", "");
+}
+
 async function test() {
     if (settings.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         await Notification.requestPermission();
@@ -224,13 +236,13 @@ export default definePlugin({
     name: "replyNotification",
     title: { zh: "回复完成提醒", en: "Reply notification" },
     description: {
-        zh: "Notion AI 回复完成时播放提示音，也可以弹出系统通知。默认只在标签页不在前台时提醒。",
-        en: "Plays a sound, and optionally shows a system notification, when Notion AI finishes a reply. By default only while the tab is in the background.",
+        zh: "Notion AI 回复完成时播放提示音，也可以弹出系统通知；切到别的对话后，原对话写完也会提醒。默认只在标签页不在前台时提醒。",
+        en: "Plays a sound, and optionally shows a system notification, when Notion AI finishes a reply, including in a chat you have left. By default only while the tab is in the background.",
     },
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    updatedAt: "2026-10-08",
+    updatedAt: "2026-10-24",
     settings,
     start() {
         // Browsers only let audio start after the page has been used; get it ready on the first
@@ -247,6 +259,8 @@ export default definePlugin({
         cleanups = [
             watchReplies(),
             on("replyEnd", notify),
+            watchStreams(),
+            on("streamEnd", notifyElsewhere),
             () => document.removeEventListener("pointerdown", prime, true),
             () => document.removeEventListener("keydown", prime, true),
         ];

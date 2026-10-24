@@ -6,12 +6,13 @@
 
 import { onDomChange } from "@api/DomWatch";
 import { on } from "@api/Events";
+import { chatUrl, openChat as openChatPage } from "@api/Chats";
 import { createOverlay, type Overlay } from "@api/Overlay";
 import { currentChatId, currentChatTitle } from "@api/Reply";
 import { onRouteChange } from "@api/Router";
 import { scrollParentOf } from "@utils/dom";
 import { Icons, svgIcon } from "@utils/icons";
-import { pageWindow, t } from "@utils/page";
+import { t } from "@utils/page";
 import { debounce } from "@utils/time";
 
 import { CHAT_SHARE } from "../hideShare";
@@ -123,12 +124,13 @@ export function controlRow(root: ParentNode = document): HTMLElement | null {
  * Left of the whole cluster: the first group holds Start new chat (and Share), so the star goes
  * in front of its first button wrapper, otherwise at the start of the row.
  */
-export function placeButton(row: HTMLElement, wrapper: HTMLElement) {
+export function placeButton(row: HTMLElement, wrapper: HTMLElement, ahead: string[] = []) {
     const first = row.firstElementChild as HTMLElement | null;
     // A plain group around several button wrappers, not a button wrapper itself.
-    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE) ? first : null;
+    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE) && !ahead.some(mark => first.hasAttribute(mark)) ? first : null;
     const parent = group ?? row;
-    const before = [...parent.children].find(child => child !== wrapper && child.hasAttribute("data-popup-origin")) ?? null;
+    // Our other header buttons named in `ahead` stay to the right of this one, so neither keeps moving the other.
+    const before = [...parent.children].find(child => child !== wrapper && (child.hasAttribute("data-popup-origin") || ahead.some(mark => child.hasAttribute(mark)))) ?? null;
     if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before) parent.insertBefore(wrapper, before);
 }
 
@@ -158,8 +160,14 @@ function paintButton() {
     button.title = label;
 }
 
+/** A native header button to dress ours like: Pin chat when there is one, never one of our own. */
+export function headerSample(row: HTMLElement): HTMLElement | null {
+    const native = [...row.querySelectorAll<HTMLElement>("[aria-label='Pin chat'], [role='button'][aria-label]")].filter(node => !node.closest(`[${LIST_MARK}], [data-npp-export]`));
+    return native.find(node => node.getAttribute("aria-label") === "Pin chat") ?? native[0] ?? null;
+}
+
 function makeButton(row: HTMLElement): HTMLElement | null {
-    const sample = row.querySelector<HTMLElement>("[aria-label='Pin chat'], [role='button'][aria-label]");
+    const sample = headerSample(row);
     const sampleWrapper = sample?.parentElement;
     if (!sample || !sampleWrapper) return null;
     const wrapper = sampleWrapper.cloneNode(false) as HTMLElement;
@@ -248,23 +256,10 @@ function seek(chatId: string, id: string) {
     step();
 }
 
-/** Opens another chat the way Notion's own links do, without reloading the page. */
-export function chatUrl(chatId: string, href = location.href): string {
-    const url = new URL(href);
-    url.searchParams.set("t", chatId);
-    return url.toString();
-}
+export { chatUrl };
 
 function openChat(chatId: string, id: string) {
-    if (currentChatId() !== chatId) {
-        const url = chatUrl(chatId);
-        pageWindow.history.pushState(pageWindow.history.state, "", url);
-        pageWindow.dispatchEvent(new PopStateEvent("popstate", { state: pageWindow.history.state }));
-        // Notion's router did not pick the change up: load the chat the plain way.
-        window.setTimeout(() => {
-            if (currentChatId() === chatId && !collectMessages().length && !document.querySelector("[data-agent-chat-user-step-id]")) pageWindow.location.assign(url);
-        }, 2500);
-    }
+    openChatPage(chatId);
     seek(chatId, id);
 }
 

@@ -12,6 +12,8 @@ import { isTopmostNotionDocument, pageWindow } from "@utils/page";
 
 import autoAllow from "@plugins/autoAllow/index";
 import autoCollapseThinking from "@plugins/autoCollapseThinking/index";
+import chatDoneToast from "@plugins/chatDoneToast/index";
+import exportChat from "@plugins/exportChat/index";
 import focusHighlight from "@plugins/focusHighlight/index";
 import codeFold from "@plugins/codeFold/index";
 import autoHidePanel from "@plugins/autoHidePanel/index";
@@ -22,6 +24,7 @@ import hideShare from "@plugins/hideShare/index";
 import inputHistory from "@plugins/inputHistory/index";
 import messageStars from "@plugins/messageStars/index";
 import noTelemetry from "@plugins/noTelemetry/index";
+import recentChats from "@plugins/recentChats/index";
 import chatNavigator from "@plugins/navigator/index";
 import replyNotification from "@plugins/replyNotification/index";
 import settings from "@plugins/settings/index";
@@ -45,6 +48,7 @@ function boot() {
         settings, usageMeter, chatNavigator, messageStars, replyNotification, tabStatus,
         inputHistory, widerChat, hideShare, autoCollapseThinking, focusHighlight, greetingCustomizer,
         composerLook, sidebarTweaks, healthCheck, userQuotes, noTelemetry, codeFold, autoAllow, autoHidePanel,
+        chatDoneToast, exportChat, recentChats,
     ]);
     startPlugins(StartAt.DocumentStart);
     const ready = () => startPlugins(StartAt.DomReady);

@@ -157,15 +157,20 @@ function fetchBody(input: unknown, init: RequestInit | undefined): Promise<strin
 
 function wrapFetchResponse(response: Response): ObservedResponse {
     const copy = response.clone();
+    // Several observers can share one exchange; the copy's body can only be read once.
+    let read: Promise<string> | null = null;
     return {
         ok: response.ok,
         status: response.status,
-        async text() {
-            const declared = Number(response.headers.get("content-length"));
-            if (declared > MAX_BODY_CHARS) throw new Error("response-too-large");
-            const text = await copy.text();
-            if (text.length > MAX_BODY_CHARS) throw new Error("response-too-large");
-            return text;
+        text() {
+            read ??= (async () => {
+                const declared = Number(response.headers.get("content-length"));
+                if (declared > MAX_BODY_CHARS) throw new Error("response-too-large");
+                const text = await copy.text();
+                if (text.length > MAX_BODY_CHARS) throw new Error("response-too-large");
+                return text;
+            })();
+            return read;
         },
     };
 }

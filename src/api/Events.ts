@@ -20,6 +20,16 @@ export interface EventMap {
         left: boolean;
     };
     starsChanged: void;
+    /** A reply started streaming, in any chat (see Streams.ts). */
+    streamStart: ReplyEvent & { title: string };
+    streamEnd: ReplyEvent & {
+        title: string;
+        status: "done" | "error" | "aborted";
+        stopped: boolean;
+        /** The user is on another chat (or none) as it ends. */
+        elsewhere: boolean;
+        durationMs: number;
+    };
 }
 
 type Handler<K extends keyof EventMap> = (payload: EventMap[K]) => void;

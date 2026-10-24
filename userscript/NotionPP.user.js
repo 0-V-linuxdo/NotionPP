@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NotionAI++
 // @namespace    https://github.com/0-V-linuxdo/NotionPP
-// @version      20261007.1.11.7
+// @version      20261007.1.12.0
 // @description  Notion AI usage meter docked to the AI composer, Notion-style chat outline, and more. No cookies or tokens are read.
 // @author       NotionAI++ Contributors
 // @homepageURL  https://github.com/0-V-linuxdo/NotionPP
@@ -364,17 +364,21 @@
   }
   function wrapFetchResponse(response) {
     const copy = response.clone();
+    let read = null;
     return {
       ok: response.ok,
       status: response.status,
-      async text() {
-        const declared = Number(response.headers.get("content-length"));
-        if (declared > MAX_BODY_CHARS)
-          throw new Error("response-too-large");
-        const text = await copy.text();
-        if (text.length > MAX_BODY_CHARS)
-          throw new Error("response-too-large");
-        return text;
+      text() {
+        read ??= (async () => {
+          const declared = Number(response.headers.get("content-length"));
+          if (declared > MAX_BODY_CHARS)
+            throw new Error("response-too-large");
+          const text = await copy.text();
+          if (text.length > MAX_BODY_CHARS)
+            throw new Error("response-too-large");
+          return text;
+        })();
+        return read;
       }
     };
   }
@@ -543,6 +547,10 @@
   var errors = new Map;
   var errorListeners = new Set;
   var pluginError = (name) => errors.get(name) ?? null;
+  function onPluginError(listener) {
+    errorListeners.add(listener);
+    return () => void errorListeners.delete(listener);
+  }
   function fail(plugin, stage, error) {
     logger3.error(`${plugin.name} failed to ${stage === "settings" ? "apply settings" : stage}:`, error);
     const message = error instanceof Error ? error.message || error.name : String(error);
@@ -750,6 +758,8 @@
     code: `<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>`,
     checkCircle: `<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>`,
     panelRight: `<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>`,
+    download: `<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>`,
+    switcher: `<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>`,
     lock: `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`
   };
   function svgIcon(markup, filled = false) {
@@ -1075,6 +1085,237 @@
     }
   });
 
+  // src/api/Chats.ts
+  var chatKey = (id) => id.replace(/-/g, "").toLowerCase();
+  var sameChat = (a, b) => !!a && !!b && chatKey(a) === chatKey(b);
+  function chatUrl(chatId, href = location.href) {
+    const url = new URL(href);
+    url.searchParams.set("t", chatId);
+    return url.toString();
+  }
+  var hasMessages = () => !!document.querySelector("[data-agent-chat-user-step-id]");
+  function openChat(chatId) {
+    if (!chatId || sameChat(currentChatId(), chatId))
+      return;
+    const url = chatUrl(chatId);
+    pageWindow.history.pushState(pageWindow.history.state, "", url);
+    pageWindow.dispatchEvent(new PopStateEvent("popstate", { state: pageWindow.history.state }));
+    window.setTimeout(() => {
+      if (sameChat(currentChatId(), chatId) && !hasMessages())
+        pageWindow.location.assign(url);
+    }, 2500);
+  }
+
+  // src/api/Router.ts
+  var listeners3 = new Set;
+  var POLL_MS = 1000;
+  var last = "";
+  var installed2 = false;
+  function check2() {
+    const href = pageWindow.location.href;
+    if (href === last)
+      return;
+    const change = { href, previous: last };
+    last = href;
+    for (const listener of [...listeners3]) {
+      try {
+        listener(change);
+      } catch {}
+    }
+  }
+  function install() {
+    if (installed2)
+      return;
+    installed2 = true;
+    last = pageWindow.location.href;
+    const schedule = () => queueMicrotask(check2);
+    const nav = pageWindow.navigation;
+    if (nav && typeof nav.addEventListener === "function") {
+      nav.addEventListener("navigatesuccess", schedule);
+      nav.addEventListener("currententrychange", schedule);
+    }
+    for (const method of ["pushState", "replaceState"]) {
+      const native = pageWindow.history[method];
+      pageWindow.history[method] = function() {
+        const result = Reflect.apply(native, this, arguments);
+        schedule();
+        return result;
+      };
+    }
+    pageWindow.addEventListener("popstate", schedule);
+    pageWindow.addEventListener("hashchange", schedule);
+    setInterval(check2, POLL_MS);
+  }
+  function onRouteChange(listener) {
+    install();
+    listeners3.add(listener);
+    return () => void listeners3.delete(listener);
+  }
+
+  // src/utils/time.ts
+  function debounce(fn, wait, maxWait = Infinity) {
+    let timer;
+    let firstAt = 0;
+    const run = (...args) => {
+      clearTimeout(timer);
+      const now = Date.now();
+      if (!firstAt)
+        firstAt = now;
+      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
+      timer = setTimeout(() => {
+        firstAt = 0;
+        fn(...args);
+      }, delay);
+    };
+    run.cancel = () => {
+      clearTimeout(timer);
+      firstAt = 0;
+    };
+    return run;
+  }
+  function frameThrottle(fn) {
+    let pending = false;
+    return () => {
+      if (pending)
+        return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        fn();
+      });
+    };
+  }
+
+  // src/api/Streams.ts
+  var INFERENCE_PATH2 = /\/api\/v3\/runInferenceTranscript$/;
+  var THREAD_KEYS = new Set(["threadId", "thread_id", "threadID"]);
+  var ID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+  var NEW_CHAT_ID_MS = 1e4;
+  function threadIdOf(body) {
+    const parsed = safeJson(body);
+    const walk = (value, depth) => {
+      if (depth > 3 || !value || typeof value !== "object")
+        return "";
+      if (isRecord(value)) {
+        for (const [key, item] of Object.entries(value)) {
+          if (THREAD_KEYS.has(key) && typeof item === "string" && ID_RE.test(item))
+            return item;
+        }
+      }
+      for (const item of Object.values(value)) {
+        const found = walk(item, depth + 1);
+        if (found)
+          return found;
+      }
+      return "";
+    };
+    return walk(parsed, 0);
+  }
+  function chatIdFor(threadId, current) {
+    if (!threadId)
+      return current;
+    if (sameChat(threadId, current))
+      return current;
+    return threadId.replace(/-/g, "").toLowerCase();
+  }
+  var live = new Map;
+  var users2 = 0;
+  var cleanups = [];
+  function refreshTitles() {
+    const current = currentChatId();
+    if (!current)
+      return;
+    const title = currentChatTitle();
+    for (const stream of live.values()) {
+      if (!stream.chatId && Date.now() - stream.startedAt < NEW_CHAT_ID_MS)
+        stream.chatId = current;
+      if (title && sameChat(stream.chatId, current))
+        stream.title = title;
+    }
+  }
+  function finish2(stream, status) {
+    if (!live.delete(stream.sequence))
+      return;
+    refreshTitles();
+    const current = currentChatId();
+    emit("streamEnd", {
+      chatId: stream.chatId,
+      title: stream.title,
+      status: stream.stopped && status !== "error" ? "aborted" : status,
+      stopped: stream.stopped,
+      elsewhere: !!stream.chatId && !sameChat(stream.chatId, current),
+      durationMs: Date.now() - stream.startedAt
+    });
+  }
+  async function settle(exchange) {
+    const response = await exchange.response;
+    if (!response)
+      return "aborted";
+    if (!response.ok)
+      return "error";
+    try {
+      await response.text();
+      return "done";
+    } catch (error) {
+      return error instanceof Error && error.message === "response-too-large" ? "done" : "aborted";
+    }
+  }
+  async function track(exchange) {
+    const current = currentChatId();
+    const stream = {
+      sequence: exchange.sequence,
+      chatId: current,
+      title: current ? currentChatTitle() : "",
+      startedAt: Date.now(),
+      stopped: false
+    };
+    live.set(stream.sequence, stream);
+    exchange.body.then((body) => {
+      const id = chatIdFor(threadIdOf(body), currentChatId() || current);
+      if (id)
+        stream.chatId = id;
+    }, () => {});
+    await exchange.body.catch(() => "");
+    if (live.has(stream.sequence))
+      emit("streamStart", { chatId: stream.chatId, title: stream.title });
+    finish2(stream, await settle(exchange));
+  }
+  function onPress2(event) {
+    if (!event.target?.closest?.(STOP_BUTTON))
+      return;
+    const current = currentChatId();
+    for (const stream of live.values())
+      if (sameChat(stream.chatId, current))
+        stream.stopped = true;
+  }
+  function watchStreams() {
+    if (users2++ === 0) {
+      const titles = debounce(refreshTitles, 300, 1000);
+      document.addEventListener("click", onPress2, true);
+      cleanups = [
+        observeNetwork({
+          matches: (url, method) => method === "POST" && INFERENCE_PATH2.test(url.pathname),
+          onExchange: (exchange) => void track(exchange)
+        }),
+        onRouteChange(refreshTitles),
+        onDomChange(() => live.size && titles()),
+        () => titles.cancel(),
+        () => document.removeEventListener("click", onPress2, true)
+      ];
+    }
+    let released = false;
+    return () => {
+      if (released)
+        return;
+      released = true;
+      if (--users2 > 0)
+        return;
+      for (const cleanup of cleanups.splice(0))
+        cleanup();
+      live.clear();
+    };
+  }
+
   // src/api/Theme.ts
   var DARK_RE = /(?:^|[\s_-])dark(?:$|[\s_-])/i;
   var LIGHT_RE = /(?:^|[\s_-])light(?:$|[\s_-])/i;
@@ -1110,19 +1351,19 @@
     }
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
-  var listeners3 = new Set;
+  var listeners4 = new Set;
   var observer2 = null;
-  var last = null;
+  var last2 = null;
   function notify() {
     const theme = currentTheme();
-    if (theme === last)
+    if (theme === last2)
       return;
-    last = theme;
-    for (const listener of [...listeners3])
+    last2 = theme;
+    for (const listener of [...listeners4])
       listener(theme);
   }
   function onThemeChange(listener) {
-    listeners3.add(listener);
+    listeners4.add(listener);
     if (!observer2) {
       observer2 = new MutationObserver(notify);
       const options = { attributes: true, subtree: false, attributeFilter: ["class", "data-theme", "data-mode", "lang"] };
@@ -1134,11 +1375,11 @@
         observer2.observe(inner, options);
       window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener?.("change", notify);
     }
-    last = null;
+    last2 = null;
     queueMicrotask(notify);
     return () => {
-      listeners3.delete(listener);
-      if (!listeners3.size) {
+      listeners4.delete(listener);
+      if (!listeners4.size) {
         observer2?.disconnect();
         observer2 = null;
       }
@@ -1174,51 +1415,233 @@
     };
   }
 
-  // src/api/Router.ts
-  var listeners4 = new Set;
-  var POLL_MS = 1000;
-  var last2 = "";
-  var installed2 = false;
-  function check2() {
-    const href = pageWindow.location.href;
-    if (href === last2)
+  // src/api/Toast.ts
+  var DEFAULT_TOAST_MS = 6000;
+  var MAX_TOASTS = 4;
+  var HOST_ID = "notionai-pp-toasts";
+  var CSS = `
+:host {
+  all: initial;
+  --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
+  --shadow: 0 10px 30px rgba(15,15,15,.16);
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483001; display: block;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:host([data-theme="dark"]) {
+  --bg: #252525; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
+  --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+* { box-sizing: border-box; }
+.stack { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.toast {
+  display: flex; align-items: flex-start; gap: 10px; width: min(340px, calc(100vw - 40px)); padding: 10px 8px 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
+  animation: in .16s ease-out;
+}
+.toast.clickable { cursor: pointer; }
+.toast.clickable:hover { background: color-mix(in srgb, var(--bg) 92%, var(--text)); }
+.mark { display: flex; flex: none; margin-top: 1px; color: #2383e2; }
+.toast.success .mark { color: #2383e2; }
+.toast.error .mark { color: #e03e3e; }
+.mark svg { width: 18px; height: 18px; }
+.text { flex: 1; min-width: 0; }
+.title { font-weight: 600; font-size: 14px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.body { margin-top: 2px; color: var(--subtle); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.close { display: flex; flex: none; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 5px; color: var(--subtle); background: transparent; cursor: pointer; }
+.close:hover { background: var(--hover); color: var(--text); }
+.close svg { width: 14px; height: 14px; }
+:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
+@keyframes in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+`;
+  var overlay = null;
+  var entries = [];
+  var counter = 0;
+  function stack() {
+    overlay ??= createOverlay(HOST_ID, CSS, `<div class="stack" role="region" aria-live="polite"></div>`);
+    return overlay.root.querySelector(".stack");
+  }
+  var MARKS = { info: Icons.info, success: Icons.checkCircle, error: Icons.alert };
+  function paint(entry) {
+    const { title, body, kind = "info", onClick } = entry.options;
+    entry.card.className = `toast ${kind}${onClick ? " clickable" : ""}`;
+    entry.card.setAttribute("role", kind === "error" ? "alert" : "status");
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.append(svgIcon(MARKS[kind]));
+    const text = document.createElement("div");
+    text.className = "text";
+    const head = document.createElement("div");
+    head.className = "title";
+    head.textContent = title;
+    head.title = title;
+    text.append(head);
+    if (body) {
+      const line = document.createElement("div");
+      line.className = "body";
+      line.textContent = body;
+      text.append(line);
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "close";
+    close.title = t("关闭", "Dismiss");
+    close.setAttribute("aria-label", close.title);
+    close.append(svgIcon(Icons.x));
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      remove(entry);
+    });
+    entry.card.replaceChildren(mark, text, close);
+  }
+  function arm(entry, ms) {
+    clearTimeout(entry.timer);
+    entry.timer = 0;
+    entry.remaining = ms;
+    entry.since = Date.now();
+    if (ms > 0)
+      entry.timer = window.setTimeout(() => remove(entry), ms);
+  }
+  function remove(entry) {
+    const index = entries.indexOf(entry);
+    if (index < 0)
       return;
-    const change = { href, previous: last2 };
-    last2 = href;
-    for (const listener of [...listeners4]) {
-      try {
-        listener(change);
-      } catch {}
+    entries.splice(index, 1);
+    clearTimeout(entry.timer);
+    entry.card.remove();
+    if (!entries.length) {
+      overlay?.destroy();
+      overlay = null;
     }
   }
-  function install() {
-    if (installed2)
+  var handle = (entry) => ({
+    update: (options) => {
+      if (!entries.includes(entry))
+        return;
+      entry.options = { ...entry.options, ...options };
+      paint(entry);
+      if ("duration" in options)
+        arm(entry, options.duration ?? DEFAULT_TOAST_MS);
+    },
+    close: () => remove(entry)
+  });
+  function showToast(options) {
+    const duration = options.duration ?? DEFAULT_TOAST_MS;
+    const existing = options.key ? entries.find((entry) => entry.key === options.key) : undefined;
+    if (existing) {
+      existing.options = options;
+      paint(existing);
+      arm(existing, duration);
+      return handle(existing);
+    }
+    const card = document.createElement("div");
+    const entry = { key: options.key ?? `toast-${++counter}`, options, card, timer: 0, remaining: duration, since: Date.now() };
+    card.addEventListener("click", () => {
+      const run = entry.options.onClick;
+      if (!run)
+        return;
+      remove(entry);
+      run();
+    });
+    card.addEventListener("pointerenter", () => {
+      if (!entry.timer)
+        return;
+      clearTimeout(entry.timer);
+      entry.timer = 0;
+      entry.remaining = Math.max(1000, entry.remaining - (Date.now() - entry.since));
+    });
+    card.addEventListener("pointerleave", () => entry.remaining > 0 && entries.includes(entry) && arm(entry, entry.remaining));
+    paint(entry);
+    entries.push(entry);
+    stack().append(card);
+    while (entries.length > MAX_TOASTS)
+      remove(entries[0]);
+    arm(entry, duration);
+    return handle(entry);
+  }
+  function dismissToast(key) {
+    const entry = entries.find((item) => item.key === key);
+    if (entry)
+      remove(entry);
+  }
+  var toastKeys = () => entries.map((entry) => entry.key);
+
+  // src/plugins/chatDoneToast/index.ts
+  var settings3 = definePluginSettings({
+    keepUntilDismissed: {
+      type: "boolean",
+      label: { zh: "一直显示到手动关闭", en: "Keep until dismissed" },
+      description: { zh: "不自动消失；点 × 或打开那个对话后才关闭", en: "Do not close on a timer; dismiss with × or by opening that chat" },
+      default: false
+    },
+    duration: {
+      type: "number",
+      label: { zh: "显示秒数", en: "Seconds shown" },
+      description: { zh: "开启「一直显示」时不生效", en: "Ignored when Keep until dismissed is on" },
+      default: 8,
+      min: 3,
+      max: 60
+    },
+    errors: {
+      type: "boolean",
+      label: { zh: "回复出错时也提示", en: "Also when a reply fails" },
+      default: true
+    }
+  });
+  var PREFIX = "chat-done:";
+  var toastKey = (chatId) => `${PREFIX}${chatKey(chatId)}`;
+  function shouldToast(event, errors) {
+    if (!event.elsewhere || event.stopped || !event.chatId)
+      return false;
+    if (event.status === "done")
+      return true;
+    return event.status === "error" && errors;
+  }
+  function announce(event) {
+    if (!shouldToast(event, settings3.store.errors))
       return;
-    installed2 = true;
-    last2 = pageWindow.location.href;
-    const schedule = () => queueMicrotask(check2);
-    const nav = pageWindow.navigation;
-    if (nav && typeof nav.addEventListener === "function") {
-      nav.addEventListener("navigatesuccess", schedule);
-      nav.addEventListener("currententrychange", schedule);
-    }
-    for (const method of ["pushState", "replaceState"]) {
-      const native = pageWindow.history[method];
-      pageWindow.history[method] = function() {
-        const result = Reflect.apply(native, this, arguments);
-        schedule();
-        return result;
-      };
-    }
-    pageWindow.addEventListener("popstate", schedule);
-    pageWindow.addEventListener("hashchange", schedule);
-    setInterval(check2, POLL_MS);
+    if (sameChat(currentChatId(), event.chatId))
+      return;
+    const failed = event.status === "error";
+    const title = event.title || t("Notion AI 对话", "Notion AI chat");
+    showToast({
+      key: toastKey(event.chatId),
+      kind: failed ? "error" : "success",
+      title,
+      body: failed ? t("回复出错，点击打开对话查看", "The reply failed. Click to open the chat") : t("回复已完成，点击打开对话", "Reply finished. Click to open the chat"),
+      duration: settings3.store.keepUntilDismissed ? 0 : settings3.store.duration * 1000,
+      onClick: () => openChat(event.chatId)
+    });
   }
-  function onRouteChange(listener) {
-    install();
-    listeners4.add(listener);
-    return () => void listeners4.delete(listener);
+  function dismissOpened() {
+    const current = currentChatId();
+    if (current)
+      dismissToast(toastKey(current));
   }
+  var cleanups2 = [];
+  var chatDoneToast_default = definePlugin({
+    name: "chatDoneToast",
+    title: { zh: "其他对话完成提示", en: "Other chat finished toast" },
+    description: {
+      zh: "切到别的对话后，原来那个对话写完回复时，右下角弹出提示，点击直接打开它。",
+      en: "When a chat you left finishes its reply, a toast in the bottom-right corner says so; click it to open that chat."
+    },
+    icon: Icons.checkCircle,
+    tags: ["chat"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-24",
+    settings: settings3,
+    start() {
+      cleanups2 = [watchStreams(), on("streamEnd", announce), onRouteChange(dismissOpened)];
+    },
+    stop() {
+      for (const cleanup of cleanups2.splice(0))
+        cleanup();
+      for (const key of toastKeys())
+        if (key.startsWith(PREFIX))
+          dismissToast(key);
+    }
+  });
 
   // src/utils/dom.ts
   function boxOf(el) {
@@ -1272,412 +1695,136 @@
     return node;
   }
 
-  // src/plugins/usage/composer.ts
-  var CONTAINER_SELECTOR = "[data-notion-chat-input-container]";
-  var EDITOR_SELECTOR = "[role='textbox'][contenteditable='true'], [role='textbox'][contenteditable='plaintext-only'], textarea, [contenteditable='true']";
-  var SEMANTIC_RE = /notion\s*ai|do anything with ai|ask\s+(?:notion\s+)?ai|ask anything|(?:用|向|让|问)\s*(?:notion\s*)?ai|ai\s*(?:助手|输入|对话|提问)/i;
-  var SURFACE_MIN_RADIUS = 8;
-  var MAX_CLIMB = 10;
-  var IDLE_RESCAN_MS = 500;
-  function hasSurface(node) {
-    const style = getComputedStyle(node);
-    if ((parseFloat(style.borderTopLeftRadius) || 0) < SURFACE_MIN_RADIUS)
-      return false;
-    const background = style.backgroundColor.replace(/\s+/g, "");
-    const painted = background !== "" && background !== "transparent" && background !== "rgba(0,0,0,0)";
-    return painted || style.boxShadow !== "" && style.boxShadow !== "none" || (parseFloat(style.borderTopWidth) || 0) > 0;
-  }
-  function surfaceFor(editor, limit) {
-    let best = null;
-    let node = editor;
-    for (let depth = 0;node && depth < MAX_CLIMB; depth++, node = node.parentElement) {
-      if (node === document.body)
-        break;
-      if (hasSurface(node))
-        best = node;
-      if (node === limit)
-        break;
-    }
-    return best ?? limit ?? editor;
-  }
-  var editorText = (editor) => ["placeholder", "aria-placeholder", "data-placeholder", "aria-label"].map((name) => editor.getAttribute(name) ?? "").join(" ");
-  function rank(match, box) {
-    const active = document.activeElement;
-    let score = box.bottom / Math.max(1, viewport().height) * 10 + box.width / Math.max(1, viewport().width) * 4;
-    if (active && (match.editor === active || match.editor.contains(active) || match.surface.contains(active)))
-      score += 100;
-    return score;
-  }
-  function fromContainers() {
-    const found = [];
-    for (const container of document.querySelectorAll(CONTAINER_SELECTOR)) {
-      const editor = container.querySelector(EDITOR_SELECTOR);
-      if (!editor || !visibleBox(editor))
-        continue;
-      found.push({ editor, surface: surfaceFor(editor, container) });
-    }
-    return found;
-  }
-  function fromHeuristics() {
-    const found = [];
-    for (const editor of document.querySelectorAll(EDITOR_SELECTOR)) {
-      if (!SEMANTIC_RE.test(editorText(editor)))
-        continue;
-      const box = visibleBox(editor);
-      if (!box || box.width < 180)
-        continue;
-      found.push({ editor, surface: surfaceFor(editor, null) });
-    }
-    return found;
-  }
-  function locateComposer() {
-    const candidates = fromContainers();
-    const pool = candidates.length ? candidates : fromHeuristics();
-    let best = null;
-    for (const match of pool) {
-      const box = visibleBox(match.surface);
-      if (!box)
-        continue;
-      const score = rank(match, box);
-      if (!best || score > best.score)
-        best = { ...match, box, score };
-    }
-    return best;
-  }
-
-  class ComposerTracker {
-    onChange;
-    frame = 0;
-    match = null;
-    box = null;
-    dirty = true;
-    lastScan = 0;
-    cleanups = [];
-    constructor(onChange) {
-      this.onChange = onChange;
-    }
-    start() {
-      if (this.frame)
-        return;
-      const markDirty = () => void (this.dirty = true);
-      this.cleanups = [
-        onDomChange(markDirty),
-        onRouteChange(markDirty)
-      ];
-      for (const type of ["focusin", "resize"]) {
-        window.addEventListener(type, markDirty, { capture: true, passive: true });
-        this.cleanups.push(() => window.removeEventListener(type, markDirty, { capture: true }));
-      }
-      this.dirty = true;
-      this.tick();
-    }
-    stop() {
-      cancelAnimationFrame(this.frame);
-      this.frame = 0;
-      for (const cleanup of this.cleanups)
-        cleanup();
-      this.cleanups = [];
-      this.match = null;
-      this.box = null;
-    }
-    get current() {
-      return this.box;
-    }
-    tick = () => {
-      this.frame = requestAnimationFrame(this.tick);
-      if (document.hidden)
-        return;
-      const now = performance.now();
-      let box = this.match ? visibleBox(this.match.surface) : null;
-      const shouldScan = this.dirty || !box && now - this.lastScan >= IDLE_RESCAN_MS;
-      if (shouldScan) {
-        this.dirty = false;
-        this.lastScan = now;
-        const next = locateComposer();
-        this.match = next;
-        box = next?.box ?? null;
-      }
-      if (sameBox(box, this.box) || !box && !this.box)
-        return;
-      this.box = box;
-      this.onChange(box);
-    };
-  }
-
-  // src/plugins/focusHighlight/index.ts
-  var PLUGIN = "FocusHighlight";
-  var STYLE_ID = "notionai-pp-focus-highlight";
-  var PANEL_ID = "notionai-pp-focus-panel";
-  var BOX_ATTR = "data-notionai-pp-focus-box";
-  var COLOR_VAR = "--notionai-pp-focus-color";
-  var EDITOR = "[role='textbox'][contenteditable]:not([contenteditable='false']), textarea, [contenteditable]:not([contenteditable='false'])";
-  var PROMPT_HINT = /do anything with ai|ask\s+(?:notion\s+)?ai|notion\s*ai|(?:用|向|让|问)\s*(?:notion\s*)?ai/i;
-  var RIGHT_HIT_PX = 72;
-  var RIGHT_HIT_Y_PAD_PX = 10;
-  var DOUBLE_CLICK_MS = 450;
-  var DOUBLE_CLICK_PX = 20;
-  var LEGACY_KEYS = { light: "notionAiFocusHighlightColorLight", dark: "notionAiFocusHighlightColorDark" };
-  var LEGACY_SHARED_KEY = "notionAiFocusHighlightColor";
-  var settings3 = definePluginSettings({
-    lightColor: {
-      type: "color",
-      label: { zh: "普通模式", en: "Light mode" },
-      default: "#37352f"
-    },
-    darkColor: {
-      type: "color",
-      label: { zh: "黑暗模式", en: "Dark mode" },
-      default: "#ffffff"
+  // src/plugins/hideShare/index.ts
+  var STYLE_ID = "notionai-pp-hide-share";
+  var CHAT_SHARE = "[data-testid='share-chat-button']";
+  var PAGE_SHARE = ".notion-topbar-share-menu";
+  var settings4 = definePluginSettings({
+    pages: {
+      type: "boolean",
+      label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
+      description: { zh: "普通 Notion 页面右上角的「分享」按钮", en: "The Share button at the top right of ordinary Notion pages" },
+      default: false
     }
   });
-  var colorKey = (theme) => theme === "dark" ? "darkColor" : "lightColor";
-  var colorFor = (theme) => settings3.store[colorKey(theme)];
-  var boxes = new Set;
-  var lastEditor = null;
-  var lastContextMenu = null;
-  var panel = null;
-  var cleanups = [];
-  var scheduled3 = false;
-  var hint = (editor) => ["placeholder", "aria-placeholder", "data-placeholder", "aria-label"].map((name) => editor.getAttribute(name) ?? "").join(" ");
-  function findPromptBoxes(root = document) {
-    const found = new Set;
-    for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
-      const editor = container.querySelector(EDITOR);
-      if (editor)
-        found.add(surfaceFor(editor, container));
-    }
-    for (const editor of root.querySelectorAll(EDITOR)) {
-      if (editor.closest(CONTAINER_SELECTOR) || !PROMPT_HINT.test(hint(editor)))
-        continue;
-      found.add(surfaceFor(editor, null));
-    }
-    return [...found].filter((box) => box !== document.body && box !== document.documentElement);
+  function css(pages) {
+    const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
+    return `${selectors.join(", ")} { display: none !important; }`;
   }
-  function scan3() {
-    const next = new Set(findPromptBoxes());
-    for (const box of boxes)
-      if (!next.has(box))
-        box.removeAttribute(BOX_ATTR);
-    for (const box of next)
-      if (!box.hasAttribute(BOX_ATTR))
-        box.setAttribute(BOX_ATTR, "");
-    boxes = next;
-  }
-  function schedule2() {
-    if (scheduled3)
-      return;
-    scheduled3 = true;
-    requestAnimationFrame(() => {
-      scheduled3 = false;
-      scan3();
-    });
-  }
-  function renderStyle() {
+  function apply() {
     let style = document.getElementById(STYLE_ID);
     if (!style) {
       style = document.createElement("style");
       style.id = STYLE_ID;
+      (document.head ?? document.documentElement).append(style);
     }
-    if (!style.isConnected)
-      (document.head ?? document.documentElement).appendChild(style);
-    const color = colorFor(currentTheme());
-    style.textContent = `
-:root { ${COLOR_VAR}: ${color}; }
-[${BOX_ATTR}] {
-  outline: 1px solid var(${COLOR_VAR}) !important;
-  box-shadow: 0 0 0 1px var(${COLOR_VAR}), 0 0 0 4px color-mix(in srgb, var(${COLOR_VAR}) 20%, transparent) !important;
-}`;
+    style.textContent = css(settings4.store.pages);
   }
-  var PANEL_CSS = `
-:host { all: initial; position: fixed; top: 72px; right: 24px; z-index: 2147483647; display: block;
-  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.12); --row: rgba(55,53,47,.05); --hover: rgba(55,53,47,.09);
-  font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color-scheme: light; }
-:host([data-theme="dark"]) { --bg: #202020; --text: #f5f5f5; --muted: rgba(255,255,255,.68); --border: rgba(255,255,255,.14);
-  --row: rgba(255,255,255,.07); --hover: rgba(255,255,255,.11); color-scheme: dark; }
-* { box-sizing: border-box; }
-.panel { width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
-  box-shadow: 0 12px 34px rgba(15,15,15,.22); }
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 14px 8px; }
-h2 { margin: 0; font-size: 14px; font-weight: 650; }
-.close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 17px; cursor: pointer; }
-.close:hover { background: var(--hover); color: var(--text); }
-.body { display: grid; gap: 8px; padding: 0 14px 14px; }
-label, .row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; min-height: 46px;
-  padding: 8px 10px; border-radius: 8px; background: var(--row); }
-label { cursor: pointer; } label:hover { background: var(--hover); }
-.muted { color: var(--muted); font-size: 12px; font-weight: 500; }
-.chip { position: relative; width: 52px; height: 30px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
-.chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
-.value { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
-`;
-  function syncPanel() {
-    if (!panel)
-      return;
-    const theme = currentTheme();
-    const color = colorFor(theme);
-    const { root } = panel;
-    root.querySelector("h2").textContent = theme === "dark" ? t("黑暗模式高亮色", "Dark Mode Highlight") : t("普通模式高亮色", "Light Mode Highlight");
-    root.querySelector("input").value = color;
-    root.querySelector(".chip").style.background = color;
-    root.querySelector(".value").textContent = color.toUpperCase();
-  }
-  function openPanel() {
-    closePanel(false);
-    panel = createOverlay(PANEL_ID, PANEL_CSS, `<div class="panel" role="dialog"><header><h2></h2><button class="close" type="button">×</button></header>
-<div class="body"><label><span class="muted"></span><span class="chip"><input type="color"></span></label>
-<div class="row"><span class="muted"></span><span class="value"></span></div></div></div>`);
-    const { root } = panel;
-    root.querySelector(".panel").setAttribute("aria-label", t("配置输入框高亮色", "Configure prompt highlight color"));
-    const [chooseLabel, currentLabel] = root.querySelectorAll(".muted");
-    chooseLabel.textContent = t("选择颜色", "Choose Color");
-    currentLabel.textContent = t("当前颜色", "Current Color");
-    const close = root.querySelector(".close");
-    close.setAttribute("aria-label", t("关闭", "Close"));
-    close.addEventListener("click", () => closePanel());
-    root.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape")
-        return;
-      event.stopPropagation();
-      closePanel();
-    });
-    const input = root.querySelector("input");
-    const apply = () => {
-      if (isHexColor(input.value))
-        settings3.store[colorKey(currentTheme())] = input.value.toLowerCase();
-    };
-    input.addEventListener("input", apply);
-    input.addEventListener("change", apply);
-    syncPanel();
-  }
-  function closePanel(refocus = true) {
-    if (!panel)
-      return;
-    panel.destroy();
-    panel = null;
-    if (refocus && lastEditor?.isConnected) {
-      try {
-        lastEditor.focus({ preventScroll: true });
-      } catch {}
-    }
-  }
-  function inRightStrip(x, y, box) {
-    const rect = box.getBoundingClientRect();
-    const dx = x - rect.right;
-    return dx > 0 && dx <= RIGHT_HIT_PX && y >= rect.top - RIGHT_HIT_Y_PAD_PX && y <= rect.bottom + RIGHT_HIT_Y_PAD_PX;
-  }
-  function onContextMenu(event) {
-    if (panel && event.composedPath().includes(panel.host))
-      return;
-    const box = [...boxes].find((b) => b.isConnected && inRightStrip(event.clientX, event.clientY, b));
-    if (!box) {
-      lastContextMenu = null;
-      return;
-    }
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    const editor = box.querySelector(EDITOR);
-    if (editor instanceof HTMLElement)
-      lastEditor = editor;
-    const now = Date.now();
-    const prev = lastContextMenu;
-    if (prev && prev.box === box && now - prev.time <= DOUBLE_CLICK_MS && Math.hypot(event.clientX - prev.x, event.clientY - prev.y) <= DOUBLE_CLICK_PX) {
-      lastContextMenu = null;
-      if (panel)
-        closePanel();
-      else
-        openPanel();
-      return;
-    }
-    lastContextMenu = { box, time: now, x: event.clientX, y: event.clientY };
-  }
-  function migrateLegacy() {
-    for (const theme of ["light", "dark"]) {
-      if (getValue(PLUGIN, colorKey(theme)) !== undefined)
-        continue;
-      let legacy = null;
-      try {
-        legacy = localStorage.getItem(LEGACY_KEYS[theme]) ?? (theme === "light" ? localStorage.getItem(LEGACY_SHARED_KEY) : null);
-      } catch {}
-      const color = legacy?.trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
-      if (isHexColor(color))
-        setValue(PLUGIN, colorKey(theme), color.toLowerCase());
-    }
-  }
-  var focusHighlight_default = definePlugin({
-    name: PLUGIN,
-    title: { zh: "输入框高亮色", en: "Composer highlight" },
+  var hideShare_default = definePlugin({
+    name: "hideShare",
+    title: { zh: "隐藏分享按钮", en: "Hide Share button" },
     description: {
-      zh: "给 Notion AI 输入框描一圈自定义颜色（普通、黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
-      en: "Outlines the Notion AI composer in a color of your choice, one for light mode and one for dark. Double right-click the empty right side of the composer to pick a color."
+      zh: "隐藏 Notion AI 对话右上角的分享按钮，避免误点把对话分享出去。也可以顺带隐藏普通页面的分享按钮。",
+      en: "Hides the Share button at the top right of Notion AI chats so a chat is not shared by accident. Can also hide Share on ordinary pages."
     },
-    icon: Icons.highlighter,
-    tags: ["composer", "appearance"],
+    icon: Icons.shareOff,
+    tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings3,
+    settings: settings4,
     start() {
-      migrateLegacy();
-      renderStyle();
-      window.addEventListener("contextmenu", onContextMenu, true);
-      cleanups = [
-        () => window.removeEventListener("contextmenu", onContextMenu, true),
-        onDomChange(schedule2),
-        onRouteChange(schedule2),
-        onThemeChange(() => {
-          renderStyle();
-          syncPanel();
-        })
-      ];
-      scan3();
+      apply();
     },
     stop() {
-      for (const cleanup of cleanups.splice(0))
-        cleanup();
-      closePanel(false);
-      for (const box of boxes)
-        box.removeAttribute(BOX_ATTR);
-      boxes = new Set;
-      lastContextMenu = null;
       document.getElementById(STYLE_ID)?.remove();
     },
     onSettingsChange() {
-      renderStyle();
-      syncPanel();
+      apply();
     }
   });
 
-  // src/utils/time.ts
-  function debounce(fn, wait, maxWait = Infinity) {
-    let timer;
-    let firstAt = 0;
-    const run = (...args) => {
-      clearTimeout(timer);
-      const now = Date.now();
-      if (!firstAt)
-        firstAt = now;
-      const delay = Math.max(0, Math.min(wait, firstAt + maxWait - now));
-      timer = setTimeout(() => {
-        firstAt = 0;
-        fn(...args);
-      }, delay);
-    };
-    run.cancel = () => {
-      clearTimeout(timer);
-      firstAt = 0;
-    };
-    return run;
+  // src/plugins/navigator/effects.ts
+  var EFFECTS = [
+    { value: "none", zh: "无（只滚动）", en: "None (scroll only)" },
+    { value: "border", zh: "高亮边框", en: "Highlight border" },
+    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
+    { value: "fade", zh: "淡入淡出", en: "Fade" },
+    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle" }
+  ];
+  var running = new WeakMap;
+  var KEYFRAMES = {
+    border: {
+      frames: [
+        { outline: "2px solid rgba(255,196,0,.95)", outlineOffset: "4px", boxShadow: "0 0 0 0 rgba(255,196,0,.45)" },
+        { outline: "2px solid rgba(255,196,0,.95)", outlineOffset: "4px", boxShadow: "0 0 0 12px rgba(255,196,0,0)", offset: 0.6 },
+        { outline: "2px solid rgba(255,196,0,0)", outlineOffset: "4px", boxShadow: "0 0 0 12px rgba(255,196,0,0)" }
+      ],
+      duration: 2000
+    },
+    pulse: {
+      frames: [
+        { boxShadow: "0 0 0 0 rgba(59,130,246,.7)" },
+        { boxShadow: "0 0 0 15px rgba(59,130,246,0)", offset: 0.5 },
+        { boxShadow: "0 0 0 0 rgba(59,130,246,0)" }
+      ],
+      duration: 2000
+    },
+    fade: {
+      frames: [
+        { backgroundColor: "rgba(59,130,246,0)" },
+        { backgroundColor: "rgba(59,130,246,.28)", offset: 0.5 },
+        { backgroundColor: "rgba(59,130,246,0)" }
+      ],
+      duration: 1500
+    },
+    jiggle: {
+      frames: [0, -3, 3, -3, 3, -3, 3, -3, 3, 0].map((x) => ({ transform: `translateX(${x}px)` })),
+      duration: 400
+    }
+  };
+  function playEffect(element, effect) {
+    if (effect === "none" || typeof element.animate !== "function")
+      return;
+    running.get(element)?.cancel();
+    const { frames, duration } = KEYFRAMES[effect];
+    const reduced = reducedMotion();
+    const animation = element.animate(effect === "jiggle" && reduced ? KEYFRAMES.fade.frames : frames, {
+      duration: reduced ? Math.min(duration, 1000) : duration,
+      easing: "ease-in-out"
+    });
+    running.set(element, animation);
   }
-  function frameThrottle(fn) {
-    let pending = false;
-    return () => {
-      if (pending)
-        return;
-      pending = true;
-      requestAnimationFrame(() => {
-        pending = false;
-        fn();
-      });
-    };
+  var PREVIEW_ID = "notionai-pp-effect-preview";
+  function previewEffect(effect) {
+    document.getElementById(PREVIEW_ID)?.remove();
+    const info = EFFECTS.find((item) => item.value === effect);
+    const holder = document.createElement("div");
+    holder.id = PREVIEW_ID;
+    Object.assign(holder.style, {
+      position: "fixed",
+      left: "0",
+      right: "0",
+      top: "24px",
+      zIndex: "2147483647",
+      display: "flex",
+      justifyContent: "center",
+      pointerEvents: "none"
+    });
+    const card = document.createElement("div");
+    card.textContent = info ? t(info.zh, info.en) : effect;
+    const dark = currentTheme() === "dark";
+    Object.assign(card.style, {
+      padding: "12px 20px",
+      borderRadius: "10px",
+      background: dark ? "#202020" : "#fff",
+      color: dark ? "#f0efed" : "#37352f",
+      font: "500 14px/20px ui-sans-serif, -apple-system, system-ui, sans-serif",
+      boxShadow: dark ? "0 0 0 1px #383836, 0 12px 32px rgba(0,0,0,.5)" : "0 0 0 1px rgba(15,15,15,.05), 0 12px 32px rgba(15,15,15,.18)"
+    });
+    holder.append(card);
+    document.body.append(holder);
+    playEffect(card, effect);
+    const duration = effect === "none" ? 600 : KEYFRAMES[effect].duration;
+    setTimeout(() => holder.remove(), duration + 600);
   }
 
   // src/plugins/navigator/messages.ts
@@ -1902,13 +2049,1873 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     });
   }
 
+  // src/plugins/navigator/styles.ts
+  var NAV_CSS = `
+:host {
+  all: initial;
+  --bg: #f7f7f5; --text: #37352f; --subtle: #6b6b6b; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
+  --active: rgba(15,15,15,.1); --line: rgba(15,15,15,.28); --line-active: #37352f; --shadow: 0 10px 30px rgba(15,15,15,.18);
+  position: fixed; top: var(--nav-top, 4rem); height: var(--nav-height, calc(100vh - 12rem)); right: var(--nav-right, 20px);
+  width: 0; z-index: 2147483000; display: block; pointer-events: none;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:host([data-theme="dark"]) {
+  --bg: #252525; --text: #ebebea; --subtle: #b4b4b0; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
+  --active: rgba(255,255,255,.13); --line: rgba(255,255,255,.35); --line-active: #e6e6e4; --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+/* Like Void++: the rail is centered in the space between the chat header and the composer. */
+.rail {
+  position: absolute; top: 50%; right: 0; max-height: 100%; overflow: hidden; padding: 4px 0; transform: translateY(-50%);
+  cursor: pointer; transition: opacity .2s ease; pointer-events: auto;
+}
+.lines { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; transition: transform .2s ease; }
+.line { width: 16px; height: 2px; border-radius: 2px; background: var(--line); transition: width .2s, background .2s; }
+.line[data-role="assistant"] { width: 10px; opacity: .7; }
+.line.starred { background: #d9730d; opacity: 1; }
+.line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
+.line.starred.active { background: #d9730d; box-shadow: 0 0 3px #d9730d; }
+/* Like Void++'s dashed tick: the reply Notion AI is still writing. */
+.line.streaming { background: repeating-linear-gradient(90deg, var(--line-active) 0 3px, transparent 3px 5px); opacity: 1; animation: npp-live 1.2s ease-in-out infinite; }
+.line.streaming.active { box-shadow: none; }
+@keyframes npp-live { 50% { opacity: .45; } }
+.menu {
+  position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
+  opacity: 0; visibility: hidden; pointer-events: none; transform: translate(10px, -50%); transition: opacity .2s, visibility .2s, transform .2s;
+  overscroll-behavior: contain;
+}
+:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
+:host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
+.head { padding: 4px 10px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
+ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+button.item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
+  color: var(--subtle); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+button.item:hover { color: var(--text); background: var(--hover); }
+button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
+button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
+div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
+.label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
+:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } .line.streaming { animation: none; } }
+@media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
+`;
+  var NAV_HTML = `
+<nav class="root" aria-label="Chat outline">
+  <div class="rail" aria-hidden="true"><div class="lines"></div></div>
+  <div class="menu"><div class="head"></div><ul></ul></div>
+</nav>`;
+
+  // src/plugins/messageStars/store.ts
+  var STARS_KEY = "notionai-pp:stars:v1";
+  var STAR_META_KEY = "notionai-pp:star-meta:v1";
+  var active = false;
+  var starsActive = () => active;
+  function setStarsActive(value) {
+    if (active === value)
+      return;
+    active = value;
+    emit("starsChanged", undefined);
+  }
+  function readJson(key) {
+    try {
+      const data = safeJson(pageWindow.localStorage.getItem(key) ?? "");
+      return isRecord(data) ? data : {};
+    } catch {
+      return {};
+    }
+  }
+  function writeJson(key, value) {
+    try {
+      pageWindow.localStorage.setItem(key, JSON.stringify(value));
+    } catch {}
+  }
+  function readAll() {
+    const out = {};
+    for (const [chat, ids] of Object.entries(readJson(STARS_KEY))) {
+      if (Array.isArray(ids))
+        out[chat] = ids.filter((id) => typeof id === "string");
+    }
+    return out;
+  }
+  function readMeta() {
+    const out = {};
+    for (const [chat, value] of Object.entries(readJson(STAR_META_KEY))) {
+      if (!isRecord(value) || !isRecord(value.items))
+        continue;
+      const items = {};
+      for (const [id, item] of Object.entries(value.items)) {
+        if (isRecord(item) && typeof item.text === "string") {
+          items[id] = { role: item.role === "assistant" ? "assistant" : "user", text: item.text, at: typeof item.at === "number" ? item.at : 0 };
+        }
+      }
+      out[chat] = { title: typeof value.title === "string" ? value.title : "", items };
+    }
+    return out;
+  }
+  var starsOf = (chatId) => new Set(chatId ? readAll()[chatId] ?? [] : []);
+  var SNIPPET_MAX = 200;
+  function noteStar(chatId, id, info) {
+    if (!chatId)
+      return;
+    const meta = readMeta();
+    const chat = meta[chatId] ?? { title: "", items: {} };
+    const text = info.text.replace(/\s+/g, " ").trim().slice(0, SNIPPET_MAX);
+    const old = chat.items[id];
+    if (old && old.text === text && (!info.title || chat.title === info.title))
+      return;
+    chat.items[id] = { role: info.role, text, at: old?.at || Date.now() };
+    if (info.title)
+      chat.title = info.title;
+    meta[chatId] = chat;
+    writeJson(STAR_META_KEY, meta);
+  }
+  function dropMeta(chatId, id) {
+    const meta = readMeta();
+    if (!meta[chatId]?.items[id])
+      return;
+    delete meta[chatId].items[id];
+    if (!Object.keys(meta[chatId].items).length)
+      delete meta[chatId];
+    writeJson(STAR_META_KEY, meta);
+  }
+  function toggleStar(chatId, id, info) {
+    if (!chatId)
+      return false;
+    const all = readAll();
+    const ids = new Set(all[chatId] ?? []);
+    const starred = !ids.delete(id);
+    if (starred)
+      ids.add(id);
+    if (ids.size)
+      all[chatId] = [...ids];
+    else
+      delete all[chatId];
+    writeJson(STARS_KEY, all);
+    if (starred && info)
+      noteStar(chatId, id, info);
+    if (!starred)
+      dropMeta(chatId, id);
+    emit("starsChanged", undefined);
+    return starred;
+  }
+  function allStarredChats() {
+    const meta = readMeta();
+    return Object.entries(readAll()).map(([chatId, ids]) => ({
+      chatId,
+      title: meta[chatId]?.title ?? "",
+      stars: ids.map((id) => ({ id, meta: meta[chatId]?.items[id] ?? null }))
+    })).filter((chat) => chat.stars.length).sort((a, b) => latest(b) - latest(a));
+  }
+  var latest = (chat) => Math.max(0, ...chat.stars.map((star) => star.meta?.at ?? 0));
+
+  // src/plugins/navigator/index.ts
+  var NAV_HOST_ID = "notionai-pp-navigator";
+  var RESCAN_MS = 250;
+  var RESCAN_MAX_MS = 1200;
+  var ACTIVE_RATIO = 0.4;
+  var SCROLL_OFFSET = 72;
+  var SETTLE_MS = 150;
+  var RAIL_MARGIN = 20;
+  var SIDE_PANELS = "[role='complementary'], aside";
+  var COMPOSER = "[data-notion-chat-input-container]";
+  var SPAN_GAP = 12;
+  var MIN_SPAN = 120;
+  var settings5 = definePluginSettings({
+    showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
+    keyboard: {
+      type: "boolean",
+      label: { zh: "键盘快捷键", en: "Keyboard shortcuts" },
+      description: {
+        zh: "焦点不在输入框时：↑/↓ 上一条或下一条消息，Home/End 第一条或最后一条，⌘/Ctrl+↑/↓ 对话顶部或底部，Esc 收起目录",
+        en: "When not typing: ↑/↓ previous or next message, Home/End first or last, ⌘/Ctrl+↑/↓ top or bottom of the chat, Esc closes the outline"
+      },
+      default: true
+    },
+    effect: {
+      type: "select",
+      label: { zh: "跳转定位效果", en: "Jump effect" },
+      default: "border",
+      description: { zh: "跳转到消息后用什么方式标出它", en: "How a message is marked after jumping to it" },
+      options: EFFECTS.map((effect) => ({ value: effect.value, label: { zh: effect.zh, en: effect.en } }))
+    },
+    preview: {
+      type: "action",
+      label: { zh: "预览效果", en: "Preview effect" },
+      button: { zh: "预览", en: "Preview" },
+      run: () => previewEffect(settings5.store.effect)
+    }
+  });
+  var overlay2 = null;
+  var messages = [];
+  var signature = "";
+  var activeId = "";
+  var pinnedId = "";
+  var cleanups3 = [];
+  var panelObserver = null;
+  var watchedPanels = new Set;
+  var q = (selector) => overlay2.root.querySelector(selector);
+  function visibleMessages(all) {
+    return settings5.store.showAssistant ? all : all.filter((message) => message.role === "user");
+  }
+  function placeRail() {
+    if (!overlay2)
+      return;
+    const { width } = viewport();
+    let right = RAIL_MARGIN;
+    for (const panel of [...watchedPanels])
+      if (!panel.isConnected) {
+        panelObserver?.unobserve(panel);
+        watchedPanels.delete(panel);
+      }
+    for (const panel of document.querySelectorAll(SIDE_PANELS)) {
+      if (overlay2.host.contains(panel))
+        continue;
+      if (panelObserver && !watchedPanels.has(panel)) {
+        watchedPanels.add(panel);
+        panelObserver.observe(panel);
+      }
+      const box = visibleBox(panel);
+      if (!box || box.left < width / 2 || box.right < width - 80 || box.height < 120)
+        continue;
+      right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
+    }
+    right = Math.max(right, paneInset(width));
+    overlay2.host.style.setProperty("--nav-right", `${right}px`);
+    const span = railSpan();
+    if (span) {
+      overlay2.host.style.setProperty("--nav-top", `${span.top}px`);
+      overlay2.host.style.setProperty("--nav-height", `${span.height}px`);
+    }
+  }
+  function paneInset(width = viewport().width) {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return 0;
+    const pane = scrollParentOf(first);
+    if (pane === document.scrollingElement || pane === document.documentElement)
+      return 0;
+    const pad = parseFloat(getComputedStyle(pane).paddingRight) || 0;
+    if (pad < 120)
+      return 0;
+    const box = pane.getBoundingClientRect();
+    return Math.max(0, Math.round(width - (box.right - pad) + RAIL_MARGIN));
+  }
+  function railSpan() {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return null;
+    const { height } = viewport();
+    const pane = scrollParentOf(first);
+    const isRoot = pane === document.scrollingElement || pane === document.documentElement;
+    const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
+    const composer = document.querySelector(COMPOSER)?.getBoundingClientRect();
+    const top = Math.max(0, paneBox.top) + SPAN_GAP;
+    const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
+    return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
+  }
+  function streamingState(list, streaming = replyState() === "streaming") {
+    if (!streaming || !settings5.store.showAssistant)
+      return { id: "", pending: false };
+    const last = list[list.length - 1];
+    if (last?.role === "assistant")
+      return { id: last.id, pending: false };
+    return { id: "", pending: true };
+  }
+  function pendingLine() {
+    const line = document.createElement("div");
+    line.className = "line streaming pending";
+    line.dataset.role = "assistant";
+    return line;
+  }
+  var liveLabel = () => t("正在输出…", "Writing…");
+  function pendingItem() {
+    const item = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "item pending";
+    row.dataset.role = "assistant";
+    const mark = document.createElement("span");
+    mark.className = "mark";
+    mark.textContent = "\uD83E\uDD16";
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = liveLabel();
+    row.append(mark, label);
+    item.append(row);
+    return item;
+  }
+  var TYPING = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox']";
+  function isTyping(node) {
+    return node instanceof Element && !!node.closest(TYPING);
+  }
+  function keysBelongElsewhere(event) {
+    const active = document.activeElement;
+    if (isTyping(event.target) || isTyping(active))
+      return true;
+    if (active instanceof HTMLElement && active.id.startsWith("notionai-pp-") && active !== overlay2?.host)
+      return true;
+    return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
+  }
+  function onKeyDown(event) {
+    if (!settings5.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
+      return;
+    if (event.defaultPrevented || event.altKey || event.shiftKey)
+      return;
+    if (event.key === "Escape") {
+      if (!overlay2.host.matches(":focus-within"))
+        return;
+      overlay2.root.activeElement?.blur();
+      event.preventDefault();
+      return;
+    }
+    const arrow = event.key === "ArrowUp" || event.key === "ArrowDown";
+    const edge = event.key === "Home" || event.key === "End";
+    if (!arrow && !edge)
+      return;
+    if (keysBelongElsewhere(event))
+      return;
+    const up = event.key === "ArrowUp" || event.key === "Home";
+    if (arrow && (event.metaKey || event.ctrlKey))
+      scrollToEdge(up);
+    else if (event.metaKey || event.ctrlKey)
+      return;
+    else if (edge)
+      jump(up ? messages[0].id : messages[messages.length - 1].id);
+    else {
+      const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
+      const next = messages[Math.min(messages.length - 1, Math.max(0, index + (up ? -1 : 1)))];
+      jump(next.id);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function scrollToEdge(top) {
+    const first = messages.find((m) => m.element.isConnected)?.element;
+    if (!first)
+      return;
+    const scroller = scrollParentOf(first);
+    scroller.scrollTo({ top: top ? 0 : scroller.scrollHeight, behavior: "smooth" });
+  }
+  function build() {
+    if (!overlay2)
+      return;
+    const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
+    const stars = starsActive() ? starsOf(currentChatId()) : new Set;
+    const live = streamingState(next);
+    const nextSignature = next.map((m) => `${m.id}\x01${m.id === live.id ? "" : summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02") + `\x03${live.id}\x03${live.pending ? 1 : 0}`;
+    const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
+    messages = next;
+    overlay2.host.hidden = !next.length && !live.pending;
+    placeRail();
+    if (nextSignature === signature) {
+      if (!sameElements)
+        updateActive();
+      return;
+    }
+    signature = nextSignature;
+    q(".lines").replaceChildren(...next.map((message) => {
+      const line = document.createElement("div");
+      line.className = "line";
+      line.dataset.id = message.id;
+      line.dataset.role = message.role;
+      line.classList.toggle("starred", stars.has(message.id));
+      line.classList.toggle("streaming", message.id === live.id);
+      return line;
+    }), ...live.pending ? [pendingLine()] : []);
+    const labels = outlineLabels(next);
+    q("ul").replaceChildren(...next.map((message, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "item";
+      button.dataset.id = message.id;
+      button.dataset.role = message.role;
+      button.classList.toggle("starred", stars.has(message.id));
+      button.classList.toggle("streaming", message.id === live.id);
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "\uD83E\uDD16";
+      const label = document.createElement("span");
+      label.className = "label";
+      const writing = message.id === live.id;
+      label.textContent = writing ? liveLabel() : summarize(message.text);
+      if (!writing && labels[index] !== label.textContent)
+        label.dataset.compact = labels[index];
+      button.title = writing ? liveLabel() : summarize(message.text, 400);
+      button.append(mark, label);
+      button.addEventListener("click", () => jump(message.id));
+      const item = document.createElement("li");
+      item.append(button);
+      return item;
+    }), ...live.pending ? [pendingItem()] : []);
+    compactOverflowing();
+    activeId = "";
+    updateActive();
+  }
+  function compactOverflowing() {
+    if (!overlay2)
+      return;
+    for (const label of overlay2.root.querySelectorAll(".label[data-compact]")) {
+      if (label.scrollWidth > label.clientWidth + 1)
+        label.textContent = label.dataset.compact;
+    }
+  }
+  function updateHead() {
+    if (!overlay2)
+      return;
+    const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
+    q(".head").textContent = `${Math.min(index + 1, Math.max(messages.length, 1))} / ${messages.length}`;
+  }
+  function setActive(id) {
+    if (!overlay2 || id === activeId)
+      return;
+    activeId = id;
+    updateHead();
+    for (const node of overlay2.root.querySelectorAll("[data-id]"))
+      node.classList.toggle("active", node.dataset.id === id);
+    const lines = q(".lines");
+    const rail = q(".rail");
+    const line = lines.querySelector(".line.active");
+    if (!line)
+      return;
+    const overflow = lines.scrollHeight - rail.clientHeight;
+    const offset = overflow > 0 ? Math.min(overflow, Math.max(0, line.offsetTop - rail.clientHeight / 2)) : 0;
+    lines.style.transform = `translateY(${-offset}px)`;
+    const item = overlay2.root.querySelector(`button.item.active`);
+    item?.scrollIntoView({ block: "nearest" });
+  }
+  function updateActive() {
+    if (!messages.length)
+      return;
+    if (pinnedId && messages.some((m) => m.id === pinnedId))
+      return setActive(pinnedId);
+    const threshold = window.innerHeight * ACTIVE_RATIO;
+    let current = messages[0].id;
+    for (const message of messages) {
+      if (!message.element.isConnected)
+        continue;
+      if (message.element.getBoundingClientRect().top < threshold)
+        current = message.id;
+      else
+        break;
+    }
+    setActive(current);
+  }
+  function jumpTo(id) {
+    if (!overlay2 || !messages.some((m) => m.id === id && m.element.isConnected))
+      return false;
+    jump(id);
+    return true;
+  }
+  var ALIGN_SLACK = 4;
+  var ALIGN_TRIES = 3;
+  var cancelJump = null;
+  function jump(id) {
+    const message = messages.find((m) => m.id === id);
+    if (!message?.element.isConnected)
+      return;
+    cancelJump?.();
+    const target = message.element;
+    pinnedId = id;
+    const scroller = scrollParentOf(target);
+    const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
+    const scrollTarget = isRoot ? window : scroller;
+    const destination = () => target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
+    setActive(id);
+    let timer = 0;
+    let tries = 0;
+    const cleanup = () => {
+      clearTimeout(timer);
+      scrollTarget.removeEventListener("scroll", settle);
+      for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+        window.removeEventListener(type, userTookOver, true);
+      if (cancelJump === cleanup)
+        cancelJump = null;
+    };
+    function settle() {
+      clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!target.isConnected)
+          return cleanup();
+        const goal = Math.max(0, Math.min(destination(), scroller.scrollHeight - scroller.clientHeight));
+        if (Math.abs(goal - scroller.scrollTop) > ALIGN_SLACK && tries++ < ALIGN_TRIES) {
+          scroller.scrollTo({ top: goal, behavior: "instant" });
+          return settle();
+        }
+        cleanup();
+        playEffect(target, settings5.store.effect);
+      }, SETTLE_MS);
+    }
+    function userTookOver(event) {
+      if (event.type === "keydown" && !event.key.startsWith("Arrow") && !["PageUp", "PageDown", "Home", "End", " "].includes(event.key))
+        return;
+      if (event.type === "pointerdown" && overlay2?.host.contains(event.target))
+        return;
+      cleanup();
+    }
+    scrollTarget.addEventListener("scroll", settle, { passive: true });
+    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
+      window.addEventListener(type, userTookOver, { capture: true, passive: true });
+    cancelJump = cleanup;
+    scroller.scrollTo({ top: destination(), behavior: "smooth" });
+    settle();
+  }
+  var navigator_default = definePlugin({
+    name: "chatNavigator",
+    title: { zh: "对话目录", en: "Chat navigator" },
+    description: {
+      zh: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
+      en: "Shows a Notion-style outline beside Notion AI chats. Hover to expand it and click to jump to a prompt or reply."
+    },
+    icon: Icons.list,
+    tags: ["chat"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-08",
+    settings: settings5,
+    start() {
+      overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
+      overlay2.host.hidden = true;
+      const rescan = debounce(build, RESCAN_MS, RESCAN_MAX_MS);
+      const onScroll = frameThrottle(updateActive);
+      window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+      const onResize = frameThrottle(() => {
+        placeRail();
+        updateActive();
+      });
+      window.addEventListener("resize", onResize, { passive: true });
+      const onLayout = frameThrottle(placeRail);
+      if (typeof ResizeObserver === "function") {
+        panelObserver = new ResizeObserver(onLayout);
+        panelObserver.observe(document.documentElement);
+      }
+      document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
+      document.addEventListener("animationend", onLayout, { capture: true, passive: true });
+      document.addEventListener("keydown", onKeyDown, true);
+      const unpin = () => void (pinnedId = "");
+      for (const type of ["wheel", "touchmove", "pointerdown"])
+        window.addEventListener(type, unpin, { capture: true, passive: true });
+      cleanups3 = [
+        watchReplies(),
+        on("replyStart", () => rescan()),
+        on("replyEnd", () => rescan()),
+        () => document.removeEventListener("keydown", onKeyDown, true),
+        () => {
+          for (const type of ["wheel", "touchmove", "pointerdown"])
+            window.removeEventListener(type, unpin, { capture: true });
+        },
+        onDomChange(onLayout),
+        onDomChange(rescan),
+        () => document.removeEventListener("transitionend", onLayout, { capture: true }),
+        () => document.removeEventListener("animationend", onLayout, { capture: true }),
+        () => {
+          panelObserver?.disconnect();
+          panelObserver = null;
+          watchedPanels.clear();
+        },
+        on("starsChanged", () => {
+          signature = "";
+          build();
+        }),
+        onRouteChange(() => {
+          signature = "";
+          pinnedId = "";
+          rescan();
+        }),
+        () => rescan.cancel(),
+        () => window.removeEventListener("scroll", onScroll, { capture: true }),
+        () => window.removeEventListener("resize", onResize)
+      ];
+      build();
+    },
+    stop() {
+      cancelJump?.();
+      for (const cleanup of cleanups3.splice(0))
+        cleanup();
+      overlay2?.destroy();
+      overlay2 = null;
+      messages = [];
+      signature = "";
+      activeId = "";
+      pinnedId = "";
+    },
+    onSettingsChange() {
+      signature = "";
+      build();
+    }
+  });
+
+  // src/plugins/messageStars/list.ts
+  var LIST_MARK = "data-npp-star-list";
+  var HOST_ID2 = "notionai-pp-star-list";
+  var PANEL_TOGGLE = "[data-testid='agent-chat-side-panel-toggle']";
+  var STAR_COLOR = "#d9730d";
+  var HOVER_OPEN_MS = 120;
+  var HOVER_CLOSE_MS = 180;
+  var SCROLL_OFFSET2 = 72;
+  var CSS2 = `
+:host {
+  all: initial;
+  --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
+  --shadow: 0 10px 30px rgba(15,15,15,.16);
+  position: fixed; top: 0; left: 0; z-index: 2147483000; display: block;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:host([data-theme="dark"]) {
+  --bg: #252525; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
+  --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+.panel {
+  width: min(300px, calc(100vw - 16px)); max-height: min(420px, calc(100vh - 64px)); overflow-y: auto; padding: 6px;
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
+  overscroll-behavior: contain;
+}
+.head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; }
+.head svg { width: 14px; height: 14px; color: ${STAR_COLOR}; fill: currentColor; flex: none; }
+.count { margin-left: auto; font-variant-numeric: tabular-nums; }
+ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
+.row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
+.row:hover, .row:focus-within { background: var(--hover); }
+button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.jump { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 4px 6px 8px; font-size: 13px; text-align: left; }
+.role { flex: none; min-width: 22px; color: var(--subtle); font-size: 11px; }
+.snip { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row.missing .snip { color: var(--subtle); font-style: italic; }
+.unstar { display: flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 5px; color: ${STAR_COLOR}; }
+.unstar:hover { background: var(--hover); }
+.unstar svg { width: 14px; height: 14px; fill: currentColor; }
+.switch-view { flex: none; margin-left: 4px; padding: 1px 6px; border-radius: 5px; color: var(--subtle); font-size: 12px; }
+.switch-view:hover { background: var(--hover); color: var(--text); }
+.chat { padding: 8px 8px 2px; color: var(--subtle); font-size: 11.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat.current::after { content: " ·"; }
+.empty { padding: 6px 8px 8px; color: var(--subtle); font-size: 13px; }
+:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
+`;
+  var overlay3 = null;
+  var button = null;
+  var pinned = false;
+  var view = "chat";
+  var pending = null;
+  var pendingTimer = 0;
+  var hovering = false;
+  var hoverTimer = 0;
+  var cleanups4 = [];
+  function starEntries(ids, messages, saved = {}) {
+    const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text, loaded: true }));
+    const seen = new Set(shown.map((entry) => entry.id));
+    const rest = [...ids].filter((id) => !seen.has(id)).map((id) => ({
+      id,
+      role: saved[id]?.role ?? (id.endsWith(":assistant") ? "assistant" : "user"),
+      text: saved[id]?.text ?? null,
+      loaded: false
+    }));
+    return [...shown, ...rest];
+  }
+  function controlRow(root = document) {
+    let wrapper = root.querySelector(CHAT_SHARE)?.closest("[data-popup-origin]");
+    while (wrapper?.parentElement?.hasAttribute("data-popup-origin"))
+      wrapper = wrapper.parentElement;
+    const group = wrapper?.parentElement;
+    if (group?.parentElement)
+      return group.parentElement;
+    return root.querySelector(PANEL_TOGGLE)?.parentElement?.parentElement ?? null;
+  }
+  function placeButton(row, wrapper, ahead = []) {
+    const first = row.firstElementChild;
+    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE) && !ahead.some((mark) => first.hasAttribute(mark)) ? first : null;
+    const parent = group ?? row;
+    const before = [...parent.children].find((child) => child !== wrapper && (child.hasAttribute("data-popup-origin") || ahead.some((mark) => child.hasAttribute(mark)))) ?? null;
+    if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before)
+      parent.insertBefore(wrapper, before);
+  }
+  function headerIcon(native) {
+    const svg = svgIcon(Icons.star);
+    svg.setAttribute("stroke-width", "1.5");
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => /^x[0-9a-z]+$/.test(name));
+    if (classes?.length)
+      svg.setAttribute("class", classes.join(" "));
+    const ink = native?.style.fill || "currentColor";
+    svg.style.cssText = `width:20px;height:20px;display:block;flex-shrink:0;fill:none;stroke:${ink}`;
+    svg.dataset.ink = ink;
+    return svg;
+  }
+  function paintButton() {
+    if (!button)
+      return;
+    const count = starsOf(currentChatId()).size;
+    const svg = button.querySelector("svg");
+    if (svg) {
+      svg.style.stroke = count ? STAR_COLOR : svg.dataset.ink ?? "currentColor";
+      svg.style.fill = count ? STAR_COLOR : "none";
+    }
+    const label = count ? t(`已加星标的消息（${count}）`, `Starred messages (${count})`) : t("已加星标的消息", "Starred messages");
+    button.setAttribute("aria-label", label);
+    button.setAttribute("aria-expanded", String(isOpen()));
+    button.title = label;
+  }
+  function headerSample(row) {
+    const native = [...row.querySelectorAll("[aria-label='Pin chat'], [role='button'][aria-label]")].filter((node) => !node.closest(`[${LIST_MARK}], [data-npp-export]`));
+    return native.find((node) => node.getAttribute("aria-label") === "Pin chat") ?? native[0] ?? null;
+  }
+  function makeButton(row) {
+    const sample = headerSample(row);
+    const sampleWrapper = sample?.parentElement;
+    if (!sample || !sampleWrapper)
+      return null;
+    const wrapper = sampleWrapper.cloneNode(false);
+    wrapper.removeAttribute("data-popup-origin");
+    wrapper.setAttribute(LIST_MARK, "");
+    const btn = sample.cloneNode(false);
+    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "aria-disabled", "data-testid"])
+      btn.removeAttribute(name);
+    btn.tabIndex = 0;
+    btn.setAttribute("aria-haspopup", "dialog");
+    btn.append(headerIcon(sample.querySelector("svg")));
+    btn.addEventListener("pointerenter", () => hoverSoon(true));
+    btn.addEventListener("pointerleave", () => hoverSoon(false));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      pinned = !isOpen() || !pinned;
+      hovering = pinned;
+      render();
+    });
+    btn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ")
+        return;
+      event.preventDefault();
+      btn.click();
+    });
+    wrapper.append(btn);
+    button = btn;
+    return wrapper;
+  }
+  var isOpen = () => pinned || hovering;
+  function hoverSoon(open) {
+    clearTimeout(hoverTimer);
+    if (!open && pinned)
+      return;
+    hoverTimer = window.setTimeout(() => {
+      hovering = open;
+      render();
+    }, open ? HOVER_OPEN_MS : HOVER_CLOSE_MS);
+  }
+  function close() {
+    pinned = false;
+    hovering = false;
+    clearTimeout(hoverTimer);
+    render();
+  }
+  function scrollToMessage(id) {
+    if (jumpTo(id))
+      return true;
+    const target = collectMessages().find((m) => m.id === id)?.element;
+    if (!target)
+      return false;
+    const scroller = scrollParentOf(target);
+    const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
+    const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET2;
+    scroller.scrollTo({ top, behavior: "smooth" });
+    return true;
+  }
+  var SEEK_MS = 8000;
+  var SEEK_STEP_MS = 400;
+  function seek(chatId, id) {
+    clearTimeout(pendingTimer);
+    pending = { chatId, id, until: Date.now() + SEEK_MS };
+    const step = () => {
+      if (!pending)
+        return;
+      if (currentChatId() === pending.chatId && scrollToMessage(pending.id)) {
+        pending = null;
+        return;
+      }
+      if (Date.now() > pending.until) {
+        pending = null;
+        return;
+      }
+      if (currentChatId() === pending.chatId) {
+        const first = collectMessages()[0]?.element;
+        if (first)
+          scrollParentOf(first).scrollTo({ top: 0 });
+      }
+      pendingTimer = window.setTimeout(step, SEEK_STEP_MS);
+    };
+    step();
+  }
+  function openChat2(chatId, id) {
+    openChat(chatId);
+    seek(chatId, id);
+  }
+  function ensureOverlay() {
+    if (overlay3)
+      return overlay3;
+    overlay3 = createOverlay(HOST_ID2, CSS2, `<div class="panel" role="dialog"></div>`);
+    overlay3.host.hidden = true;
+    overlay3.host.addEventListener("pointerenter", () => hoverSoon(true));
+    overlay3.host.addEventListener("pointerleave", () => hoverSoon(false));
+    return overlay3;
+  }
+  function starRow(role, text, loaded, onJump, onUnstar) {
+    const row = document.createElement("li");
+    row.className = loaded ? "row" : "row missing";
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "jump";
+    const roleTag = document.createElement("span");
+    roleTag.className = "role";
+    roleTag.textContent = role === "user" ? t("你", "You") : "AI";
+    const snip = document.createElement("span");
+    snip.className = "snip";
+    snip.textContent = text === null ? t("（未加载，点击后自动查找）", "(not loaded; click to find it)") : summarize(text, 80);
+    if (text)
+      jump.title = summarize(text, 400);
+    jump.append(roleTag, snip);
+    jump.addEventListener("click", onJump);
+    const unstar = document.createElement("button");
+    unstar.type = "button";
+    unstar.className = "unstar";
+    unstar.title = t("取消星标", "Unstar");
+    unstar.setAttribute("aria-label", unstar.title);
+    unstar.append(svgIcon(Icons.star));
+    unstar.addEventListener("click", onUnstar);
+    row.append(jump, unstar);
+    return row;
+  }
+  function viewSwitch() {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "switch-view";
+    toggle.textContent = view === "chat" ? t("全部对话", "All chats") : t("本对话", "This chat");
+    toggle.addEventListener("click", (event) => {
+      event.stopPropagation();
+      view = view === "chat" ? "all" : "chat";
+      render();
+    });
+    return toggle;
+  }
+  function fillPanel(panel) {
+    const chatId = currentChatId();
+    const messages = collectMessages();
+    const saved = readMeta()[chatId]?.items ?? {};
+    const entries = starEntries(starsOf(chatId), messages, saved);
+    const title = currentChatTitle();
+    for (const entry of entries)
+      if (entry.loaded && entry.text)
+        noteStar(chatId, entry.id, { role: entry.role, text: entry.text, title });
+    const head = document.createElement("div");
+    head.className = "head";
+    const count = document.createElement("span");
+    count.className = "count";
+    head.append(svgIcon(Icons.star), document.createTextNode(view === "chat" ? t("已加星标", "Starred") : t("全部星标", "All stars")), count, viewSwitch());
+    const list = document.createElement("ul");
+    if (view === "chat") {
+      count.textContent = String(entries.length);
+      for (const entry of entries) {
+        list.append(starRow(entry.role, entry.text, entry.loaded, () => {
+          seek(chatId, entry.id);
+          close();
+        }, () => toggleStar(chatId, entry.id)));
+      }
+    } else {
+      const chats = allStarredChats();
+      count.textContent = String(chats.reduce((sum, chat) => sum + chat.stars.length, 0));
+      for (const chat of chats) {
+        const group = document.createElement("li");
+        group.className = chat.chatId === chatId ? "chat current" : "chat";
+        group.textContent = chat.title || t("未命名对话", "Untitled chat");
+        list.append(group);
+        for (const star of chat.stars) {
+          const here = chat.chatId === chatId ? entries.find((entry) => entry.id === star.id) : undefined;
+          const role = here?.role ?? star.meta?.role ?? (star.id.endsWith(":assistant") ? "assistant" : "user");
+          list.append(starRow(role, here?.text ?? star.meta?.text ?? null, !!here?.loaded, () => {
+            openChat2(chat.chatId, star.id);
+            close();
+          }, () => toggleStar(chat.chatId, star.id)));
+        }
+      }
+    }
+    if (list.children.length)
+      panel.replaceChildren(head, list);
+    else {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = view === "chat" ? t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.") : t("还没有任何星标。", "No stars yet.");
+      panel.replaceChildren(head, empty);
+    }
+  }
+  function render() {
+    paintButton();
+    const open = isOpen() && !!button?.isConnected;
+    if (!open) {
+      if (overlay3)
+        overlay3.host.hidden = true;
+      return;
+    }
+    const { host, root } = ensureOverlay();
+    fillPanel(root.querySelector(".panel"));
+    host.hidden = false;
+    const anchor = button.getBoundingClientRect();
+    const panel = root.querySelector(".panel");
+    const width = panel.offsetWidth || 300;
+    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+    host.style.left = `${Math.round(left)}px`;
+    host.style.top = `${Math.round(anchor.bottom + 6)}px`;
+  }
+  function sync() {
+    const row = currentChatId() ? controlRow() : null;
+    let wrapper = document.querySelector(`[${LIST_MARK}]`);
+    if (!row) {
+      wrapper?.remove();
+      button = null;
+      if (isOpen())
+        close();
+      return;
+    }
+    if (wrapper && !row.contains(wrapper)) {
+      wrapper.remove();
+      wrapper = null;
+    }
+    wrapper ??= makeButton(row);
+    if (!wrapper)
+      return;
+    placeButton(row, wrapper);
+    paintButton();
+  }
+  function startList() {
+    const resync = debounce(sync, 150, 600);
+    const onKey = (event) => event.key === "Escape" && isOpen() && close();
+    const onDown = (event) => {
+      if (!isOpen())
+        return;
+      const path = event.composedPath();
+      if (button && path.includes(button) || overlay3 && path.includes(overlay3.host))
+        return;
+      close();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onDown, true);
+    cleanups4 = [
+      onDomChange((mutations) => {
+        if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(LIST_MARK) || node.id === HOST_ID2))))
+          return;
+        resync();
+      }),
+      on("starsChanged", () => isOpen() ? render() : paintButton()),
+      onRouteChange(() => {
+        close();
+        resync();
+      }),
+      () => resync.cancel(),
+      () => document.removeEventListener("keydown", onKey, true),
+      () => document.removeEventListener("pointerdown", onDown, true)
+    ];
+    sync();
+  }
+  function stopList() {
+    for (const cleanup of cleanups4.splice(0))
+      cleanup();
+    clearTimeout(pendingTimer);
+    pending = null;
+    view = "chat";
+    clearTimeout(hoverTimer);
+    pinned = false;
+    hovering = false;
+    document.querySelector(`[${LIST_MARK}]`)?.remove();
+    button = null;
+    overlay3?.destroy();
+    overlay3 = null;
+  }
+
+  // src/plugins/exportChat/markdown.ts
+  var SKIP = "button, [role='button'], svg, style, script, noscript, template, [aria-hidden='true'], [data-npp-star], [data-npp-star-list], [data-npp-fold-bar], [data-npp-quote-mirror]";
+  var BLOCK_RE = /\bnotion-([a-z_]+)-block\b/;
+  function blockType(el) {
+    return el.className && typeof el.className === "string" ? el.className.match(BLOCK_RE)?.[1] ?? "" : "";
+  }
+  var isBold = (el) => /^(?:b|strong)$/i.test(el.tagName) || /font-weight:\s*(?:[6-9]00|bold)/.test(el.getAttribute("style") ?? "");
+  var isItalic = (el) => /^(?:i|em)$/i.test(el.tagName) || /font-style:\s*italic/.test(el.getAttribute("style") ?? "");
+  var isStrike = (el) => /^(?:s|del|strike)$/i.test(el.tagName) || /line-through/.test(el.getAttribute("style") ?? "");
+  var isInlineCode = (el) => el.tagName === "CODE" || /\binline-code\b/.test(String(el.className)) || /font-family:[^;]*mono/i.test(el.getAttribute("style") ?? "");
+  var wrap = (text, mark) => {
+    const match = text.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    return match[2] ? `${match[1]}${mark}${match[2]}${mark}${match[3]}` : text;
+  };
+  function inline(node) {
+    if (node.nodeType === Node.TEXT_NODE)
+      return (node.textContent ?? "").replace(/\u200b/g, "");
+    if (!(node instanceof HTMLElement) || node.matches(SKIP))
+      return "";
+    if (node.tagName === "BR")
+      return `
+`;
+    if (node.tagName === "IMG") {
+      const alt = node.getAttribute("alt") ?? "";
+      const src = node.getAttribute("src") ?? "";
+      return src && !src.startsWith("data:") ? `![${alt}](${src})` : alt ? `[${alt}]` : "";
+    }
+    if (isInlineCode(node)) {
+      const code = node.textContent ?? "";
+      return code ? `\`${code.replace(/`/g, "\\`")}\`` : "";
+    }
+    let text = [...node.childNodes].map(inline).join("");
+    if (node.tagName === "A") {
+      const href = node.getAttribute("href") ?? "";
+      if (href && !href.startsWith("javascript:") && text.trim())
+        text = `[${text.trim()}](${href})`;
+      return text;
+    }
+    if (isBold(node))
+      text = wrap(text, "**");
+    if (isItalic(node))
+      text = wrap(text, "*");
+    if (isStrike(node))
+      text = wrap(text, "~~");
+    return text;
+  }
+  var clean = (text) => text.replace(/[ \t]+\n/g, `
+`).replace(/\n{3,}/g, `
+
+`).trim();
+  var indent = (text, by) => text.split(`
+`).map((line) => line ? by + line : line).join(`
+`);
+  function ownText(block) {
+    const leaf = block.querySelector("[data-content-editable-leaf]");
+    if (leaf && leaf.closest("[class*='-block']") === block)
+      return inline(leaf);
+    const parts = [];
+    for (const child of block.childNodes) {
+      if (child instanceof Element && (blockType(child) || isBlockTag(child)))
+        continue;
+      if (child instanceof Element && child.querySelector("[class*='notion-'][class*='-block']")) {
+        parts.push(ownText(child));
+        continue;
+      }
+      parts.push(inline(child));
+    }
+    return parts.join("");
+  }
+  function childBlocks(block) {
+    const out = [];
+    const visit = (node) => {
+      for (const child of node.children) {
+        if (blockType(child) || isBlockTag(child))
+          out.push(child);
+        else if (!child.matches(SKIP))
+          visit(child);
+      }
+    };
+    visit(block);
+    return out;
+  }
+  var BLOCK_TAGS = /^(?:H[1-6]|P|UL|OL|LI|PRE|BLOCKQUOTE|TABLE|HR|DETAILS)$/;
+  var isBlockTag = (el) => BLOCK_TAGS.test(el.tagName);
+  function codeBlock(el) {
+    const code = el.querySelector("code, [data-content-editable-leaf]") ?? el;
+    const language = (el.querySelector("[class*='language-']")?.className.match(/language-([\w+-]+)/)?.[1] ?? el.getAttribute("data-language") ?? "").toLowerCase();
+    const text = (code.innerText ?? code.textContent ?? "").replace(/\n$/, "");
+    const fence = text.includes("```") ? "````" : "```";
+    return `${fence}${language}
+${text}
+${fence}`;
+  }
+  function tableRows(el) {
+    const rows = [...el.querySelectorAll("tr")];
+    if (rows.length)
+      return rows.map((row) => [...row.querySelectorAll("th, td")].map((cell) => clean(inline(cell)).replace(/\n/g, " ").replace(/\|/g, "\\|")));
+    return [...el.querySelectorAll("[class*='table_row']")].map((row) => [...row.children].map((cell) => clean(inline(cell)).replace(/\n/g, " ").replace(/\|/g, "\\|")));
+  }
+  function table(el) {
+    const rows = tableRows(el).filter((row) => row.length);
+    if (!rows.length)
+      return clean(inline(el));
+    const width = Math.max(...rows.map((row) => row.length));
+    const pad = (row) => [...row, ...Array(width - row.length).fill("")];
+    const line = (row) => `| ${pad(row).join(" | ")} |`;
+    return [line(rows[0]), `| ${Array(width).fill("---").join(" | ")} |`, ...rows.slice(1).map(line)].join(`
+`);
+  }
+  function list(el, ordered) {
+    return [...el.children].filter((child) => child.tagName === "LI").map((item, index) => {
+      const marker = ordered ? `${index + 1}. ` : "- ";
+      const nested = [...item.children].filter((child) => /^(?:UL|OL)$/.test(child.tagName));
+      const own = clean([...item.childNodes].filter((child) => !(child instanceof Element && nested.includes(child))).map(inline).join(""));
+      const sub = nested.map((child) => indent(list(child, child.tagName === "OL"), "   ")).join(`
+`);
+      return `${marker}${own}${sub ? `
+${sub}` : ""}`;
+    }).join(`
+`);
+  }
+  function block(el, number = 1) {
+    const type = blockType(el);
+    const nested = () => blocks(childBlocks(el));
+    switch (type || el.tagName) {
+      case "header":
+      case "H1":
+        return `# ${clean(type ? ownText(el) : inline(el))}`;
+      case "sub_header":
+      case "H2":
+        return `## ${clean(type ? ownText(el) : inline(el))}`;
+      case "sub_sub_header":
+      case "H3":
+        return `### ${clean(type ? ownText(el) : inline(el))}`;
+      case "H4":
+      case "H5":
+      case "H6":
+        return `#### ${clean(inline(el))}`;
+      case "divider":
+      case "HR":
+        return "---";
+      case "code":
+      case "PRE":
+        return codeBlock(el);
+      case "table":
+      case "TABLE":
+        return table(el);
+      case "equation":
+        return `$$
+${clean(el.textContent ?? "")}
+$$`;
+      case "UL":
+        return list(el, false);
+      case "OL":
+        return list(el, true);
+      case "BLOCKQUOTE":
+        return indent(clean(blocks(childBlocks(el)) || inline(el)), "> ").replace(/^$/gm, ">");
+      case "quote":
+      case "callout": {
+        const body = [clean(ownText(el)), nested()].filter(Boolean).join(`
+
+`);
+        return indent(body, "> ").replace(/^$/gm, ">");
+      }
+      case "bulleted_list":
+      case "numbered_list":
+      case "to_do":
+      case "toggle": {
+        const checked = el.querySelector("[role='checkbox'][aria-checked='true'], input[type='checkbox']:checked");
+        const marker = type === "numbered_list" ? `${number}. ` : type === "to_do" ? checked ? "- [x] " : "- [ ] " : "- ";
+        const sub = nested();
+        return `${marker}${clean(ownText(el))}${sub ? `
+${indent(sub, "   ")}` : ""}`;
+      }
+      case "text":
+      case "P": {
+        const sub = type ? nested() : "";
+        const own = clean(type ? ownText(el) : inline(el));
+        return [own, sub && indent(sub, "   ")].filter(Boolean).join(`
+`);
+      }
+      default: {
+        const inner = childBlocks(el);
+        return inner.length ? blocks(inner) : clean(inline(el));
+      }
+    }
+  }
+  var LIST_TYPES = new Set(["bulleted_list", "numbered_list", "to_do"]);
+  function blocks(list) {
+    const out = [];
+    let number = 0;
+    let previous = "";
+    for (const el of list) {
+      const type = blockType(el);
+      number = type === "numbered_list" ? previous === "numbered_list" ? number + 1 : 1 : 0;
+      const text = block(el, number);
+      if (!text.trim())
+        continue;
+      const together = LIST_TYPES.has(type) && LIST_TYPES.has(previous) && type === "numbered_list" === (previous === "numbered_list");
+      out.push(together ? `
+${text}` : `
+
+${text}`);
+      previous = type;
+    }
+    return out.join("").trim();
+  }
+  function toMarkdown(root) {
+    const top = childBlocks(root);
+    const text = top.length ? blocks(top) : clean(inline(root));
+    return clean(text);
+  }
+
+  // src/plugins/exportChat/index.ts
+  var EXPORT_MARK = "data-npp-export";
+  var HOST_ID3 = "notionai-pp-export-menu";
+  var settings6 = definePluginSettings({
+    headerButton: {
+      type: "boolean",
+      label: { zh: "对话右上角显示导出按钮", en: "Export button in the chat header" },
+      default: true
+    },
+    exportNow: {
+      type: "action",
+      label: { zh: "导出当前对话", en: "Export the current chat" },
+      description: { zh: "下载为 Markdown 文件", en: "Download it as a Markdown file" },
+      button: { zh: "导出", en: "Export" },
+      run: () => exportChat("md")
+    }
+  });
+  function gather(messages) {
+    const seen = new Set;
+    const out = [];
+    for (const message of messages) {
+      if (seen.has(message.id))
+        continue;
+      seen.add(message.id);
+      const markdown = message.role === "assistant" ? toMarkdown(message.element) || message.text : message.text;
+      out.push({ role: message.role, text: message.text, markdown });
+    }
+    return out;
+  }
+  var speaker = (role) => role === "user" ? t("你", "You") : "Notion AI";
+  function render2(chat, format) {
+    if (format === "json")
+      return JSON.stringify(chat, null, 2);
+    if (format === "txt") {
+      const lines = [chat.title, chat.url, ""];
+      for (const message of chat.messages)
+        lines.push(`${speaker(message.role)}:`, message.text, "", "----------", "");
+      return lines.join(`
+`).trimEnd() + `
+`;
+    }
+    const lines = [`# ${chat.title}`, "", `> ${t("导出时间", "Exported")} ${new Date(chat.exportedAt).toLocaleString()} · ${chat.url}`, ""];
+    for (const message of chat.messages) {
+      lines.push(`## ${speaker(message.role)}`, "");
+      lines.push(message.role === "user" ? message.text.split(`
+`).join(`  
+`) : message.markdown, "", "---", "");
+    }
+    return lines.join(`
+`).trimEnd() + `
+`;
+  }
+  function fileName(title, format, date = new Date) {
+    const safe = title.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "Notion AI chat";
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${safe} ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}.${format}`;
+  }
+  var MIME = { md: "text/markdown", txt: "text/plain", json: "application/json" };
+  function current() {
+    const messages = gather(collectMessages());
+    if (!messages.length)
+      return null;
+    return {
+      title: currentChatTitle() || t("Notion AI 对话", "Notion AI chat"),
+      chatId: currentChatId(),
+      url: pageWindow.location.href,
+      exportedAt: new Date().toISOString(),
+      messages
+    };
+  }
+  function nothing() {
+    showToast({ key: "export", kind: "error", title: t("没有可导出的消息", "Nothing to export"), body: t("先打开一个 Notion AI 对话", "Open a Notion AI chat first") });
+  }
+  var done = (count, copied) => showToast({
+    key: "export",
+    kind: "success",
+    title: copied ? t(`已复制 ${count} 条消息`, `Copied ${count} messages`) : t(`已导出 ${count} 条消息`, `Exported ${count} messages`),
+    body: t("只包含页面上已加载的消息；很长的对话请先往上滚到开头", "Only messages loaded on the page are included; scroll a long chat to its start first")
+  });
+  function exportChat(format) {
+    const chat = current();
+    if (!chat)
+      return nothing();
+    const blob = new Blob([render2(chat, format)], { type: `${MIME[format]};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const link = Object.assign(document.createElement("a"), { href: url, download: fileName(chat.title, format) });
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1e4);
+    done(chat.messages.length, false);
+  }
+  async function copyMarkdown() {
+    const chat = current();
+    if (!chat)
+      return nothing();
+    try {
+      await pageWindow.navigator.clipboard.writeText(render2(chat, "md"));
+      done(chat.messages.length, true);
+    } catch {
+      showToast({ key: "export", kind: "error", title: t("复制失败", "Could not copy"), body: t("浏览器没有允许写入剪贴板，改用下载吧", "The browser blocked the clipboard; download instead") });
+    }
+  }
+  var CSS3 = `
+:host {
+  all: initial;
+  --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
+  --shadow: 0 10px 30px rgba(15,15,15,.16);
+  position: fixed; top: 0; left: 0; z-index: 2147483000; display: block;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+:host([data-theme="dark"]) {
+  --bg: #252525; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
+  --shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+.menu { min-width: 200px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; color: var(--text); background: var(--bg); box-shadow: var(--shadow); }
+.head { padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; }
+button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 6px; color: inherit; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+button:hover, button:focus-visible { background: var(--hover); outline: none; }
+.ext { margin-left: auto; color: var(--subtle); font-size: 12px; }
+`;
+  var overlay4 = null;
+  var button2 = null;
+  var cleanups5 = [];
+  function closeMenu() {
+    if (overlay4)
+      overlay4.host.hidden = true;
+    button2?.setAttribute("aria-expanded", "false");
+  }
+  var menuOpen = () => !!overlay4 && !overlay4.host.hidden;
+  function openMenu() {
+    if (!button2)
+      return;
+    overlay4 ??= createOverlay(HOST_ID3, CSS3, `<div class="menu" role="menu"></div>`);
+    const menu = overlay4.root.querySelector(".menu");
+    const item = (label, ext, run) => {
+      const el = document.createElement("button");
+      el.type = "button";
+      el.setAttribute("role", "menuitem");
+      el.append(label);
+      if (ext) {
+        const tag = document.createElement("span");
+        tag.className = "ext";
+        tag.textContent = ext;
+        el.append(tag);
+      }
+      el.addEventListener("click", () => {
+        closeMenu();
+        run();
+      });
+      return el;
+    };
+    const head = document.createElement("div");
+    head.className = "head";
+    head.textContent = t("导出对话", "Export chat");
+    menu.replaceChildren(head, item("Markdown", ".md", () => exportChat("md")), item(t("纯文本", "Plain text"), ".txt", () => exportChat("txt")), item("JSON", ".json", () => exportChat("json")), item(t("复制为 Markdown", "Copy as Markdown"), "", () => void copyMarkdown()));
+    overlay4.host.hidden = false;
+    const anchor = button2.getBoundingClientRect();
+    const width = menu.offsetWidth || 200;
+    overlay4.host.style.left = `${Math.round(Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)))}px`;
+    overlay4.host.style.top = `${Math.round(anchor.bottom + 6)}px`;
+    button2.setAttribute("aria-expanded", "true");
+    menu.querySelector("button")?.focus();
+  }
+  function headerIcon2(native) {
+    const svg = svgIcon(Icons.download);
+    svg.setAttribute("stroke-width", "1.5");
+    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => /^x[0-9a-z]+$/.test(name));
+    if (classes?.length)
+      svg.setAttribute("class", classes.join(" "));
+    const ink = native?.style.fill || "currentColor";
+    svg.style.cssText = `width:20px;height:20px;display:block;flex-shrink:0;fill:none;stroke:${ink}`;
+    return svg;
+  }
+  function makeButton2(row) {
+    const sample = headerSample(row);
+    const sampleWrapper = sample?.parentElement;
+    if (!sample || !sampleWrapper)
+      return null;
+    const wrapper = sampleWrapper.cloneNode(false);
+    wrapper.removeAttribute("data-popup-origin");
+    wrapper.setAttribute(EXPORT_MARK, "");
+    const btn = sample.cloneNode(false);
+    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "aria-disabled", "data-testid"])
+      btn.removeAttribute(name);
+    const label = t("导出对话", "Export chat");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.tabIndex = 0;
+    btn.setAttribute("aria-haspopup", "menu");
+    btn.setAttribute("aria-expanded", "false");
+    btn.append(headerIcon2(sample.querySelector("svg")));
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (menuOpen())
+        closeMenu();
+      else
+        openMenu();
+    });
+    btn.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ")
+        return;
+      event.preventDefault();
+      btn.click();
+    });
+    wrapper.append(btn);
+    button2 = btn;
+    return wrapper;
+  }
+  function removeButton() {
+    document.querySelector(`[${EXPORT_MARK}]`)?.remove();
+    button2 = null;
+    closeMenu();
+  }
+  function sync2() {
+    const row = settings6.store.headerButton && currentChatId() ? controlRow() : null;
+    let wrapper = document.querySelector(`[${EXPORT_MARK}]`);
+    if (!row)
+      return removeButton();
+    if (wrapper && !row.contains(wrapper)) {
+      wrapper.remove();
+      wrapper = null;
+    }
+    wrapper ??= makeButton2(row);
+    if (wrapper)
+      placeButton(row, wrapper, [LIST_MARK]);
+  }
+  var exportChat_default = definePlugin({
+    name: "exportChat",
+    title: { zh: "导出对话", en: "Export chat" },
+    description: {
+      zh: "把当前对话导出为 Markdown、纯文本或 JSON，或复制为 Markdown。入口在对话右上角，只包含页面上已加载的消息。",
+      en: "Export the open chat as Markdown, plain text or JSON, or copy it as Markdown, from the chat's top-right controls. Only messages loaded on the page are included."
+    },
+    icon: Icons.download,
+    tags: ["chat"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-24",
+    settings: settings6,
+    start() {
+      const resync = debounce(sync2, 150, 600);
+      const onKey = (event) => {
+        if (event.key !== "Escape" || !menuOpen())
+          return;
+        event.stopPropagation();
+        closeMenu();
+        button2?.focus();
+      };
+      const onDown = (event) => {
+        if (!menuOpen())
+          return;
+        const path = event.composedPath();
+        if (button2 && path.includes(button2) || overlay4 && path.includes(overlay4.host))
+          return;
+        closeMenu();
+      };
+      document.addEventListener("keydown", onKey, true);
+      document.addEventListener("pointerdown", onDown, true);
+      cleanups5 = [
+        onDomChange((mutations) => {
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(EXPORT_MARK) || node.id === HOST_ID3))))
+            return;
+          resync();
+        }),
+        onRouteChange(() => {
+          closeMenu();
+          resync();
+        }),
+        () => resync.cancel(),
+        () => document.removeEventListener("keydown", onKey, true),
+        () => document.removeEventListener("pointerdown", onDown, true)
+      ];
+      sync2();
+    },
+    stop() {
+      for (const cleanup of cleanups5.splice(0))
+        cleanup();
+      removeButton();
+      overlay4?.destroy();
+      overlay4 = null;
+    },
+    onSettingsChange(key) {
+      if (key === "headerButton")
+        sync2();
+    }
+  });
+
+  // src/plugins/usage/composer.ts
+  var CONTAINER_SELECTOR = "[data-notion-chat-input-container]";
+  var EDITOR_SELECTOR = "[role='textbox'][contenteditable='true'], [role='textbox'][contenteditable='plaintext-only'], textarea, [contenteditable='true']";
+  var SEMANTIC_RE = /notion\s*ai|do anything with ai|ask\s+(?:notion\s+)?ai|ask anything|(?:用|向|让|问)\s*(?:notion\s*)?ai|ai\s*(?:助手|输入|对话|提问)/i;
+  var SURFACE_MIN_RADIUS = 8;
+  var MAX_CLIMB = 10;
+  var IDLE_RESCAN_MS = 500;
+  function hasSurface(node) {
+    const style = getComputedStyle(node);
+    if ((parseFloat(style.borderTopLeftRadius) || 0) < SURFACE_MIN_RADIUS)
+      return false;
+    const background = style.backgroundColor.replace(/\s+/g, "");
+    const painted = background !== "" && background !== "transparent" && background !== "rgba(0,0,0,0)";
+    return painted || style.boxShadow !== "" && style.boxShadow !== "none" || (parseFloat(style.borderTopWidth) || 0) > 0;
+  }
+  function surfaceFor(editor, limit) {
+    let best = null;
+    let node = editor;
+    for (let depth = 0;node && depth < MAX_CLIMB; depth++, node = node.parentElement) {
+      if (node === document.body)
+        break;
+      if (hasSurface(node))
+        best = node;
+      if (node === limit)
+        break;
+    }
+    return best ?? limit ?? editor;
+  }
+  var editorText = (editor) => ["placeholder", "aria-placeholder", "data-placeholder", "aria-label"].map((name) => editor.getAttribute(name) ?? "").join(" ");
+  function rank(match, box) {
+    const active = document.activeElement;
+    let score = box.bottom / Math.max(1, viewport().height) * 10 + box.width / Math.max(1, viewport().width) * 4;
+    if (active && (match.editor === active || match.editor.contains(active) || match.surface.contains(active)))
+      score += 100;
+    return score;
+  }
+  function fromContainers() {
+    const found = [];
+    for (const container of document.querySelectorAll(CONTAINER_SELECTOR)) {
+      const editor = container.querySelector(EDITOR_SELECTOR);
+      if (!editor || !visibleBox(editor))
+        continue;
+      found.push({ editor, surface: surfaceFor(editor, container) });
+    }
+    return found;
+  }
+  function fromHeuristics() {
+    const found = [];
+    for (const editor of document.querySelectorAll(EDITOR_SELECTOR)) {
+      if (!SEMANTIC_RE.test(editorText(editor)))
+        continue;
+      const box = visibleBox(editor);
+      if (!box || box.width < 180)
+        continue;
+      found.push({ editor, surface: surfaceFor(editor, null) });
+    }
+    return found;
+  }
+  function locateComposer() {
+    const candidates = fromContainers();
+    const pool = candidates.length ? candidates : fromHeuristics();
+    let best = null;
+    for (const match of pool) {
+      const box = visibleBox(match.surface);
+      if (!box)
+        continue;
+      const score = rank(match, box);
+      if (!best || score > best.score)
+        best = { ...match, box, score };
+    }
+    return best;
+  }
+
+  class ComposerTracker {
+    onChange;
+    frame = 0;
+    match = null;
+    box = null;
+    dirty = true;
+    lastScan = 0;
+    cleanups = [];
+    constructor(onChange) {
+      this.onChange = onChange;
+    }
+    start() {
+      if (this.frame)
+        return;
+      const markDirty = () => void (this.dirty = true);
+      this.cleanups = [
+        onDomChange(markDirty),
+        onRouteChange(markDirty)
+      ];
+      for (const type of ["focusin", "resize"]) {
+        window.addEventListener(type, markDirty, { capture: true, passive: true });
+        this.cleanups.push(() => window.removeEventListener(type, markDirty, { capture: true }));
+      }
+      this.dirty = true;
+      this.tick();
+    }
+    stop() {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+      for (const cleanup of this.cleanups)
+        cleanup();
+      this.cleanups = [];
+      this.match = null;
+      this.box = null;
+    }
+    get current() {
+      return this.box;
+    }
+    tick = () => {
+      this.frame = requestAnimationFrame(this.tick);
+      if (document.hidden)
+        return;
+      const now = performance.now();
+      let box = this.match ? visibleBox(this.match.surface) : null;
+      const shouldScan = this.dirty || !box && now - this.lastScan >= IDLE_RESCAN_MS;
+      if (shouldScan) {
+        this.dirty = false;
+        this.lastScan = now;
+        const next = locateComposer();
+        this.match = next;
+        box = next?.box ?? null;
+      }
+      if (sameBox(box, this.box) || !box && !this.box)
+        return;
+      this.box = box;
+      this.onChange(box);
+    };
+  }
+
+  // src/plugins/focusHighlight/index.ts
+  var PLUGIN = "FocusHighlight";
+  var STYLE_ID2 = "notionai-pp-focus-highlight";
+  var PANEL_ID = "notionai-pp-focus-panel";
+  var BOX_ATTR = "data-notionai-pp-focus-box";
+  var COLOR_VAR = "--notionai-pp-focus-color";
+  var EDITOR = "[role='textbox'][contenteditable]:not([contenteditable='false']), textarea, [contenteditable]:not([contenteditable='false'])";
+  var PROMPT_HINT = /do anything with ai|ask\s+(?:notion\s+)?ai|notion\s*ai|(?:用|向|让|问)\s*(?:notion\s*)?ai/i;
+  var RIGHT_HIT_PX = 72;
+  var RIGHT_HIT_Y_PAD_PX = 10;
+  var DOUBLE_CLICK_MS = 450;
+  var DOUBLE_CLICK_PX = 20;
+  var LEGACY_KEYS = { light: "notionAiFocusHighlightColorLight", dark: "notionAiFocusHighlightColorDark" };
+  var LEGACY_SHARED_KEY = "notionAiFocusHighlightColor";
+  var settings7 = definePluginSettings({
+    lightColor: {
+      type: "color",
+      label: { zh: "普通模式", en: "Light mode" },
+      default: "#37352f"
+    },
+    darkColor: {
+      type: "color",
+      label: { zh: "黑暗模式", en: "Dark mode" },
+      default: "#ffffff"
+    }
+  });
+  var colorKey = (theme) => theme === "dark" ? "darkColor" : "lightColor";
+  var colorFor = (theme) => settings7.store[colorKey(theme)];
+  var boxes = new Set;
+  var lastEditor = null;
+  var lastContextMenu = null;
+  var panel = null;
+  var cleanups6 = [];
+  var scheduled3 = false;
+  var hint = (editor) => ["placeholder", "aria-placeholder", "data-placeholder", "aria-label"].map((name) => editor.getAttribute(name) ?? "").join(" ");
+  function findPromptBoxes(root = document) {
+    const found = new Set;
+    for (const container of root.querySelectorAll(CONTAINER_SELECTOR)) {
+      const editor = container.querySelector(EDITOR);
+      if (editor)
+        found.add(surfaceFor(editor, container));
+    }
+    for (const editor of root.querySelectorAll(EDITOR)) {
+      if (editor.closest(CONTAINER_SELECTOR) || !PROMPT_HINT.test(hint(editor)))
+        continue;
+      found.add(surfaceFor(editor, null));
+    }
+    return [...found].filter((box) => box !== document.body && box !== document.documentElement);
+  }
+  function scan3() {
+    const next = new Set(findPromptBoxes());
+    for (const box of boxes)
+      if (!next.has(box))
+        box.removeAttribute(BOX_ATTR);
+    for (const box of next)
+      if (!box.hasAttribute(BOX_ATTR))
+        box.setAttribute(BOX_ATTR, "");
+    boxes = next;
+  }
+  function schedule2() {
+    if (scheduled3)
+      return;
+    scheduled3 = true;
+    requestAnimationFrame(() => {
+      scheduled3 = false;
+      scan3();
+    });
+  }
+  function renderStyle() {
+    let style = document.getElementById(STYLE_ID2);
+    if (!style) {
+      style = document.createElement("style");
+      style.id = STYLE_ID2;
+    }
+    if (!style.isConnected)
+      (document.head ?? document.documentElement).appendChild(style);
+    const color = colorFor(currentTheme());
+    style.textContent = `
+:root { ${COLOR_VAR}: ${color}; }
+[${BOX_ATTR}] {
+  outline: 1px solid var(${COLOR_VAR}) !important;
+  box-shadow: 0 0 0 1px var(${COLOR_VAR}), 0 0 0 4px color-mix(in srgb, var(${COLOR_VAR}) 20%, transparent) !important;
+}`;
+  }
+  var PANEL_CSS = `
+:host { all: initial; position: fixed; top: 72px; right: 24px; z-index: 2147483647; display: block;
+  --bg: #fff; --text: #37352f; --muted: #787774; --border: rgba(15,15,15,.12); --row: rgba(55,53,47,.05); --hover: rgba(55,53,47,.09);
+  font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color-scheme: light; }
+:host([data-theme="dark"]) { --bg: #202020; --text: #f5f5f5; --muted: rgba(255,255,255,.68); --border: rgba(255,255,255,.14);
+  --row: rgba(255,255,255,.07); --hover: rgba(255,255,255,.11); color-scheme: dark; }
+* { box-sizing: border-box; }
+.panel { width: 300px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text);
+  box-shadow: 0 12px 34px rgba(15,15,15,.22); }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 14px 8px; }
+h2 { margin: 0; font-size: 14px; font-weight: 650; }
+.close { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 17px; cursor: pointer; }
+.close:hover { background: var(--hover); color: var(--text); }
+.body { display: grid; gap: 8px; padding: 0 14px 14px; }
+label, .row { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: center; gap: 12px; min-height: 46px;
+  padding: 8px 10px; border-radius: 8px; background: var(--row); }
+label { cursor: pointer; } label:hover { background: var(--hover); }
+.muted { color: var(--muted); font-size: 12px; font-weight: 500; }
+.chip { position: relative; width: 52px; height: 30px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
+.value { font: 600 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+:focus-visible { outline: 2px solid #4e9cff; outline-offset: 2px; }
+`;
+  function syncPanel() {
+    if (!panel)
+      return;
+    const theme = currentTheme();
+    const color = colorFor(theme);
+    const { root } = panel;
+    root.querySelector("h2").textContent = theme === "dark" ? t("黑暗模式高亮色", "Dark Mode Highlight") : t("普通模式高亮色", "Light Mode Highlight");
+    root.querySelector("input").value = color;
+    root.querySelector(".chip").style.background = color;
+    root.querySelector(".value").textContent = color.toUpperCase();
+  }
+  function openPanel() {
+    closePanel(false);
+    panel = createOverlay(PANEL_ID, PANEL_CSS, `<div class="panel" role="dialog"><header><h2></h2><button class="close" type="button">×</button></header>
+<div class="body"><label><span class="muted"></span><span class="chip"><input type="color"></span></label>
+<div class="row"><span class="muted"></span><span class="value"></span></div></div></div>`);
+    const { root } = panel;
+    root.querySelector(".panel").setAttribute("aria-label", t("配置输入框高亮色", "Configure prompt highlight color"));
+    const [chooseLabel, currentLabel] = root.querySelectorAll(".muted");
+    chooseLabel.textContent = t("选择颜色", "Choose Color");
+    currentLabel.textContent = t("当前颜色", "Current Color");
+    const close = root.querySelector(".close");
+    close.setAttribute("aria-label", t("关闭", "Close"));
+    close.addEventListener("click", () => closePanel());
+    root.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape")
+        return;
+      event.stopPropagation();
+      closePanel();
+    });
+    const input = root.querySelector("input");
+    const apply = () => {
+      if (isHexColor(input.value))
+        settings7.store[colorKey(currentTheme())] = input.value.toLowerCase();
+    };
+    input.addEventListener("input", apply);
+    input.addEventListener("change", apply);
+    syncPanel();
+  }
+  function closePanel(refocus = true) {
+    if (!panel)
+      return;
+    panel.destroy();
+    panel = null;
+    if (refocus && lastEditor?.isConnected) {
+      try {
+        lastEditor.focus({ preventScroll: true });
+      } catch {}
+    }
+  }
+  function inRightStrip(x, y, box) {
+    const rect = box.getBoundingClientRect();
+    const dx = x - rect.right;
+    return dx > 0 && dx <= RIGHT_HIT_PX && y >= rect.top - RIGHT_HIT_Y_PAD_PX && y <= rect.bottom + RIGHT_HIT_Y_PAD_PX;
+  }
+  function onContextMenu(event) {
+    if (panel && event.composedPath().includes(panel.host))
+      return;
+    const box = [...boxes].find((b) => b.isConnected && inRightStrip(event.clientX, event.clientY, b));
+    if (!box) {
+      lastContextMenu = null;
+      return;
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const editor = box.querySelector(EDITOR);
+    if (editor instanceof HTMLElement)
+      lastEditor = editor;
+    const now = Date.now();
+    const prev = lastContextMenu;
+    if (prev && prev.box === box && now - prev.time <= DOUBLE_CLICK_MS && Math.hypot(event.clientX - prev.x, event.clientY - prev.y) <= DOUBLE_CLICK_PX) {
+      lastContextMenu = null;
+      if (panel)
+        closePanel();
+      else
+        openPanel();
+      return;
+    }
+    lastContextMenu = { box, time: now, x: event.clientX, y: event.clientY };
+  }
+  function migrateLegacy() {
+    for (const theme of ["light", "dark"]) {
+      if (getValue(PLUGIN, colorKey(theme)) !== undefined)
+        continue;
+      let legacy = null;
+      try {
+        legacy = localStorage.getItem(LEGACY_KEYS[theme]) ?? (theme === "light" ? localStorage.getItem(LEGACY_SHARED_KEY) : null);
+      } catch {}
+      const color = legacy?.trim().replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, "#$1$1$2$2$3$3");
+      if (isHexColor(color))
+        setValue(PLUGIN, colorKey(theme), color.toLowerCase());
+    }
+  }
+  var focusHighlight_default = definePlugin({
+    name: PLUGIN,
+    title: { zh: "输入框高亮色", en: "Composer highlight" },
+    description: {
+      zh: "给 Notion AI 输入框描一圈自定义颜色（普通、黑暗模式各一种）。在输入框右侧空白处连按两次右键，可打开取色面板。",
+      en: "Outlines the Notion AI composer in a color of your choice, one for light mode and one for dark. Double right-click the empty right side of the composer to pick a color."
+    },
+    icon: Icons.highlighter,
+    tags: ["composer", "appearance"],
+    enabledByDefault: true,
+    settings: settings7,
+    start() {
+      migrateLegacy();
+      renderStyle();
+      window.addEventListener("contextmenu", onContextMenu, true);
+      cleanups6 = [
+        () => window.removeEventListener("contextmenu", onContextMenu, true),
+        onDomChange(schedule2),
+        onRouteChange(schedule2),
+        onThemeChange(() => {
+          renderStyle();
+          syncPanel();
+        })
+      ];
+      scan3();
+    },
+    stop() {
+      for (const cleanup of cleanups6.splice(0))
+        cleanup();
+      closePanel(false);
+      for (const box of boxes)
+        box.removeAttribute(BOX_ATTR);
+      boxes = new Set;
+      lastContextMenu = null;
+      document.getElementById(STYLE_ID2)?.remove();
+    },
+    onSettingsChange() {
+      renderStyle();
+      syncPanel();
+    }
+  });
+
   // src/plugins/codeFold/index.ts
-  var STYLE_ID2 = "notionai-pp-code-fold";
+  var STYLE_ID3 = "notionai-pp-code-fold";
   var MARK = "data-npp-fold";
   var BAR = "data-npp-fold-bar";
   var CODE = ".notion-code-block, pre";
-  var COMPOSER = "[data-notion-chat-input-container]";
-  var settings4 = definePluginSettings({
+  var COMPOSER2 = "[data-notion-chat-input-container]";
+  var settings8 = definePluginSettings({
     height: {
       type: "number",
       label: { zh: "折叠后的高度（像素）", en: "Folded height (px)" },
@@ -1921,12 +3928,12 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   function chatCodeBlocks(root = document) {
     if (!root.querySelector(`[${USER_STEP}]`))
       return [];
-    const blocks = [...root.querySelectorAll(CODE)].filter((block) => !block.closest(COMPOSER) && !block.parentElement?.closest(CODE));
+    const blocks = [...root.querySelectorAll(CODE)].filter((block) => !block.closest(COMPOSER2) && !block.parentElement?.closest(CODE));
     return blocks;
   }
   var lineCount = (block) => (block.innerText ?? "").replace(/\n$/, "").split(`
 `).length;
-  function css(height) {
+  function css2(height) {
     return `[${MARK}="folded"] { max-height: ${height}px !important; overflow: hidden !important; position: relative;
   -webkit-mask-image: linear-gradient(#000 calc(100% - 56px), transparent); mask-image: linear-gradient(#000 calc(100% - 56px), transparent); }
 [${BAR}] { display: flex; align-items: center; justify-content: center; width: 100%; margin: 2px 0 6px; padding: 4px 0;
@@ -1956,7 +3963,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   }
   var bars = new WeakMap;
   function scan4() {
-    const limit = settings4.store.height;
+    const limit = settings8.store.height;
     const blocks = chatCodeBlocks();
     for (const block of blocks) {
       if (!block.hasAttribute(MARK)) {
@@ -1985,15 +3992,15 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       block.removeAttribute(MARK);
   }
   function applyStyle() {
-    let style = document.getElementById(STYLE_ID2);
+    let style = document.getElementById(STYLE_ID3);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID2;
+      style.id = STYLE_ID3;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css(settings4.store.height);
+    style.textContent = css2(settings8.store.height);
   }
-  var cleanups2 = [];
+  var cleanups7 = [];
   var codeFold_default = definePlugin({
     name: "codeFold",
     title: { zh: "长代码块折叠", en: "Fold long code" },
@@ -2005,11 +4012,11 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings4,
+    settings: settings8,
     start() {
       applyStyle();
       const rescan = debounce(scan4, 250, 1000);
-      cleanups2 = [
+      cleanups7 = [
         onDomChange((mutations) => {
           if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(BAR))))
             return;
@@ -2020,10 +4027,10 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
       scan4();
     },
     stop() {
-      for (const cleanup of cleanups2.splice(0))
+      for (const cleanup of cleanups7.splice(0))
         cleanup();
       removeAll();
-      document.getElementById(STYLE_ID2)?.remove();
+      document.getElementById(STYLE_ID3)?.remove();
     },
     onSettingsChange() {
       applyStyle();
@@ -2032,7 +4039,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   });
 
   // src/plugins/autoHidePanel/index.ts
-  var PANEL_TOGGLE = "[data-testid='agent-chat-side-panel-toggle']";
+  var PANEL_TOGGLE2 = "[data-testid='agent-chat-side-panel-toggle']";
   var OPEN_LABEL = /minimi[sz]e|collapse|close|hide|收起|隐藏|关闭|最小化/i;
   var STEP = "[data-agent-chat-user-step-id]";
   function panelOpen(toggle) {
@@ -2045,12 +4052,12 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     return OPEN_LABEL.test(`${toggle.getAttribute("aria-label") ?? ""} ${toggle.getAttribute("title") ?? ""}`);
   }
   var handled = new Set;
-  var cleanups3 = [];
+  var cleanups8 = [];
   function check3() {
     const chat = currentChatId() || location.pathname;
     if (handled.has(chat))
       return;
-    const toggle = document.querySelector(PANEL_TOGGLE);
+    const toggle = document.querySelector(PANEL_TOGGLE2);
     if (!toggle || !document.querySelector(STEP))
       return;
     handled.add(chat);
@@ -2070,20 +4077,20 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     updatedAt: "2026-10-10",
     start() {
       handled = new Set;
-      cleanups3 = [onDomChange(check3), onRouteChange(check3)];
+      cleanups8 = [onDomChange(check3), onRouteChange(check3)];
       check3();
     },
     stop() {
-      for (const cleanup of cleanups3.splice(0))
+      for (const cleanup of cleanups8.splice(0))
         cleanup();
     }
   });
 
   // src/plugins/composerLook/index.ts
-  var STYLE_ID3 = "notionai-pp-composer-look";
+  var STYLE_ID4 = "notionai-pp-composer-look";
   var MARK2 = "data-npp-composer-box";
-  var COMPOSER2 = "[data-notion-chat-input-container]";
-  var settings5 = definePluginSettings({
+  var COMPOSER3 = "[data-notion-chat-input-container]";
+  var settings9 = definePluginSettings({
     opacity: {
       type: "number",
       label: { zh: "背景不透明度（%）", en: "Background opacity (%)" },
@@ -2124,15 +4131,15 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     return null;
   }
   function mark() {
-    for (const container of document.querySelectorAll(COMPOSER2)) {
+    for (const container of document.querySelectorAll(COMPOSER3)) {
       const box = composerBox(container);
       if (box && !box.hasAttribute(MARK2))
         box.setAttribute(MARK2, "");
     }
-    if (settings5.store.noFade && !document.querySelector(`[${FADE_MARK}]`))
+    if (settings9.store.noFade && !document.querySelector(`[${FADE_MARK}]`))
       chatScroller()?.setAttribute(FADE_MARK, "");
   }
-  function css2(opacity, blur, noFade = false) {
+  function css3(opacity, blur, noFade = false) {
     const pct = Math.max(0, Math.min(100, Math.round(opacity)));
     const px = Math.max(0, Math.min(30, Math.round(blur)));
     const rules = [`background-color: color-mix(in srgb, var(--c-bacSec) ${pct}%, transparent) !important;`];
@@ -2143,15 +4150,15 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     return `[${MARK2}] { ${rules.join(" ")} }${fade}`;
   }
   var stopDom4 = null;
-  function apply() {
-    let style = document.getElementById(STYLE_ID3);
+  function apply2() {
+    let style = document.getElementById(STYLE_ID4);
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID3;
+      style.id = STYLE_ID4;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css2(settings5.store.opacity, settings5.store.blur, settings5.store.noFade);
-    if (!settings5.store.noFade)
+    style.textContent = css3(settings9.store.opacity, settings9.store.blur, settings9.store.noFade);
+    if (!settings9.store.noFade)
       for (const node of document.querySelectorAll(`[${FADE_MARK}]`))
         node.removeAttribute(FADE_MARK);
     mark();
@@ -2167,20 +4174,20 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
     tags: ["composer", "appearance"],
     enabledByDefault: false,
     updatedAt: "2026-10-08",
-    settings: settings5,
+    settings: settings9,
     start() {
-      apply();
+      apply2();
       stopDom4 = onDomChange(mark);
     },
     stop() {
       stopDom4?.();
       stopDom4 = null;
-      document.getElementById(STYLE_ID3)?.remove();
+      document.getElementById(STYLE_ID4)?.remove();
       for (const node of document.querySelectorAll(`[${MARK2}], [${FADE_MARK}]`))
         node.removeAttribute(MARK2), node.removeAttribute(FADE_MARK);
     },
     onSettingsChange() {
-      apply();
+      apply2();
     }
   });
 
@@ -2265,7 +4272,7 @@ label { cursor: pointer; } label:hover { background: var(--hover); }
   }
 
   // src/plugins/settings/styles.ts
-  var CSS = `
+  var CSS4 = `
 :host { all: initial; position: fixed; inset: 0; z-index: 2147483647; display: block;
   --surface-base: #ffffff; --surface-l1: #ffffff; --surface-l2: #fbfbfa; --surface-hover: rgba(55,53,47,.06);
   --surface-field: rgba(242,241,238,.6);
@@ -2509,7 +4516,7 @@ button { font: inherit; color: inherit; }
     return node;
   }
   var icon = (markup, filled = false) => svgIcon(markup, filled);
-  function button(variant, label, onclick, extra = "") {
+  function button3(variant, label, onclick, extra = "") {
     return h("button", { type: "button", class: `btn btn-${variant} ${extra}`.trim(), onclick }, label);
   }
   function iconButton(markup, label, onclick, { active = false, filled = false } = {}) {
@@ -2625,7 +4632,7 @@ button { font: inherit; color: inherit; }
         return row(title, description, input);
       }
       case "action":
-        return row(title, description, button("secondary", tr(def.button), () => {
+        return row(title, description, button3("secondary", tr(def.button), () => {
           if (def.confirm && confirm)
             confirm(tr(def.confirm), () => def.run());
           else
@@ -2636,7 +4643,7 @@ button { font: inherit; color: inherit; }
 
   // src/plugins/greetingCustomizer/manager.ts
   var MANAGER_HOST_ID = "notionai-pp-greetings";
-  var CSS2 = `${CSS}
+  var CSS5 = `${CSS4}
 .layer-root { background: var(--overlay); }
 .textarea { width: 100%; min-height: 84px; resize: vertical; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-l2);
   background: var(--surface-field); color: var(--fg-primary); font: inherit; font-size: 14px; line-height: 20px; }
@@ -2655,23 +4662,23 @@ button { font: inherit; color: inherit; }
   color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .greetings .icon-btn { flex-shrink: 0; }
 `;
-  var overlay = null;
+  var overlay5 = null;
   function closeManager() {
-    overlay?.destroy();
-    overlay = null;
+    overlay5?.destroy();
+    overlay5 = null;
   }
   function openManager(rotation, currentIndex) {
     closeManager();
-    overlay = createOverlay(MANAGER_HOST_ID, CSS2, "");
-    const { root } = overlay;
+    overlay5 = createOverlay(MANAGER_HOST_ID, CSS5, "");
+    const { root } = overlay5;
     root.addEventListener("keydown", (event) => event.key === "Escape" && closeManager());
     let greetings = loadGreetings();
     let editing = -1;
     const textarea = h("textarea", { class: "textarea", placeholder: tr2("placeholder"), maxLength: MAX_LEN, "aria-label": tr2("newSection") });
     const error = h("div", { class: "error", role: "alert" });
     const counter = h("span", { class: "counter" });
-    const submit = button("primary", tr2("add"), () => submitGreeting());
-    const cancel = button("secondary", tr2("cancelEdit"), () => {
+    const submit = button3("primary", tr2("add"), () => submitGreeting());
+    const cancel = button3("secondary", tr2("cancelEdit"), () => {
       stopEditing();
       setError(null);
       render();
@@ -2760,7 +4767,7 @@ button { font: inherit; color: inherit; }
     renderRotation();
     const close = iconButton(Icons.x, tr2("close"), closeManager);
     close.classList.add("close");
-    const sheet = h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": tr2("title") }, close, h("div", { class: "sheet-head" }, h("h3", { class: "sheet-title" }, tr2("title")), h("p", { class: "sheet-desc" }, tr2("subtitle"))), h("div", { class: "sheet-body" }, editor, h("section", { class: "section" }, listTitle, list), section(tr2("rotation"), rotationList), h("div", { class: "footer" }, button("primary", tr2("done"), closeManager))));
+    const sheet = h("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": tr2("title") }, close, h("div", { class: "sheet-head" }, h("h3", { class: "sheet-title" }, tr2("title")), h("p", { class: "sheet-desc" }, tr2("subtitle"))), h("div", { class: "sheet-body" }, editor, h("section", { class: "section" }, listTitle, list), section(tr2("rotation"), rotationList), h("div", { class: "footer" }, button3("primary", tr2("done"), closeManager))));
     const layer = h("div", { class: "layer layer-root" }, sheet);
     layer.addEventListener("mousedown", (event) => event.target === layer && closeManager());
     root.append(layer);
@@ -2846,9 +4853,9 @@ button { font: inherit; color: inherit; }
   }
 
   // src/plugins/greetingCustomizer/index.ts
-  var STYLE_ID4 = "notionai-pp-greeting-style";
+  var STYLE_ID5 = "notionai-pp-greeting-style";
   var RIGHT_DOUBLE_MS = 400;
-  var settings6 = definePluginSettings({
+  var settings10 = definePluginSettings({
     manage: {
       type: "action",
       label: { zh: "问候语列表", en: "Greetings" },
@@ -2890,14 +4897,14 @@ button { font: inherit; color: inherit; }
   var timer = null;
   var wasHome = false;
   var lastRightClick = 0;
-  var running = false;
+  var running2 = false;
   function upsertStyle(css) {
-    let style = document.getElementById(STYLE_ID4);
+    let style = document.getElementById(STYLE_ID5);
     if (style?.textContent === css)
       return;
     if (!style) {
       style = document.createElement("style");
-      style.id = STYLE_ID4;
+      style.id = STYLE_ID5;
       (document.head ?? document.documentElement).append(style);
     }
     style.textContent = css;
@@ -2914,13 +4921,13 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
 @media (max-width: 768px) { ${sel}::after { font-size: 1.25rem !important; line-height: 1.3 !important; } }
 `;
   }
-  function apply2(advance = false) {
+  function apply3(advance = false) {
     const greetings = loadGreetings();
     const current = loadIndex();
-    const index = pickIndex(greetings.length, settings6.store.order, current, advance);
+    const index = pickIndex(greetings.length, settings10.store.order, current, advance);
     if (index !== current)
       saveIndex(index);
-    const clickable = settings6.store.mode === "manual" && greetings.length > 1;
+    const clickable = settings10.store.mode === "manual" && greetings.length > 1;
     upsertStyle(buildCss(greetings[index] ?? greetings[0], clickable));
     syncTitle();
   }
@@ -2928,14 +4935,14 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const target = document.querySelector(TARGET_SELECTOR);
     if (!target)
       return;
-    const want = settings6.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
+    const want = settings10.store.mode === "manual" && loadGreetings().length > 1 ? tr2("clickHint") : null;
     if (want)
       target.title = want;
     else
       target.removeAttribute("title");
   }
   function syncTimer() {
-    const want = running && settings6.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
+    const want = running2 && settings10.store.mode === "interval" && isHomePath() && loadGreetings().length > 1;
     if (!want) {
       if (timer)
         clearInterval(timer);
@@ -2944,7 +4951,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
     if (timer)
       return;
-    timer = setInterval(() => apply2(true), settings6.store.intervalSec * 1000);
+    timer = setInterval(() => apply3(true), settings10.store.intervalSec * 1000);
   }
   function restartTimer() {
     if (timer)
@@ -2956,7 +4963,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     const home = isHomePath();
     const marked = syncMark();
     if (home && !wasHome)
-      apply2(settings6.store.mode === "refresh");
+      apply3(settings10.store.mode === "refresh");
     else if (marked)
       syncTitle();
     wasHome = home;
@@ -2966,11 +4973,11 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
   function onClick(event) {
     if (event.button !== 0 || !targetOf(event))
       return;
-    if (settings6.store.mode !== "manual" || loadGreetings().length <= 1)
+    if (settings10.store.mode !== "manual" || loadGreetings().length <= 1)
       return;
     if (String(window.getSelection?.() ?? "").trim())
       return;
-    apply2(true);
+    apply3(true);
   }
   function onContextMenu2(event) {
     if (!targetOf(event))
@@ -2986,9 +4993,9 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     }
   }
   function openGreetingManager() {
-    const store = settings6.store;
+    const store = settings10.store;
     openManager({
-      defs: { mode: settings6.def.mode, order: settings6.def.order, intervalSec: settings6.def.intervalSec },
+      defs: { mode: settings10.def.mode, order: settings10.def.order, intervalSec: settings10.def.intervalSec },
       get: (key) => store[key],
       set: (key, value) => void (store[key] = value)
     }, loadIndex);
@@ -3003,9 +5010,9 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     icon: Icons.smile,
     tags: ["home", "appearance"],
     enabledByDefault: true,
-    settings: settings6,
+    settings: settings10,
     start() {
-      running = true;
+      running2 = true;
       wasHome = false;
       lastRightClick = 0;
       document.addEventListener("click", onClick, true);
@@ -3015,7 +5022,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       check4();
     },
     stop() {
-      running = false;
+      running2 = false;
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("contextmenu", onContextMenu2, true);
       stopDom5?.();
@@ -3023,70 +5030,23 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       stopDom5 = stopRoute = null;
       syncTimer();
       clearMarks();
-      document.getElementById(STYLE_ID4)?.remove();
+      document.getElementById(STYLE_ID5)?.remove();
       closeManager();
     },
     onSettingsChange(key) {
       if (key === "index")
-        return apply2(false);
-      apply2(false);
+        return apply3(false);
+      apply3(false);
       restartTimer();
-    }
-  });
-
-  // src/plugins/hideShare/index.ts
-  var STYLE_ID5 = "notionai-pp-hide-share";
-  var CHAT_SHARE = "[data-testid='share-chat-button']";
-  var PAGE_SHARE = ".notion-topbar-share-menu";
-  var settings7 = definePluginSettings({
-    pages: {
-      type: "boolean",
-      label: { zh: "同时隐藏页面的分享按钮", en: "Also hide Share on pages" },
-      description: { zh: "普通 Notion 页面右上角的「分享」按钮", en: "The Share button at the top right of ordinary Notion pages" },
-      default: false
-    }
-  });
-  function css3(pages) {
-    const selectors = [CHAT_SHARE, ...pages ? [PAGE_SHARE] : []];
-    return `${selectors.join(", ")} { display: none !important; }`;
-  }
-  function apply3() {
-    let style = document.getElementById(STYLE_ID5);
-    if (!style) {
-      style = document.createElement("style");
-      style.id = STYLE_ID5;
-      (document.head ?? document.documentElement).append(style);
-    }
-    style.textContent = css3(settings7.store.pages);
-  }
-  var hideShare_default = definePlugin({
-    name: "hideShare",
-    title: { zh: "隐藏分享按钮", en: "Hide Share button" },
-    description: {
-      zh: "隐藏 Notion AI 对话右上角的分享按钮，避免误点把对话分享出去。也可以顺带隐藏普通页面的分享按钮。",
-      en: "Hides the Share button at the top right of Notion AI chats so a chat is not shared by accident. Can also hide Share on ordinary pages."
-    },
-    icon: Icons.shareOff,
-    tags: ["appearance"],
-    enabledByDefault: true,
-    settings: settings7,
-    start() {
-      apply3();
-    },
-    stop() {
-      document.getElementById(STYLE_ID5)?.remove();
-    },
-    onSettingsChange() {
-      apply3();
     }
   });
 
   // src/plugins/healthCheck/index.ts
   var STORE_KEY = "notionai-pp:health:v1";
-  var SETTLE_MS = 6000;
+  var SETTLE_MS2 = 6000;
   var ATTEMPTS = 3;
   var MAX_WAITS = 10;
-  var hasMessages = () => !!document.querySelector(`[${USER_STEP}]`);
+  var hasMessages2 = () => !!document.querySelector(`[${USER_STEP}]`);
   var CHECKS = [
     {
       id: "composer",
@@ -3097,26 +5057,26 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
     {
       id: "send",
       label: { zh: "发送 / 停止按钮", en: "Send / stop button" },
-      plugins: ["replyNotification", "tabStatus", "chatNavigator"],
+      plugins: ["replyNotification", "tabStatus", "chatNavigator", "chatDoneToast"],
       found: () => !!document.querySelector(`[data-testid='agent-send-message-button'], ${STOP_BUTTON}`)
     },
     {
       id: "messages",
       label: { zh: "对话里的提问", en: "Questions in the chat" },
-      plugins: ["chatNavigator", "messageStars", "widerChat"],
-      found: hasMessages
+      plugins: ["chatNavigator", "messageStars", "widerChat", "exportChat", "recentChats"],
+      found: hasMessages2
     },
     {
       id: "copy",
       label: { zh: "回复下方的「复制」按钮", en: "Copy button under replies" },
       plugins: ["chatNavigator", "messageStars"],
-      applies: () => hasMessages() && replyState() !== "streaming",
+      applies: () => hasMessages2() && replyState() !== "streaming",
       found: () => [...document.querySelectorAll("button, [role='button']")].some((button) => copyRole(button) === "assistant")
     },
     {
       id: "share",
       label: { zh: "右上角的分享按钮", en: "Share button at the top right" },
-      plugins: ["hideShare", "messageStars"],
+      plugins: ["hideShare", "messageStars", "exportChat"],
       found: () => !!document.querySelector(CHAT_SHARE)
     },
     {
@@ -3152,7 +5112,7 @@ ${clickable ? `${sel} { cursor: pointer !important; user-select: none !important
       return false;
     return !previous || [...previous.failed].sort().join() !== [...failed].sort().join();
   }
-  var CSS3 = `
+  var CSS6 = `
 :host { all: initial; }
 .note { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; width: 340px; box-sizing: border-box;
   padding: 14px 16px; border-radius: 12px; font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
@@ -3175,7 +5135,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   }
   function showNote(failed, version, notice = "") {
     closeNote();
-    note = createOverlay("notionai-pp-health", CSS3, "");
+    note = createOverlay("notionai-pp-health", CSS6, "");
     const box = document.createElement("div");
     box.className = "note";
     box.setAttribute("role", "status");
@@ -3247,7 +5207,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
       if (shouldNotify(failed, previous, affected(failed).length))
         showNote(failed, version);
       writeStored({ version, failed, at: Date.now() });
-    }, SETTLE_MS);
+    }, SETTLE_MS2);
   }
   function runNow() {
     if (!inChat()) {
@@ -3258,7 +5218,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     writeStored({ version, failed, at: Date.now() });
     showNote(failed, version);
   }
-  var settings8 = definePluginSettings({
+  var settings11 = definePluginSettings({
     runNow: {
       type: "action",
       label: { zh: "立即自检", en: "Check now" },
@@ -3276,7 +5236,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     },
     icon: Icons.activity,
     enabledByDefault: true,
-    settings: settings8,
+    settings: settings11,
     start() {
       schedule3();
       stopRoute2 = onRouteChange(() => schedule3());
@@ -3295,11 +5255,11 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
 
   // src/plugins/inputHistory/index.ts
   var STORE_KEY2 = "notionai-pp:input-history:v1";
-  var COMPOSER3 = "[data-notion-chat-input-container]";
-  var EDITOR2 = `${COMPOSER3} [contenteditable='true']`;
+  var COMPOSER4 = "[data-notion-chat-input-container]";
+  var EDITOR2 = `${COMPOSER4} [contenteditable='true']`;
   var SEND = "[data-testid='agent-send-message-button']";
   var POPUP = "[role='listbox'], [role='menu'], .notion-mention-menu";
-  var settings9 = definePluginSettings({
+  var settings12 = definePluginSettings({
     max: {
       type: "number",
       label: { zh: "最多保存条数", en: "Prompts to keep" },
@@ -3393,7 +5353,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
   function record(editor) {
     if (!editor)
       return;
-    save(remember(load(), textOf(editor), settings9.store.max));
+    save(remember(load(), textOf(editor), settings12.store.max));
     reset();
   }
   function consume(event) {
@@ -3401,7 +5361,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     event.stopImmediatePropagation();
   }
   var popupOpen = () => [...document.querySelectorAll(POPUP)].some((node) => node.getClientRects().length > 0);
-  function onKeyDown(event) {
+  function onKeyDown2(event) {
     const editor = event.target?.closest?.(EDITOR2);
     if (!editor || imeKey(event) || event.altKey)
       return;
@@ -3468,7 +5428,7 @@ p { margin: 4px 0 0; opacity: .75; font-size: 12px; }
     const send = event.target?.closest?.(SEND);
     if (!send || send.getAttribute("aria-disabled") === "true")
       return;
-    record(send.closest(COMPOSER3)?.querySelector("[contenteditable='true']") ?? null);
+    record(send.closest(COMPOSER4)?.querySelector("[contenteditable='true']") ?? null);
   }
   var COUNTER_CSS = `
 :host { all: initial; }
@@ -3480,27 +5440,27 @@ button:hover { color: #37352f; border-color: rgba(55,53,47,.3); }
 :host([data-theme="dark"]) button { background: #2f2f2f; color: rgba(255,255,255,.7); border-color: rgba(255,255,255,.14); }
 :host([data-theme="dark"]) button:hover { color: #fff; }
 `;
-  var counter = null;
+  var counter2 = null;
   var counterText = (index, total) => `${index + 1} / ${total}`;
   function showCounter(editor, index, total) {
-    const box = editor.closest(COMPOSER3)?.getBoundingClientRect();
+    const box = editor.closest(COMPOSER4)?.getBoundingClientRect();
     if (!box)
       return;
-    if (!counter) {
-      counter = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button" aria-live="polite"></button>`);
-      const button = counter.root.querySelector("button");
+    if (!counter2) {
+      counter2 = createOverlay("notionai-pp-history-counter", COUNTER_CSS, `<button type="button" aria-live="polite"></button>`);
+      const button = counter2.root.querySelector("button");
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", () => openBrowser());
     }
-    const button = counter.root.querySelector("button");
+    const button = counter2.root.querySelector("button");
     button.textContent = counterText(index, total);
     button.title = t("点击浏览全部输入历史", "Click to browse all prompts");
     button.style.left = `${box.right - 14}px`;
     button.style.top = `${box.top}px`;
   }
   function hideCounter() {
-    counter?.destroy();
-    counter = null;
+    counter2?.destroy();
+    counter2 = null;
   }
   var BROWSER_CSS = `
 :host { all: initial; --bg: #fff; --fg: #37352f; --fg2: rgba(55,53,47,.65); --line: rgba(55,53,47,.09); --hover: rgba(55,53,47,.06); --accent: #2383e2; }
@@ -3621,9 +5581,9 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
     tags: ["composer"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings9,
+    settings: settings12,
     start() {
-      document.addEventListener("keydown", onKeyDown, true);
+      document.addEventListener("keydown", onKeyDown2, true);
       document.addEventListener("click", onClick2, true);
       document.addEventListener("focusout", onFocusOut, true);
       document.addEventListener("compositionstart", onComposition, true);
@@ -3634,7 +5594,7 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
       });
     },
     stop() {
-      document.removeEventListener("keydown", onKeyDown, true);
+      document.removeEventListener("keydown", onKeyDown2, true);
       document.removeEventListener("click", onClick2, true);
       document.removeEventListener("focusout", onFocusOut, true);
       document.removeEventListener("compositionstart", onComposition, true);
@@ -3649,1094 +5609,18 @@ input { flex: 1; border: 0; outline: 0; background: transparent; color: inherit;
       if (key !== "max")
         return;
       const list = load();
-      const capped = capHistory(list, settings9.store.max);
+      const capped = capHistory(list, settings12.store.max);
       if (capped.length !== list.length)
         save(capped);
     }
   });
 
-  // src/plugins/navigator/effects.ts
-  var EFFECTS = [
-    { value: "none", zh: "无（只滚动）", en: "None (scroll only)" },
-    { value: "border", zh: "高亮边框", en: "Highlight border" },
-    { value: "pulse", zh: "脉冲光晕", en: "Pulse glow" },
-    { value: "fade", zh: "淡入淡出", en: "Fade" },
-    { value: "jiggle", zh: "经典抖动", en: "Classic jiggle" }
-  ];
-  var running2 = new WeakMap;
-  var KEYFRAMES = {
-    border: {
-      frames: [
-        { outline: "2px solid rgba(255,196,0,.95)", outlineOffset: "4px", boxShadow: "0 0 0 0 rgba(255,196,0,.45)" },
-        { outline: "2px solid rgba(255,196,0,.95)", outlineOffset: "4px", boxShadow: "0 0 0 12px rgba(255,196,0,0)", offset: 0.6 },
-        { outline: "2px solid rgba(255,196,0,0)", outlineOffset: "4px", boxShadow: "0 0 0 12px rgba(255,196,0,0)" }
-      ],
-      duration: 2000
-    },
-    pulse: {
-      frames: [
-        { boxShadow: "0 0 0 0 rgba(59,130,246,.7)" },
-        { boxShadow: "0 0 0 15px rgba(59,130,246,0)", offset: 0.5 },
-        { boxShadow: "0 0 0 0 rgba(59,130,246,0)" }
-      ],
-      duration: 2000
-    },
-    fade: {
-      frames: [
-        { backgroundColor: "rgba(59,130,246,0)" },
-        { backgroundColor: "rgba(59,130,246,.28)", offset: 0.5 },
-        { backgroundColor: "rgba(59,130,246,0)" }
-      ],
-      duration: 1500
-    },
-    jiggle: {
-      frames: [0, -3, 3, -3, 3, -3, 3, -3, 3, 0].map((x) => ({ transform: `translateX(${x}px)` })),
-      duration: 400
-    }
-  };
-  function playEffect(element, effect) {
-    if (effect === "none" || typeof element.animate !== "function")
-      return;
-    running2.get(element)?.cancel();
-    const { frames, duration } = KEYFRAMES[effect];
-    const reduced = reducedMotion();
-    const animation = element.animate(effect === "jiggle" && reduced ? KEYFRAMES.fade.frames : frames, {
-      duration: reduced ? Math.min(duration, 1000) : duration,
-      easing: "ease-in-out"
-    });
-    running2.set(element, animation);
-  }
-  var PREVIEW_ID = "notionai-pp-effect-preview";
-  function previewEffect(effect) {
-    document.getElementById(PREVIEW_ID)?.remove();
-    const info = EFFECTS.find((item) => item.value === effect);
-    const holder = document.createElement("div");
-    holder.id = PREVIEW_ID;
-    Object.assign(holder.style, {
-      position: "fixed",
-      left: "0",
-      right: "0",
-      top: "24px",
-      zIndex: "2147483647",
-      display: "flex",
-      justifyContent: "center",
-      pointerEvents: "none"
-    });
-    const card = document.createElement("div");
-    card.textContent = info ? t(info.zh, info.en) : effect;
-    const dark = currentTheme() === "dark";
-    Object.assign(card.style, {
-      padding: "12px 20px",
-      borderRadius: "10px",
-      background: dark ? "#202020" : "#fff",
-      color: dark ? "#f0efed" : "#37352f",
-      font: "500 14px/20px ui-sans-serif, -apple-system, system-ui, sans-serif",
-      boxShadow: dark ? "0 0 0 1px #383836, 0 12px 32px rgba(0,0,0,.5)" : "0 0 0 1px rgba(15,15,15,.05), 0 12px 32px rgba(15,15,15,.18)"
-    });
-    holder.append(card);
-    document.body.append(holder);
-    playEffect(card, effect);
-    const duration = effect === "none" ? 600 : KEYFRAMES[effect].duration;
-    setTimeout(() => holder.remove(), duration + 600);
-  }
-
-  // src/plugins/navigator/styles.ts
-  var NAV_CSS = `
-:host {
-  all: initial;
-  --bg: #f7f7f5; --text: #37352f; --subtle: #6b6b6b; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
-  --active: rgba(15,15,15,.1); --line: rgba(15,15,15,.28); --line-active: #37352f; --shadow: 0 10px 30px rgba(15,15,15,.18);
-  position: fixed; top: var(--nav-top, 4rem); height: var(--nav-height, calc(100vh - 12rem)); right: var(--nav-right, 20px);
-  width: 0; z-index: 2147483000; display: block; pointer-events: none;
-  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-:host([data-theme="dark"]) {
-  --bg: #252525; --text: #ebebea; --subtle: #b4b4b0; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
-  --active: rgba(255,255,255,.13); --line: rgba(255,255,255,.35); --line-active: #e6e6e4; --shadow: 0 10px 30px rgba(0,0,0,.45);
-}
-:host([hidden]) { display: none; }
-* { box-sizing: border-box; }
-/* Like Void++: the rail is centered in the space between the chat header and the composer. */
-.rail {
-  position: absolute; top: 50%; right: 0; max-height: 100%; overflow: hidden; padding: 4px 0; transform: translateY(-50%);
-  cursor: pointer; transition: opacity .2s ease; pointer-events: auto;
-}
-.lines { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; transition: transform .2s ease; }
-.line { width: 16px; height: 2px; border-radius: 2px; background: var(--line); transition: width .2s, background .2s; }
-.line[data-role="assistant"] { width: 10px; opacity: .7; }
-.line.starred { background: #d9730d; opacity: 1; }
-.line.active { width: 26px; background: var(--line-active); opacity: 1; box-shadow: 0 0 3px var(--line-active); }
-.line.starred.active { background: #d9730d; box-shadow: 0 0 3px #d9730d; }
-/* Like Void++'s dashed tick: the reply Notion AI is still writing. */
-.line.streaming { background: repeating-linear-gradient(90deg, var(--line-active) 0 3px, transparent 3px 5px); opacity: 1; animation: npp-live 1.2s ease-in-out infinite; }
-.line.streaming.active { box-shadow: none; }
-@keyframes npp-live { 50% { opacity: .45; } }
-.menu {
-  position: absolute; top: 50%; right: -8px; width: 300px; max-height: 100%; overflow-y: auto; padding: 6px; pointer-events: auto;
-  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
-  opacity: 0; visibility: hidden; pointer-events: none; transform: translate(10px, -50%); transition: opacity .2s, visibility .2s, transform .2s;
-  overscroll-behavior: contain;
-}
-:host(:hover) .menu, :host(:focus-within) .menu { opacity: 1; visibility: visible; pointer-events: auto; transform: translate(0, -50%); }
-:host(:hover) .rail, :host(:focus-within) .rail { opacity: 0; }
-.head { padding: 4px 10px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; font-variant-numeric: tabular-nums; }
-ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
-button.item {
-  display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: 6px;
-  color: var(--subtle); background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer;
-}
-button.item:hover { color: var(--text); background: var(--hover); }
-button.item.active { color: var(--text); background: var(--active); font-weight: 600; }
-button.item[data-role="assistant"] { padding-left: 22px; font-size: 12.5px; }
-div.item.pending { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 22px; color: var(--subtle); font-size: 12.5px; font-style: italic; }
-.label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.mark { flex: 0 0 auto; width: 14px; text-align: center; opacity: .75; }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
-@media (prefers-reduced-motion: reduce) { .menu, .rail, .lines, .line { transition: none; } .line.streaming { animation: none; } }
-@media (max-width: 640px) { :host { right: 8px; } .menu { width: min(300px, calc(100vw - 24px)); } }
-`;
-  var NAV_HTML = `
-<nav class="root" aria-label="Chat outline">
-  <div class="rail" aria-hidden="true"><div class="lines"></div></div>
-  <div class="menu"><div class="head"></div><ul></ul></div>
-</nav>`;
-
-  // src/plugins/messageStars/store.ts
-  var STARS_KEY = "notionai-pp:stars:v1";
-  var STAR_META_KEY = "notionai-pp:star-meta:v1";
-  var active = false;
-  var starsActive = () => active;
-  function setStarsActive(value) {
-    if (active === value)
-      return;
-    active = value;
-    emit("starsChanged", undefined);
-  }
-  function readJson(key) {
-    try {
-      const data = safeJson(pageWindow.localStorage.getItem(key) ?? "");
-      return isRecord(data) ? data : {};
-    } catch {
-      return {};
-    }
-  }
-  function writeJson(key, value) {
-    try {
-      pageWindow.localStorage.setItem(key, JSON.stringify(value));
-    } catch {}
-  }
-  function readAll() {
-    const out = {};
-    for (const [chat, ids] of Object.entries(readJson(STARS_KEY))) {
-      if (Array.isArray(ids))
-        out[chat] = ids.filter((id) => typeof id === "string");
-    }
-    return out;
-  }
-  function readMeta() {
-    const out = {};
-    for (const [chat, value] of Object.entries(readJson(STAR_META_KEY))) {
-      if (!isRecord(value) || !isRecord(value.items))
-        continue;
-      const items = {};
-      for (const [id, item] of Object.entries(value.items)) {
-        if (isRecord(item) && typeof item.text === "string") {
-          items[id] = { role: item.role === "assistant" ? "assistant" : "user", text: item.text, at: typeof item.at === "number" ? item.at : 0 };
-        }
-      }
-      out[chat] = { title: typeof value.title === "string" ? value.title : "", items };
-    }
-    return out;
-  }
-  var starsOf = (chatId) => new Set(chatId ? readAll()[chatId] ?? [] : []);
-  var SNIPPET_MAX = 200;
-  function noteStar(chatId, id, info) {
-    if (!chatId)
-      return;
-    const meta = readMeta();
-    const chat = meta[chatId] ?? { title: "", items: {} };
-    const text = info.text.replace(/\s+/g, " ").trim().slice(0, SNIPPET_MAX);
-    const old = chat.items[id];
-    if (old && old.text === text && (!info.title || chat.title === info.title))
-      return;
-    chat.items[id] = { role: info.role, text, at: old?.at || Date.now() };
-    if (info.title)
-      chat.title = info.title;
-    meta[chatId] = chat;
-    writeJson(STAR_META_KEY, meta);
-  }
-  function dropMeta(chatId, id) {
-    const meta = readMeta();
-    if (!meta[chatId]?.items[id])
-      return;
-    delete meta[chatId].items[id];
-    if (!Object.keys(meta[chatId].items).length)
-      delete meta[chatId];
-    writeJson(STAR_META_KEY, meta);
-  }
-  function toggleStar(chatId, id, info) {
-    if (!chatId)
-      return false;
-    const all = readAll();
-    const ids = new Set(all[chatId] ?? []);
-    const starred = !ids.delete(id);
-    if (starred)
-      ids.add(id);
-    if (ids.size)
-      all[chatId] = [...ids];
-    else
-      delete all[chatId];
-    writeJson(STARS_KEY, all);
-    if (starred && info)
-      noteStar(chatId, id, info);
-    if (!starred)
-      dropMeta(chatId, id);
-    emit("starsChanged", undefined);
-    return starred;
-  }
-  function allStarredChats() {
-    const meta = readMeta();
-    return Object.entries(readAll()).map(([chatId, ids]) => ({
-      chatId,
-      title: meta[chatId]?.title ?? "",
-      stars: ids.map((id) => ({ id, meta: meta[chatId]?.items[id] ?? null }))
-    })).filter((chat) => chat.stars.length).sort((a, b) => latest(b) - latest(a));
-  }
-  var latest = (chat) => Math.max(0, ...chat.stars.map((star) => star.meta?.at ?? 0));
-
-  // src/plugins/navigator/index.ts
-  var NAV_HOST_ID = "notionai-pp-navigator";
-  var RESCAN_MS = 250;
-  var RESCAN_MAX_MS = 1200;
-  var ACTIVE_RATIO = 0.4;
-  var SCROLL_OFFSET = 72;
-  var SETTLE_MS2 = 150;
-  var RAIL_MARGIN = 20;
-  var SIDE_PANELS = "[role='complementary'], aside";
-  var COMPOSER4 = "[data-notion-chat-input-container]";
-  var SPAN_GAP = 12;
-  var MIN_SPAN = 120;
-  var settings10 = definePluginSettings({
-    showAssistant: { type: "boolean", label: { zh: "目录显示 AI 回复", en: "Show AI replies" }, default: true },
-    keyboard: {
-      type: "boolean",
-      label: { zh: "键盘快捷键", en: "Keyboard shortcuts" },
-      description: {
-        zh: "焦点不在输入框时：↑/↓ 上一条或下一条消息，Home/End 第一条或最后一条，⌘/Ctrl+↑/↓ 对话顶部或底部，Esc 收起目录",
-        en: "When not typing: ↑/↓ previous or next message, Home/End first or last, ⌘/Ctrl+↑/↓ top or bottom of the chat, Esc closes the outline"
-      },
-      default: true
-    },
-    effect: {
-      type: "select",
-      label: { zh: "跳转定位效果", en: "Jump effect" },
-      default: "border",
-      description: { zh: "跳转到消息后用什么方式标出它", en: "How a message is marked after jumping to it" },
-      options: EFFECTS.map((effect) => ({ value: effect.value, label: { zh: effect.zh, en: effect.en } }))
-    },
-    preview: {
-      type: "action",
-      label: { zh: "预览效果", en: "Preview effect" },
-      button: { zh: "预览", en: "Preview" },
-      run: () => previewEffect(settings10.store.effect)
-    }
-  });
-  var overlay2 = null;
-  var messages = [];
-  var signature = "";
-  var activeId = "";
-  var pinnedId = "";
-  var cleanups4 = [];
-  var panelObserver = null;
-  var watchedPanels = new Set;
-  var q = (selector) => overlay2.root.querySelector(selector);
-  function visibleMessages(all) {
-    return settings10.store.showAssistant ? all : all.filter((message) => message.role === "user");
-  }
-  function placeRail() {
-    if (!overlay2)
-      return;
-    const { width } = viewport();
-    let right = RAIL_MARGIN;
-    for (const panel of [...watchedPanels])
-      if (!panel.isConnected) {
-        panelObserver?.unobserve(panel);
-        watchedPanels.delete(panel);
-      }
-    for (const panel of document.querySelectorAll(SIDE_PANELS)) {
-      if (overlay2.host.contains(panel))
-        continue;
-      if (panelObserver && !watchedPanels.has(panel)) {
-        watchedPanels.add(panel);
-        panelObserver.observe(panel);
-      }
-      const box = visibleBox(panel);
-      if (!box || box.left < width / 2 || box.right < width - 80 || box.height < 120)
-        continue;
-      right = Math.max(right, Math.round(width - box.left + RAIL_MARGIN));
-    }
-    right = Math.max(right, paneInset(width));
-    overlay2.host.style.setProperty("--nav-right", `${right}px`);
-    const span = railSpan();
-    if (span) {
-      overlay2.host.style.setProperty("--nav-top", `${span.top}px`);
-      overlay2.host.style.setProperty("--nav-height", `${span.height}px`);
-    }
-  }
-  function paneInset(width = viewport().width) {
-    const first = messages.find((m) => m.element.isConnected)?.element;
-    if (!first)
-      return 0;
-    const pane = scrollParentOf(first);
-    if (pane === document.scrollingElement || pane === document.documentElement)
-      return 0;
-    const pad = parseFloat(getComputedStyle(pane).paddingRight) || 0;
-    if (pad < 120)
-      return 0;
-    const box = pane.getBoundingClientRect();
-    return Math.max(0, Math.round(width - (box.right - pad) + RAIL_MARGIN));
-  }
-  function railSpan() {
-    const first = messages.find((m) => m.element.isConnected)?.element;
-    if (!first)
-      return null;
-    const { height } = viewport();
-    const pane = scrollParentOf(first);
-    const isRoot = pane === document.scrollingElement || pane === document.documentElement;
-    const paneBox = isRoot ? { top: 0, bottom: height } : pane.getBoundingClientRect();
-    const composer = document.querySelector(COMPOSER4)?.getBoundingClientRect();
-    const top = Math.max(0, paneBox.top) + SPAN_GAP;
-    const bottom = Math.min(paneBox.bottom, composer && composer.height ? composer.top : height) - SPAN_GAP;
-    return bottom - top >= MIN_SPAN ? { top: Math.round(top), height: Math.round(bottom - top) } : { top: Math.round(top), height: MIN_SPAN };
-  }
-  function streamingState(list, streaming = replyState() === "streaming") {
-    if (!streaming || !settings10.store.showAssistant)
-      return { id: "", pending: false };
-    const last = list[list.length - 1];
-    if (last?.role === "assistant")
-      return { id: last.id, pending: false };
-    return { id: "", pending: true };
-  }
-  function pendingLine() {
-    const line = document.createElement("div");
-    line.className = "line streaming pending";
-    line.dataset.role = "assistant";
-    return line;
-  }
-  var liveLabel = () => t("正在输出…", "Writing…");
-  function pendingItem() {
-    const item = document.createElement("li");
-    const row = document.createElement("div");
-    row.className = "item pending";
-    row.dataset.role = "assistant";
-    const mark = document.createElement("span");
-    mark.className = "mark";
-    mark.textContent = "\uD83E\uDD16";
-    const label = document.createElement("span");
-    label.className = "label";
-    label.textContent = liveLabel();
-    row.append(mark, label);
-    item.append(row);
-    return item;
-  }
-  var TYPING = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='textbox']";
-  function isTyping(node) {
-    return node instanceof Element && !!node.closest(TYPING);
-  }
-  function keysBelongElsewhere(event) {
-    const active = document.activeElement;
-    if (isTyping(event.target) || isTyping(active))
-      return true;
-    if (active instanceof HTMLElement && active.id.startsWith("notionai-pp-") && active !== overlay2?.host)
-      return true;
-    return !!document.querySelector("[role='dialog'][aria-modal='true'], [role='menu'], [role='listbox']");
-  }
-  function onKeyDown2(event) {
-    if (!settings10.store.keyboard || !overlay2 || overlay2.host.hidden || !messages.length || !isAiRoute())
-      return;
-    if (event.defaultPrevented || event.altKey || event.shiftKey)
-      return;
-    if (event.key === "Escape") {
-      if (!overlay2.host.matches(":focus-within"))
-        return;
-      overlay2.root.activeElement?.blur();
-      event.preventDefault();
-      return;
-    }
-    const arrow = event.key === "ArrowUp" || event.key === "ArrowDown";
-    const edge = event.key === "Home" || event.key === "End";
-    if (!arrow && !edge)
-      return;
-    if (keysBelongElsewhere(event))
-      return;
-    const up = event.key === "ArrowUp" || event.key === "Home";
-    if (arrow && (event.metaKey || event.ctrlKey))
-      scrollToEdge(up);
-    else if (event.metaKey || event.ctrlKey)
-      return;
-    else if (edge)
-      jump(up ? messages[0].id : messages[messages.length - 1].id);
-    else {
-      const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
-      const next = messages[Math.min(messages.length - 1, Math.max(0, index + (up ? -1 : 1)))];
-      jump(next.id);
-    }
-    event.preventDefault();
-    event.stopPropagation();
-  }
-  function scrollToEdge(top) {
-    const first = messages.find((m) => m.element.isConnected)?.element;
-    if (!first)
-      return;
-    const scroller = scrollParentOf(first);
-    scroller.scrollTo({ top: top ? 0 : scroller.scrollHeight, behavior: "smooth" });
-  }
-  function build() {
-    if (!overlay2)
-      return;
-    const next = isAiRoute() ? visibleMessages(collectMessages()) : [];
-    const stars = starsActive() ? starsOf(currentChatId()) : new Set;
-    const live = streamingState(next);
-    const nextSignature = next.map((m) => `${m.id}\x01${m.id === live.id ? "" : summarize(m.text)}\x01${stars.has(m.id) ? 1 : 0}`).join("\x02") + `\x03${live.id}\x03${live.pending ? 1 : 0}`;
-    const sameElements = next.length === messages.length && next.every((m, i) => m.element === messages[i].element);
-    messages = next;
-    overlay2.host.hidden = !next.length && !live.pending;
-    placeRail();
-    if (nextSignature === signature) {
-      if (!sameElements)
-        updateActive();
-      return;
-    }
-    signature = nextSignature;
-    q(".lines").replaceChildren(...next.map((message) => {
-      const line = document.createElement("div");
-      line.className = "line";
-      line.dataset.id = message.id;
-      line.dataset.role = message.role;
-      line.classList.toggle("starred", stars.has(message.id));
-      line.classList.toggle("streaming", message.id === live.id);
-      return line;
-    }), ...live.pending ? [pendingLine()] : []);
-    const labels = outlineLabels(next);
-    q("ul").replaceChildren(...next.map((message, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "item";
-      button.dataset.id = message.id;
-      button.dataset.role = message.role;
-      button.classList.toggle("starred", stars.has(message.id));
-      button.classList.toggle("streaming", message.id === live.id);
-      const mark = document.createElement("span");
-      mark.className = "mark";
-      mark.textContent = stars.has(message.id) ? "⭐" : message.role === "user" ? "❓" : "\uD83E\uDD16";
-      const label = document.createElement("span");
-      label.className = "label";
-      const writing = message.id === live.id;
-      label.textContent = writing ? liveLabel() : summarize(message.text);
-      if (!writing && labels[index] !== label.textContent)
-        label.dataset.compact = labels[index];
-      button.title = writing ? liveLabel() : summarize(message.text, 400);
-      button.append(mark, label);
-      button.addEventListener("click", () => jump(message.id));
-      const item = document.createElement("li");
-      item.append(button);
-      return item;
-    }), ...live.pending ? [pendingItem()] : []);
-    compactOverflowing();
-    activeId = "";
-    updateActive();
-  }
-  function compactOverflowing() {
-    if (!overlay2)
-      return;
-    for (const label of overlay2.root.querySelectorAll(".label[data-compact]")) {
-      if (label.scrollWidth > label.clientWidth + 1)
-        label.textContent = label.dataset.compact;
-    }
-  }
-  function updateHead() {
-    if (!overlay2)
-      return;
-    const index = Math.max(0, messages.findIndex((m) => m.id === activeId));
-    q(".head").textContent = `${Math.min(index + 1, Math.max(messages.length, 1))} / ${messages.length}`;
-  }
-  function setActive(id) {
-    if (!overlay2 || id === activeId)
-      return;
-    activeId = id;
-    updateHead();
-    for (const node of overlay2.root.querySelectorAll("[data-id]"))
-      node.classList.toggle("active", node.dataset.id === id);
-    const lines = q(".lines");
-    const rail = q(".rail");
-    const line = lines.querySelector(".line.active");
-    if (!line)
-      return;
-    const overflow = lines.scrollHeight - rail.clientHeight;
-    const offset = overflow > 0 ? Math.min(overflow, Math.max(0, line.offsetTop - rail.clientHeight / 2)) : 0;
-    lines.style.transform = `translateY(${-offset}px)`;
-    const item = overlay2.root.querySelector(`button.item.active`);
-    item?.scrollIntoView({ block: "nearest" });
-  }
-  function updateActive() {
-    if (!messages.length)
-      return;
-    if (pinnedId && messages.some((m) => m.id === pinnedId))
-      return setActive(pinnedId);
-    const threshold = window.innerHeight * ACTIVE_RATIO;
-    let current = messages[0].id;
-    for (const message of messages) {
-      if (!message.element.isConnected)
-        continue;
-      if (message.element.getBoundingClientRect().top < threshold)
-        current = message.id;
-      else
-        break;
-    }
-    setActive(current);
-  }
-  function jumpTo(id) {
-    if (!overlay2 || !messages.some((m) => m.id === id && m.element.isConnected))
-      return false;
-    jump(id);
-    return true;
-  }
-  var ALIGN_SLACK = 4;
-  var ALIGN_TRIES = 3;
-  var cancelJump = null;
-  function jump(id) {
-    const message = messages.find((m) => m.id === id);
-    if (!message?.element.isConnected)
-      return;
-    cancelJump?.();
-    const target = message.element;
-    pinnedId = id;
-    const scroller = scrollParentOf(target);
-    const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
-    const scrollTarget = isRoot ? window : scroller;
-    const destination = () => target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET;
-    setActive(id);
-    let timer = 0;
-    let tries = 0;
-    const cleanup = () => {
-      clearTimeout(timer);
-      scrollTarget.removeEventListener("scroll", settle);
-      for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
-        window.removeEventListener(type, userTookOver, true);
-      if (cancelJump === cleanup)
-        cancelJump = null;
-    };
-    function settle() {
-      clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        if (!target.isConnected)
-          return cleanup();
-        const goal = Math.max(0, Math.min(destination(), scroller.scrollHeight - scroller.clientHeight));
-        if (Math.abs(goal - scroller.scrollTop) > ALIGN_SLACK && tries++ < ALIGN_TRIES) {
-          scroller.scrollTo({ top: goal, behavior: "instant" });
-          return settle();
-        }
-        cleanup();
-        playEffect(target, settings10.store.effect);
-      }, SETTLE_MS2);
-    }
-    function userTookOver(event) {
-      if (event.type === "keydown" && !event.key.startsWith("Arrow") && !["PageUp", "PageDown", "Home", "End", " "].includes(event.key))
-        return;
-      if (event.type === "pointerdown" && overlay2?.host.contains(event.target))
-        return;
-      cleanup();
-    }
-    scrollTarget.addEventListener("scroll", settle, { passive: true });
-    for (const type of ["wheel", "touchstart", "keydown", "pointerdown"])
-      window.addEventListener(type, userTookOver, { capture: true, passive: true });
-    cancelJump = cleanup;
-    scroller.scrollTo({ top: destination(), behavior: "smooth" });
-    settle();
-  }
-  var navigator_default = definePlugin({
-    name: "chatNavigator",
-    title: { zh: "对话目录", en: "Chat navigator" },
-    description: {
-      zh: "在 Notion AI 对话右侧显示 Notion 风格目录，悬停展开，点击跳到对应提问或回复。",
-      en: "Shows a Notion-style outline beside Notion AI chats. Hover to expand it and click to jump to a prompt or reply."
-    },
-    icon: Icons.list,
-    tags: ["chat"],
-    enabledByDefault: true,
-    updatedAt: "2026-10-08",
-    settings: settings10,
-    start() {
-      overlay2 = createOverlay(NAV_HOST_ID, NAV_CSS, NAV_HTML);
-      overlay2.host.hidden = true;
-      const rescan = debounce(build, RESCAN_MS, RESCAN_MAX_MS);
-      const onScroll = frameThrottle(updateActive);
-      window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-      const onResize = frameThrottle(() => {
-        placeRail();
-        updateActive();
-      });
-      window.addEventListener("resize", onResize, { passive: true });
-      const onLayout = frameThrottle(placeRail);
-      if (typeof ResizeObserver === "function") {
-        panelObserver = new ResizeObserver(onLayout);
-        panelObserver.observe(document.documentElement);
-      }
-      document.addEventListener("transitionend", onLayout, { capture: true, passive: true });
-      document.addEventListener("animationend", onLayout, { capture: true, passive: true });
-      document.addEventListener("keydown", onKeyDown2, true);
-      const unpin = () => void (pinnedId = "");
-      for (const type of ["wheel", "touchmove", "pointerdown"])
-        window.addEventListener(type, unpin, { capture: true, passive: true });
-      cleanups4 = [
-        watchReplies(),
-        on("replyStart", () => rescan()),
-        on("replyEnd", () => rescan()),
-        () => document.removeEventListener("keydown", onKeyDown2, true),
-        () => {
-          for (const type of ["wheel", "touchmove", "pointerdown"])
-            window.removeEventListener(type, unpin, { capture: true });
-        },
-        onDomChange(onLayout),
-        onDomChange(rescan),
-        () => document.removeEventListener("transitionend", onLayout, { capture: true }),
-        () => document.removeEventListener("animationend", onLayout, { capture: true }),
-        () => {
-          panelObserver?.disconnect();
-          panelObserver = null;
-          watchedPanels.clear();
-        },
-        on("starsChanged", () => {
-          signature = "";
-          build();
-        }),
-        onRouteChange(() => {
-          signature = "";
-          pinnedId = "";
-          rescan();
-        }),
-        () => rescan.cancel(),
-        () => window.removeEventListener("scroll", onScroll, { capture: true }),
-        () => window.removeEventListener("resize", onResize)
-      ];
-      build();
-    },
-    stop() {
-      cancelJump?.();
-      for (const cleanup of cleanups4.splice(0))
-        cleanup();
-      overlay2?.destroy();
-      overlay2 = null;
-      messages = [];
-      signature = "";
-      activeId = "";
-      pinnedId = "";
-    },
-    onSettingsChange() {
-      signature = "";
-      build();
-    }
-  });
-
-  // src/plugins/messageStars/list.ts
-  var LIST_MARK = "data-npp-star-list";
-  var HOST_ID = "notionai-pp-star-list";
-  var PANEL_TOGGLE2 = "[data-testid='agent-chat-side-panel-toggle']";
-  var STAR_COLOR = "#d9730d";
-  var HOVER_OPEN_MS = 120;
-  var HOVER_CLOSE_MS = 180;
-  var SCROLL_OFFSET2 = 72;
-  var CSS4 = `
-:host {
-  all: initial;
-  --bg: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1); --hover: rgba(15,15,15,.06);
-  --shadow: 0 10px 30px rgba(15,15,15,.16);
-  position: fixed; top: 0; left: 0; z-index: 2147483000; display: block;
-  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-:host([data-theme="dark"]) {
-  --bg: #252525; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1); --hover: rgba(255,255,255,.08);
-  --shadow: 0 10px 30px rgba(0,0,0,.45);
-}
-:host([hidden]) { display: none; }
-* { box-sizing: border-box; }
-.panel {
-  width: min(300px, calc(100vw - 16px)); max-height: min(420px, calc(100vh - 64px)); overflow-y: auto; padding: 6px;
-  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
-  overscroll-behavior: contain;
-}
-.head { display: flex; align-items: center; gap: 6px; padding: 4px 8px 6px; color: var(--subtle); font-size: 12px; line-height: 1.4; letter-spacing: -.2px; }
-.head svg { width: 14px; height: 14px; color: ${STAR_COLOR}; fill: currentColor; flex: none; }
-.count { margin-left: auto; font-variant-numeric: tabular-nums; }
-ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
-.row { display: flex; align-items: center; gap: 2px; border-radius: 6px; }
-.row:hover, .row:focus-within { background: var(--hover); }
-button { border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
-.jump { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 6px 4px 6px 8px; font-size: 13px; text-align: left; }
-.role { flex: none; min-width: 22px; color: var(--subtle); font-size: 11px; }
-.snip { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.row.missing .snip { color: var(--subtle); font-style: italic; }
-.unstar { display: flex; flex: none; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 5px; color: ${STAR_COLOR}; }
-.unstar:hover { background: var(--hover); }
-.unstar svg { width: 14px; height: 14px; fill: currentColor; }
-.switch-view { flex: none; margin-left: 4px; padding: 1px 6px; border-radius: 5px; color: var(--subtle); font-size: 12px; }
-.switch-view:hover { background: var(--hover); color: var(--text); }
-.chat { padding: 8px 8px 2px; color: var(--subtle); font-size: 11.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.chat.current::after { content: " ·"; }
-.empty { padding: 6px 8px 8px; color: var(--subtle); font-size: 13px; }
-:focus-visible { outline: 2px solid #4e9cff; outline-offset: 1px; }
-`;
-  var overlay3 = null;
-  var button2 = null;
-  var pinned = false;
-  var view = "chat";
-  var pending = null;
-  var pendingTimer = 0;
-  var hovering = false;
-  var hoverTimer = 0;
-  var cleanups5 = [];
-  function starEntries(ids, messages, saved = {}) {
-    const shown = messages.filter((m) => ids.has(m.id)).map((m) => ({ id: m.id, role: m.role, text: m.text, loaded: true }));
-    const seen = new Set(shown.map((entry) => entry.id));
-    const rest = [...ids].filter((id) => !seen.has(id)).map((id) => ({
-      id,
-      role: saved[id]?.role ?? (id.endsWith(":assistant") ? "assistant" : "user"),
-      text: saved[id]?.text ?? null,
-      loaded: false
-    }));
-    return [...shown, ...rest];
-  }
-  function controlRow(root = document) {
-    let wrapper = root.querySelector(CHAT_SHARE)?.closest("[data-popup-origin]");
-    while (wrapper?.parentElement?.hasAttribute("data-popup-origin"))
-      wrapper = wrapper.parentElement;
-    const group = wrapper?.parentElement;
-    if (group?.parentElement)
-      return group.parentElement;
-    return root.querySelector(PANEL_TOGGLE2)?.parentElement?.parentElement ?? null;
-  }
-  function placeButton(row, wrapper) {
-    const first = row.firstElementChild;
-    const group = first && first !== wrapper && !first.hasAttribute("data-popup-origin") && !!first.querySelector("[data-popup-origin]") && !first.querySelector(PANEL_TOGGLE2) ? first : null;
-    const parent = group ?? row;
-    const before = [...parent.children].find((child) => child !== wrapper && child.hasAttribute("data-popup-origin")) ?? null;
-    if (wrapper.parentElement !== parent || wrapper.nextElementSibling !== before)
-      parent.insertBefore(wrapper, before);
-  }
-  function headerIcon(native) {
-    const svg = svgIcon(Icons.star);
-    svg.setAttribute("stroke-width", "1.5");
-    const classes = native?.getAttribute("class")?.split(/\s+/).filter((name) => /^x[0-9a-z]+$/.test(name));
-    if (classes?.length)
-      svg.setAttribute("class", classes.join(" "));
-    const ink = native?.style.fill || "currentColor";
-    svg.style.cssText = `width:20px;height:20px;display:block;flex-shrink:0;fill:none;stroke:${ink}`;
-    svg.dataset.ink = ink;
-    return svg;
-  }
-  function paintButton() {
-    if (!button2)
-      return;
-    const count = starsOf(currentChatId()).size;
-    const svg = button2.querySelector("svg");
-    if (svg) {
-      svg.style.stroke = count ? STAR_COLOR : svg.dataset.ink ?? "currentColor";
-      svg.style.fill = count ? STAR_COLOR : "none";
-    }
-    const label = count ? t(`已加星标的消息（${count}）`, `Starred messages (${count})`) : t("已加星标的消息", "Starred messages");
-    button2.setAttribute("aria-label", label);
-    button2.setAttribute("aria-expanded", String(isOpen()));
-    button2.title = label;
-  }
-  function makeButton(row) {
-    const sample = row.querySelector("[aria-label='Pin chat'], [role='button'][aria-label]");
-    const sampleWrapper = sample?.parentElement;
-    if (!sample || !sampleWrapper)
-      return null;
-    const wrapper = sampleWrapper.cloneNode(false);
-    wrapper.removeAttribute("data-popup-origin");
-    wrapper.setAttribute(LIST_MARK, "");
-    const btn = sample.cloneNode(false);
-    for (const name of ["id", "aria-pressed", "aria-expanded", "aria-haspopup", "aria-disabled", "data-testid"])
-      btn.removeAttribute(name);
-    btn.tabIndex = 0;
-    btn.setAttribute("aria-haspopup", "dialog");
-    btn.append(headerIcon(sample.querySelector("svg")));
-    btn.addEventListener("pointerenter", () => hoverSoon(true));
-    btn.addEventListener("pointerleave", () => hoverSoon(false));
-    btn.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      pinned = !isOpen() || !pinned;
-      hovering = pinned;
-      render();
-    });
-    btn.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ")
-        return;
-      event.preventDefault();
-      btn.click();
-    });
-    wrapper.append(btn);
-    button2 = btn;
-    return wrapper;
-  }
-  var isOpen = () => pinned || hovering;
-  function hoverSoon(open) {
-    clearTimeout(hoverTimer);
-    if (!open && pinned)
-      return;
-    hoverTimer = window.setTimeout(() => {
-      hovering = open;
-      render();
-    }, open ? HOVER_OPEN_MS : HOVER_CLOSE_MS);
-  }
-  function close() {
-    pinned = false;
-    hovering = false;
-    clearTimeout(hoverTimer);
-    render();
-  }
-  function scrollToMessage(id) {
-    if (jumpTo(id))
-      return true;
-    const target = collectMessages().find((m) => m.id === id)?.element;
-    if (!target)
-      return false;
-    const scroller = scrollParentOf(target);
-    const isRoot = scroller === document.scrollingElement || scroller === document.documentElement;
-    const top = target.getBoundingClientRect().top - (isRoot ? 0 : scroller.getBoundingClientRect().top) + scroller.scrollTop - SCROLL_OFFSET2;
-    scroller.scrollTo({ top, behavior: "smooth" });
-    return true;
-  }
-  var SEEK_MS = 8000;
-  var SEEK_STEP_MS = 400;
-  function seek(chatId, id) {
-    clearTimeout(pendingTimer);
-    pending = { chatId, id, until: Date.now() + SEEK_MS };
-    const step = () => {
-      if (!pending)
-        return;
-      if (currentChatId() === pending.chatId && scrollToMessage(pending.id)) {
-        pending = null;
-        return;
-      }
-      if (Date.now() > pending.until) {
-        pending = null;
-        return;
-      }
-      if (currentChatId() === pending.chatId) {
-        const first = collectMessages()[0]?.element;
-        if (first)
-          scrollParentOf(first).scrollTo({ top: 0 });
-      }
-      pendingTimer = window.setTimeout(step, SEEK_STEP_MS);
-    };
-    step();
-  }
-  function chatUrl(chatId, href = location.href) {
-    const url = new URL(href);
-    url.searchParams.set("t", chatId);
-    return url.toString();
-  }
-  function openChat(chatId, id) {
-    if (currentChatId() !== chatId) {
-      const url = chatUrl(chatId);
-      pageWindow.history.pushState(pageWindow.history.state, "", url);
-      pageWindow.dispatchEvent(new PopStateEvent("popstate", { state: pageWindow.history.state }));
-      window.setTimeout(() => {
-        if (currentChatId() === chatId && !collectMessages().length && !document.querySelector("[data-agent-chat-user-step-id]"))
-          pageWindow.location.assign(url);
-      }, 2500);
-    }
-    seek(chatId, id);
-  }
-  function ensureOverlay() {
-    if (overlay3)
-      return overlay3;
-    overlay3 = createOverlay(HOST_ID, CSS4, `<div class="panel" role="dialog"></div>`);
-    overlay3.host.hidden = true;
-    overlay3.host.addEventListener("pointerenter", () => hoverSoon(true));
-    overlay3.host.addEventListener("pointerleave", () => hoverSoon(false));
-    return overlay3;
-  }
-  function starRow(role, text, loaded, onJump, onUnstar) {
-    const row = document.createElement("li");
-    row.className = loaded ? "row" : "row missing";
-    const jump = document.createElement("button");
-    jump.type = "button";
-    jump.className = "jump";
-    const roleTag = document.createElement("span");
-    roleTag.className = "role";
-    roleTag.textContent = role === "user" ? t("你", "You") : "AI";
-    const snip = document.createElement("span");
-    snip.className = "snip";
-    snip.textContent = text === null ? t("（未加载，点击后自动查找）", "(not loaded; click to find it)") : summarize(text, 80);
-    if (text)
-      jump.title = summarize(text, 400);
-    jump.append(roleTag, snip);
-    jump.addEventListener("click", onJump);
-    const unstar = document.createElement("button");
-    unstar.type = "button";
-    unstar.className = "unstar";
-    unstar.title = t("取消星标", "Unstar");
-    unstar.setAttribute("aria-label", unstar.title);
-    unstar.append(svgIcon(Icons.star));
-    unstar.addEventListener("click", onUnstar);
-    row.append(jump, unstar);
-    return row;
-  }
-  function viewSwitch() {
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "switch-view";
-    toggle.textContent = view === "chat" ? t("全部对话", "All chats") : t("本对话", "This chat");
-    toggle.addEventListener("click", (event) => {
-      event.stopPropagation();
-      view = view === "chat" ? "all" : "chat";
-      render();
-    });
-    return toggle;
-  }
-  function fillPanel(panel) {
-    const chatId = currentChatId();
-    const messages = collectMessages();
-    const saved = readMeta()[chatId]?.items ?? {};
-    const entries = starEntries(starsOf(chatId), messages, saved);
-    const title = currentChatTitle();
-    for (const entry of entries)
-      if (entry.loaded && entry.text)
-        noteStar(chatId, entry.id, { role: entry.role, text: entry.text, title });
-    const head = document.createElement("div");
-    head.className = "head";
-    const count = document.createElement("span");
-    count.className = "count";
-    head.append(svgIcon(Icons.star), document.createTextNode(view === "chat" ? t("已加星标", "Starred") : t("全部星标", "All stars")), count, viewSwitch());
-    const list = document.createElement("ul");
-    if (view === "chat") {
-      count.textContent = String(entries.length);
-      for (const entry of entries) {
-        list.append(starRow(entry.role, entry.text, entry.loaded, () => {
-          seek(chatId, entry.id);
-          close();
-        }, () => toggleStar(chatId, entry.id)));
-      }
-    } else {
-      const chats = allStarredChats();
-      count.textContent = String(chats.reduce((sum, chat) => sum + chat.stars.length, 0));
-      for (const chat of chats) {
-        const group = document.createElement("li");
-        group.className = chat.chatId === chatId ? "chat current" : "chat";
-        group.textContent = chat.title || t("未命名对话", "Untitled chat");
-        list.append(group);
-        for (const star of chat.stars) {
-          const here = chat.chatId === chatId ? entries.find((entry) => entry.id === star.id) : undefined;
-          const role = here?.role ?? star.meta?.role ?? (star.id.endsWith(":assistant") ? "assistant" : "user");
-          list.append(starRow(role, here?.text ?? star.meta?.text ?? null, !!here?.loaded, () => {
-            openChat(chat.chatId, star.id);
-            close();
-          }, () => toggleStar(chat.chatId, star.id)));
-        }
-      }
-    }
-    if (list.children.length)
-      panel.replaceChildren(head, list);
-    else {
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = view === "chat" ? t("这个对话还没有加星标的消息。悬停消息，点工具栏里的星标即可加入。", "No starred messages in this chat yet. Hover a message and click the star in its toolbar.") : t("还没有任何星标。", "No stars yet.");
-      panel.replaceChildren(head, empty);
-    }
-  }
-  function render() {
-    paintButton();
-    const open = isOpen() && !!button2?.isConnected;
-    if (!open) {
-      if (overlay3)
-        overlay3.host.hidden = true;
-      return;
-    }
-    const { host, root } = ensureOverlay();
-    fillPanel(root.querySelector(".panel"));
-    host.hidden = false;
-    const anchor = button2.getBoundingClientRect();
-    const panel = root.querySelector(".panel");
-    const width = panel.offsetWidth || 300;
-    const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
-    host.style.left = `${Math.round(left)}px`;
-    host.style.top = `${Math.round(anchor.bottom + 6)}px`;
-  }
-  function sync() {
-    const row = currentChatId() ? controlRow() : null;
-    let wrapper = document.querySelector(`[${LIST_MARK}]`);
-    if (!row) {
-      wrapper?.remove();
-      button2 = null;
-      if (isOpen())
-        close();
-      return;
-    }
-    if (wrapper && !row.contains(wrapper)) {
-      wrapper.remove();
-      wrapper = null;
-    }
-    wrapper ??= makeButton(row);
-    if (!wrapper)
-      return;
-    placeButton(row, wrapper);
-    paintButton();
-  }
-  function startList() {
-    const resync = debounce(sync, 150, 600);
-    const onKey = (event) => event.key === "Escape" && isOpen() && close();
-    const onDown = (event) => {
-      if (!isOpen())
-        return;
-      const path = event.composedPath();
-      if (button2 && path.includes(button2) || overlay3 && path.includes(overlay3.host))
-        return;
-      close();
-    };
-    document.addEventListener("keydown", onKey, true);
-    document.addEventListener("pointerdown", onDown, true);
-    cleanups5 = [
-      onDomChange((mutations) => {
-        if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && (node.hasAttribute(LIST_MARK) || node.id === HOST_ID))))
-          return;
-        resync();
-      }),
-      on("starsChanged", () => isOpen() ? render() : paintButton()),
-      onRouteChange(() => {
-        close();
-        resync();
-      }),
-      () => resync.cancel(),
-      () => document.removeEventListener("keydown", onKey, true),
-      () => document.removeEventListener("pointerdown", onDown, true)
-    ];
-    sync();
-  }
-  function stopList() {
-    for (const cleanup of cleanups5.splice(0))
-      cleanup();
-    clearTimeout(pendingTimer);
-    pending = null;
-    view = "chat";
-    clearTimeout(hoverTimer);
-    pinned = false;
-    hovering = false;
-    document.querySelector(`[${LIST_MARK}]`)?.remove();
-    button2 = null;
-    overlay3?.destroy();
-    overlay3 = null;
-  }
-
   // src/plugins/messageStars/index.ts
   var MARK3 = "data-npp-star";
   var STAR_COLOR2 = "#d9730d";
   var RESCAN_MS2 = 200;
-  var cleanups6 = [];
-  var settings11 = definePluginSettings({
+  var cleanups9 = [];
+  var settings13 = definePluginSettings({
     headerList: {
       type: "boolean",
       label: { zh: "右上角显示星标列表", en: "Starred list in the top bar" },
@@ -4775,7 +5659,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     svg.style.cssText = `${native?.getAttribute("style") ?? ""};width:${px}px;height:${px}px;display:block;flex-shrink:0;fill:none;stroke:currentColor`;
     return svg;
   }
-  function paint(button, starred) {
+  function paint2(button, starred) {
     button.setAttribute("aria-pressed", String(starred));
     const label = starred ? t("取消星标", "Unstar") : t("加星标", "Star");
     button.setAttribute("aria-label", label);
@@ -4804,7 +5688,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     mirrors.get(button)?.disconnect();
     mirrors.set(button, observer);
   }
-  function makeButton2(copy, id) {
+  function makeButton3(copy, id) {
     const wrapper = copy.parentElement?.cloneNode(false) ?? document.createElement("div");
     wrapper.removeAttribute("data-popup-origin");
     wrapper.setAttribute(MARK3, id);
@@ -4817,7 +5701,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       event.preventDefault();
       event.stopPropagation();
       const message = collectMessages().find((m) => m.id === id);
-      paint(button, toggleStar(currentChatId(), id, message && { role: message.role, text: message.text, title: currentChatTitle() }));
+      paint2(button, toggleStar(currentChatId(), id, message && { role: message.role, text: message.text, title: currentChatTitle() }));
     });
     button.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ")
@@ -4867,9 +5751,9 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         if (button.className !== copy.className || button.style.opacity !== copy.style.opacity)
           mirror(copy, button);
       }
-      ours ??= makeButton2(copy, id);
+      ours ??= makeButton3(copy, id);
       place(row, copy.parentElement, ours);
-      paint(ours.firstElementChild, stars.has(id));
+      paint2(ours.firstElementChild, stars.has(id));
     }
   }
   function removeAll2() {
@@ -4883,7 +5767,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       zh: "在每条提问和回复的悬停工具栏里加一个星标按钮。加星的消息在右侧对话目录里显示为橙色，右上角的星标按钮可列出本对话所有星标并跳转。",
       en: "Adds a star to the hover toolbar of every prompt and reply. Starred messages show in orange in the chat navigator, and the star in the top bar lists them for jumping back."
     },
-    settings: settings11,
+    settings: settings13,
     icon: Icons.star,
     tags: ["chat"],
     enabledByDefault: true,
@@ -4893,7 +5777,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const rescan = debounce(scan5, RESCAN_MS2, RESCAN_MS2 * 4);
       const onStorage = (event) => event.key === STARS_KEY && scan5();
       pageWindow.addEventListener("storage", onStorage);
-      cleanups6 = [
+      cleanups9 = [
         onDomChange((mutations) => {
           if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.hasAttribute(MARK3))))
             return;
@@ -4904,26 +5788,26 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         () => pageWindow.removeEventListener("storage", onStorage)
       ];
       scan5();
-      if (settings11.store.headerList)
+      if (settings13.store.headerList)
         startList();
     },
     stop() {
       stopList();
-      for (const cleanup of cleanups6.splice(0))
+      for (const cleanup of cleanups9.splice(0))
         cleanup();
       removeAll2();
       setStarsActive(false);
     },
     onSettingsChange() {
       stopList();
-      if (settings11.store.headerList)
+      if (settings13.store.headerList)
         startList();
     }
   });
 
   // src/plugins/noTelemetry/index.ts
   var logger5 = new Logger("NoTelemetry");
-  var settings12 = definePluginSettings({
+  var settings14 = definePluginSettings({
     events: {
       type: "boolean",
       label: { zh: "Notion 事件统计", en: "Notion event tracking" },
@@ -4993,11 +5877,11 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     updatedAt: "2026-10-08",
     restartNeeded: true,
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings12,
+    settings: settings14,
     start() {
       stopBlocking = blockRequests((url) => {
         const category = categoryOf(url);
-        if (!category || !settings12.store[category])
+        if (!category || !settings14.store[category])
           return false;
         if (!counts[category]++)
           logger5.info(`blocking ${category} reports (${url.hostname})`);
@@ -5010,8 +5894,338 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   });
 
+  // src/plugins/recentChats/store.ts
+  var RECENT_KEY = "notionai-pp:recent-chats:v1";
+  var MAX_STORED = 30;
+  function readRecent() {
+    try {
+      const parsed = JSON.parse(pageWindow.localStorage.getItem(RECENT_KEY) ?? "[]");
+      if (!Array.isArray(parsed))
+        return [];
+      return parsed.filter((item) => isRecord(item) && typeof item.id === "string" && !!item.id).map((item) => ({
+        id: item.id,
+        title: typeof item.title === "string" ? item.title : "",
+        question: typeof item.question === "string" ? item.question : "",
+        reply: typeof item.reply === "string" ? item.reply : "",
+        at: typeof item.at === "number" ? item.at : 0
+      }));
+    } catch {
+      return [];
+    }
+  }
+  function write(list) {
+    try {
+      pageWindow.localStorage.setItem(RECENT_KEY, JSON.stringify(list.slice(0, MAX_STORED)));
+    } catch {}
+  }
+  function touch(list, id, now = Date.now()) {
+    const found = list.find((item) => sameChat(item.id, id));
+    const entry = found ? { ...found, id, at: now } : { id, title: "", question: "", reply: "", at: now };
+    return [entry, ...list.filter((item) => item !== found)].slice(0, MAX_STORED);
+  }
+  function describe(list, id, info) {
+    let changed = false;
+    const next = list.map((item) => {
+      if (!sameChat(item.id, id))
+        return item;
+      const merged = { ...item };
+      for (const key of ["title", "question", "reply"]) {
+        const value = info[key];
+        if (value && value !== item[key]) {
+          merged[key] = value;
+          changed = true;
+        }
+      }
+      return merged;
+    });
+    return changed ? next : list;
+  }
+  function saveRecent(list) {
+    write(list);
+  }
+  function clearRecent() {
+    try {
+      pageWindow.localStorage.removeItem(RECENT_KEY);
+    } catch {}
+  }
+
+  // src/plugins/recentChats/index.ts
+  var settings15 = definePluginSettings({
+    maxRecent: {
+      type: "select",
+      label: { zh: "显示几个最近对话", en: "Recent chats shown" },
+      default: "8",
+      options: [
+        { value: "5", label: "5" },
+        { value: "8", label: "8" },
+        { value: "12", label: "12" }
+      ]
+    },
+    clear: {
+      type: "action",
+      label: { zh: "清空最近对话记录", en: "Clear recent chats" },
+      description: { zh: "只删除本机记下的列表，不影响 Notion 里的对话", en: "Only removes the list kept in this browser; your Notion chats are untouched" },
+      button: { zh: "清空", en: "Clear" },
+      confirm: { zh: "清空最近对话记录？", en: "Clear the recent chats list?" },
+      run: () => clearRecent()
+    }
+  });
+  var HOST_ID4 = "notionai-pp-recent-chats";
+  var CSS7 = `
+:host {
+  all: initial;
+  --bg: rgba(255,255,255,.86); --card: #ffffff; --text: #37352f; --subtle: #787774; --border: rgba(15,15,15,.1);
+  --shadow: 0 16px 48px rgba(15,15,15,.22); --accent: #2383e2;
+  position: fixed; inset: 0; z-index: 2147483002; display: flex; align-items: center; justify-content: center;
+  font: 14px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: rgba(15,15,15,.12);
+}
+:host([data-theme="dark"]) {
+  --bg: rgba(37,37,37,.86); --card: #2f2f2f; --text: #ebebea; --subtle: #9b9a97; --border: rgba(255,255,255,.1);
+  --shadow: 0 16px 48px rgba(0,0,0,.5);
+  background: rgba(0,0,0,.25);
+}
+:host([hidden]) { display: none; }
+* { box-sizing: border-box; }
+.panel {
+  width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto; padding: 14px;
+  border: 1px solid var(--border); border-radius: 16px; color: var(--text); background: var(--bg); box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
+}
+.head { display: flex; align-items: center; gap: 8px; padding: 0 4px 10px; color: var(--subtle); font-size: 12px; }
+.keys { margin-left: auto; }
+kbd { padding: 0 4px; border: 1px solid var(--border); border-radius: 4px; font: inherit; font-size: 11px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.card {
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  color: inherit; background: var(--card); font: inherit; text-align: left; cursor: pointer;
+}
+.card.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+.title { display: flex; align-items: baseline; gap: 6px; font-weight: 600; }
+.title span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.title small { flex: none; color: var(--subtle); font-weight: 400; font-size: 11px; }
+.line { color: var(--subtle); font-size: 12.5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.line b { color: var(--text); font-weight: 500; }
+.empty { padding: 18px 8px; color: var(--subtle); text-align: center; }
+`;
+  var overlay6 = null;
+  var items = [];
+  var index = 0;
+  var lastTouched = "";
+  var cleanups10 = [];
+  var isOpen2 = () => !!overlay6 && !overlay6.host.hidden;
+  function isTrigger(event) {
+    return event.ctrlKey && !event.altKey && !event.metaKey && (event.code === "Backquote" || event.key === "`" || event.key === "~");
+  }
+  function ago(at, now = Date.now()) {
+    const minutes = Math.floor((now - at) / 60000);
+    if (minutes < 1)
+      return t("刚刚", "just now");
+    if (minutes < 60)
+      return t(`${minutes} 分钟前`, `${minutes} min ago`);
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24)
+      return t(`${hours} 小时前`, `${hours} h ago`);
+    const days = Math.floor(hours / 24);
+    return t(`${days} 天前`, `${days} d ago`);
+  }
+  function switcherItems(list, current, max) {
+    const here = list.find((item) => sameChat(item.id, current));
+    const rest = list.filter((item) => item !== here);
+    return (here ? [here, ...rest] : rest).slice(0, max);
+  }
+  function card(item, position, current) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = position === index ? "card on" : "card";
+    el.setAttribute("role", "option");
+    el.setAttribute("aria-selected", String(position === index));
+    const title = document.createElement("div");
+    title.className = "title";
+    const name = document.createElement("span");
+    name.textContent = item.title || t("未命名对话", "Untitled chat");
+    const when = document.createElement("small");
+    when.textContent = sameChat(item.id, current) ? t("当前", "Current") : ago(item.at);
+    title.append(name, when);
+    el.append(title);
+    for (const [who, text] of [[t("你", "You"), item.question], ["AI", item.reply]]) {
+      if (!text)
+        continue;
+      const line = document.createElement("div");
+      line.className = "line";
+      const tag = document.createElement("b");
+      tag.textContent = `${who}：`;
+      line.append(tag, text);
+      el.append(line);
+    }
+    el.addEventListener("pointerenter", () => select(position));
+    el.addEventListener("click", () => {
+      index = position;
+      commit();
+    });
+    return el;
+  }
+  function paint3() {
+    if (!overlay6)
+      return;
+    const current = currentChatId();
+    const panel = overlay6.root.querySelector(".panel");
+    const head = document.createElement("div");
+    head.className = "head";
+    head.append(t("最近的对话", "Recent chats"));
+    const keys = document.createElement("span");
+    keys.className = "keys";
+    keys.innerHTML = trustedHtml(t("按住 <kbd>Ctrl</kbd> 连按 <kbd>`</kbd> 切换，松开打开，<kbd>Esc</kbd> 取消", "Hold <kbd>Ctrl</kbd>, press <kbd>`</kbd> to move, release to open, <kbd>Esc</kbd> to cancel"));
+    head.append(keys);
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = t("还没有记下最近打开的对话。打开几个 Notion AI 对话后再试。", "No recent chats yet. Open a few Notion AI chats and try again.");
+      panel.replaceChildren(head, empty);
+      return;
+    }
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    grid.setAttribute("role", "listbox");
+    grid.append(...items.map((item, position) => card(item, position, current)));
+    panel.replaceChildren(head, grid);
+    grid.children[index]?.scrollIntoView?.({ block: "nearest" });
+  }
+  function select(position) {
+    if (position === index)
+      return;
+    index = position;
+    paint3();
+  }
+  function show2() {
+    record2();
+    const current = currentChatId();
+    items = switcherItems(readRecent(), current, Number(settings15.store.maxRecent) || 8);
+    index = items.length > 1 && sameChat(items[0].id, current) ? 1 : 0;
+    if (!overlay6) {
+      overlay6 = createOverlay(HOST_ID4, CSS7, `<div class="panel" role="dialog" aria-label="Recent chats"></div>`);
+      overlay6.host.addEventListener("mousedown", (event) => event.target === overlay6?.host && hide());
+    }
+    overlay6.host.hidden = false;
+    paint3();
+  }
+  function hide() {
+    if (overlay6)
+      overlay6.host.hidden = true;
+  }
+  function move(by) {
+    if (!items.length)
+      return;
+    index = (index + by + items.length) % items.length;
+    paint3();
+  }
+  function commit() {
+    const chosen = items[index];
+    hide();
+    if (chosen && !sameChat(chosen.id, currentChatId()))
+      openChat(chosen.id);
+  }
+  function onKeyDown3(event) {
+    if (isTrigger(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat)
+        return;
+      if (isOpen2())
+        move(event.shiftKey ? -1 : 1);
+      else
+        show2();
+      return;
+    }
+    if (!isOpen2())
+      return;
+    const step = { ArrowRight: 1, ArrowDown: 1, Tab: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+    if (event.key === "Escape")
+      hide();
+    else if (event.key === "Enter")
+      commit();
+    else if (step)
+      move(event.key === "Tab" && event.shiftKey ? -1 : step);
+    else
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  function onKeyUp(event) {
+    if (event.key === "Control" && isOpen2()) {
+      event.stopPropagation();
+      commit();
+    }
+  }
+  function record2() {
+    const id = currentChatId();
+    if (!id)
+      return;
+    let list = readRecent();
+    const before = list;
+    if (!sameChat(id, lastTouched) || !list.some((item) => sameChat(item.id, id))) {
+      list = touch(list, id);
+      lastTouched = id;
+    }
+    const messages = collectMessages();
+    const question = [...messages].reverse().find((message) => message.role === "user");
+    const reply = [...messages].reverse().find((message) => message.role === "assistant");
+    list = describe(list, id, {
+      title: currentChatTitle(),
+      question: question ? summarize(question.text, 90) : "",
+      reply: reply ? summarize(reply.text, 120) : ""
+    });
+    if (list !== before)
+      saveRecent(list);
+  }
+  var recentChats_default = definePlugin({
+    name: "recentChats",
+    title: { zh: "最近对话切换", en: "Recent chats switcher" },
+    description: {
+      zh: "按 Ctrl+` 弹出最近打开的对话（标题和最后一问一答），按住 Ctrl 连按 ` 选择，松开打开，像 Arc 的标签页切换器。",
+      en: "Ctrl+` shows the chats you opened most recently (title, last question and reply); hold Ctrl and press ` to pick, release to open, like Arc's tab switcher."
+    },
+    icon: Icons.switcher,
+    tags: ["chat"],
+    enabledByDefault: true,
+    updatedAt: "2026-10-24",
+    settings: settings15,
+    start() {
+      const later = debounce(record2, 800, 3000);
+      const onBlur = () => hide();
+      pageWindow.addEventListener("keydown", onKeyDown3, true);
+      pageWindow.addEventListener("keyup", onKeyUp, true);
+      pageWindow.addEventListener("blur", onBlur);
+      cleanups10 = [
+        onRouteChange(() => {
+          hide();
+          later();
+        }),
+        onDomChange((mutations) => {
+          if (mutations.every((m) => [...m.addedNodes, ...m.removedNodes].every((node) => node instanceof Element && node.id === HOST_ID4)))
+            return;
+          if (currentChatId())
+            later();
+        }),
+        () => later.cancel(),
+        () => pageWindow.removeEventListener("keydown", onKeyDown3, true),
+        () => pageWindow.removeEventListener("keyup", onKeyUp, true),
+        () => pageWindow.removeEventListener("blur", onBlur)
+      ];
+      record2();
+    },
+    stop() {
+      for (const cleanup of cleanups10.splice(0))
+        cleanup();
+      overlay6?.destroy();
+      overlay6 = null;
+      items = [];
+      lastTouched = "";
+    }
+  });
+
   // src/plugins/replyNotification/index.ts
-  var settings13 = definePluginSettings({
+  var settings16 = definePluginSettings({
     sound: {
       type: "boolean",
       label: { zh: "播放提示音", en: "Play a sound" },
@@ -5109,8 +6323,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
   }
   function play() {
-    const volume = settings13.store.volume;
-    if (settings13.store.source !== "file")
+    const volume = settings16.store.volume;
+    if (settings16.store.source !== "file")
       return chime(volume);
     playFile(volume).then((ok) => ok || chime(volume));
   }
@@ -5134,7 +6348,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
           return;
         }
         setValue("replyNotification", "source", "file");
-        playFile(settings13.store.volume).then((ok) => {
+        playFile(settings16.store.volume).then((ok) => {
           if (!ok)
             pageWindow.alert(t("这个文件无法播放，已改回内置提示音。", "This file can't be played; switched back to the built-in chime."));
           if (!ok)
@@ -5145,8 +6359,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     });
     input.click();
   }
-  var cleanups7 = [];
-  function chime(volume = settings13.store.volume) {
+  var cleanups11 = [];
+  function chime(volume = settings16.store.volume) {
     const gain = Math.max(0, Math.min(100, volume)) / 100;
     if (!gain)
       return;
@@ -5174,14 +6388,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const reply = [...messages].reverse().find((message) => message.role === "assistant");
     return reply ? summarize(reply.text, 120) : "";
   }
-  function desktop(error) {
+  function desktop(error, title = chatTitle(), reply = lastReply()) {
     if (typeof Notification !== "function" || Notification.permission !== "granted")
       return;
     try {
-      const note = new Notification(error ? t(`回复出错 · ${chatTitle()}`, `Reply failed · ${chatTitle()}`) : chatTitle(), {
-        body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : lastReply() || t("Notion AI 已回复完成", "Notion AI has finished replying"),
+      const note = new Notification(error ? t(`回复出错 · ${title}`, `Reply failed · ${title}`) : title, {
+        body: error ? t("Notion AI 没能完成这次回复", "Notion AI could not finish this reply") : reply || t("Notion AI 已回复完成", "Notion AI has finished replying"),
         tag: "notionai-pp-reply",
-        silent: settings13.store.sound
+        silent: settings16.store.sound
       });
       note.onclick = () => {
         pageWindow.focus();
@@ -5198,70 +6412,86 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     if (chatId === last3.chatId && now - last3.at < REPEAT_MS)
       return;
     last3 = { chatId, at: now };
-    if (settings13.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+    if (settings16.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
       return;
-    if (settings13.store.sound)
+    if (settings16.store.sound)
       play();
-    if (settings13.store.desktop)
+    if (settings16.store.desktop)
       desktop(error);
   }
+  function notifyElsewhere({ chatId, title, status, stopped, elsewhere }) {
+    if (!elsewhere || stopped || status === "aborted" || !chatId)
+      return;
+    const now = performance.now();
+    if (chatId === last3.chatId && now - last3.at < REPEAT_MS)
+      return;
+    last3 = { chatId, at: now };
+    if (settings16.store.onlyHidden && document.visibilityState === "visible" && document.hasFocus())
+      return;
+    if (settings16.store.sound)
+      play();
+    if (settings16.store.desktop)
+      desktop(status === "error", title || "Notion AI", "");
+  }
   async function test() {
-    if (settings13.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+    if (settings16.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
       await Notification.requestPermission();
     }
-    if (settings13.store.sound)
+    if (settings16.store.sound)
       play();
-    if (settings13.store.desktop)
+    if (settings16.store.desktop)
       desktop(false);
   }
   var replyNotification_default = definePlugin({
     name: "replyNotification",
     title: { zh: "回复完成提醒", en: "Reply notification" },
     description: {
-      zh: "Notion AI 回复完成时播放提示音，也可以弹出系统通知。默认只在标签页不在前台时提醒。",
-      en: "Plays a sound, and optionally shows a system notification, when Notion AI finishes a reply. By default only while the tab is in the background."
+      zh: "Notion AI 回复完成时播放提示音，也可以弹出系统通知；切到别的对话后，原对话写完也会提醒。默认只在标签页不在前台时提醒。",
+      en: "Plays a sound, and optionally shows a system notification, when Notion AI finishes a reply, including in a chat you have left. By default only while the tab is in the background."
     },
     icon: Icons.bell,
     tags: ["chat"],
     enabledByDefault: true,
-    updatedAt: "2026-10-08",
-    settings: settings13,
+    updatedAt: "2026-10-24",
+    settings: settings16,
     start() {
       const prime = () => {
-        if (!settings13.store.sound)
+        if (!settings16.store.sound)
           return;
         context();
-        if (settings13.store.source === "file")
+        if (settings16.store.source === "file")
           decodeFile();
         document.removeEventListener("pointerdown", prime, true);
         document.removeEventListener("keydown", prime, true);
       };
       document.addEventListener("pointerdown", prime, true);
       document.addEventListener("keydown", prime, true);
-      cleanups7 = [
+      cleanups11 = [
         watchReplies(),
         on("replyEnd", notify2),
+        watchStreams(),
+        on("streamEnd", notifyElsewhere),
         () => document.removeEventListener("pointerdown", prime, true),
         () => document.removeEventListener("keydown", prime, true)
       ];
     },
     stop() {
-      for (const cleanup of cleanups7.splice(0))
+      for (const cleanup of cleanups11.splice(0))
         cleanup();
       audio?.close();
       audio = null;
       decoded = null;
     },
     onSettingsChange(key) {
-      if (key === "desktop" && settings13.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
+      if (key === "desktop" && settings16.store.desktop && typeof Notification === "function" && Notification.permission === "default") {
         Notification.requestPermission();
       }
     }
   });
 
   // src/api/Backup.ts
-  var PREFIX = "notionai-pp:";
-  var SKIP = new Set(["notionai-pp:health:v1"]);
+  var PREFIX2 = "notionai-pp:";
+  var SKIP2 = new Set(["notionai-pp:health:v1"]);
   var FORMAT = "notionai-pp-backup";
   var storage = () => pageWindow.localStorage;
   function collectBackup(version = "") {
@@ -5269,7 +6499,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const store = storage();
     for (let i = 0;i < store.length; i++) {
       const key = store.key(i);
-      if (!key?.startsWith(PREFIX) || SKIP.has(key))
+      if (!key?.startsWith(PREFIX2) || SKIP2.has(key))
         continue;
       const value = store.getItem(key);
       if (value !== null)
@@ -5281,7 +6511,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const parsed = safeJson(text);
     if (!isRecord(parsed) || parsed.format !== FORMAT || !isRecord(parsed.data))
       return null;
-    const entries = Object.entries(parsed.data).filter((entry) => entry[0].startsWith(PREFIX) && !SKIP.has(entry[0]) && typeof entry[1] === "string");
+    const entries = Object.entries(parsed.data).filter((entry) => entry[0].startsWith(PREFIX2) && !SKIP2.has(entry[0]) && typeof entry[1] === "string");
     return Object.fromEntries(entries);
   }
   function restoreBackup(data) {
@@ -5360,7 +6590,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
           logger6.warn(`could not open Notion settings page "${id}"`);
       });
     };
-    return h("div", { class: "tab-root notion-settings" }, section(t("Notion 自带设置", "Notion's own settings"), ...NOTION_PAGES.map((page) => row(t(page.zh, page.en), t(page.desc.zh, page.desc.en), button("secondary", t("打开", "Open"), () => open(page.id))))));
+    return h("div", { class: "tab-root notion-settings" }, section(t("Notion 自带设置", "Notion's own settings"), ...NOTION_PAGES.map((page) => row(t(page.zh, page.en), t(page.desc.zh, page.desc.en), button3("secondary", t("打开", "Open"), () => open(page.id))))));
   }
 
   // src/plugins/settings/quickCss.ts
@@ -5473,9 +6703,9 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     home: () => t("首页", "Home"),
     appearance: () => t("外观", "Appearance")
   };
-  var overlay4 = null;
+  var overlay7 = null;
   var layers = [];
-  var cleanups8 = [];
+  var cleanups12 = [];
   var settingKeys = (plugin) => Object.entries(plugin.settings?.def ?? {});
   var hasSettings = (plugin) => settingKeys(plugin).length > 0;
   function pushLayer(kind, content, onClose) {
@@ -5491,7 +6721,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       }
     };
     el.addEventListener("mousedown", (event) => event.target === el && entry.close());
-    overlay4.root.append(el);
+    overlay7.root.append(el);
     layers.push(entry);
     return entry;
   }
@@ -5505,8 +6735,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function confirmDialog(title, description, confirmText, onConfirm, variant = "danger") {
     let layer;
     const node = sheet(title, description, () => layer.close(), "sm");
-    const cancel = button("secondary", t("取消", "Cancel"), () => layer.close());
-    node.append(h("div", { class: "footer" }, cancel, button(variant, confirmText, () => {
+    const cancel = button3("secondary", t("取消", "Cancel"), () => layer.close());
+    node.append(h("div", { class: "footer" }, cancel, button3(variant, confirmText, () => {
       layer.close();
       onConfirm();
     })));
@@ -5531,7 +6761,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const body = h("div", { class: "sheet-body" }, section(t("设置", "Settings"), entries.length ? list : h("p", { class: "field-text" }, t("没有可配置的选项。", "No configurable settings."))));
     const storable = entries.filter(([, def]) => def.type !== "action").map(([key]) => key);
     if (storable.length) {
-      body.append(section(t("重置", "Reset"), row(t("恢复默认设置", "Reset to defaults"), t("把这个插件的设置恢复为默认值", "Restore this plugin's settings to their defaults"), button("secondary", t("恢复默认", "Reset"), () => confirmDialog(t("恢复默认设置", "Reset settings"), t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."), t("恢复默认", "Reset"), () => {
+      body.append(section(t("重置", "Reset"), row(t("恢复默认设置", "Reset to defaults"), t("把这个插件的设置恢复为默认值", "Restore this plugin's settings to their defaults"), button3("secondary", t("恢复默认", "Reset"), () => confirmDialog(t("恢复默认设置", "Reset settings"), t("把这个插件的设置恢复为默认值？此操作无法撤销。", "Reset this plugin's settings to defaults? This cannot be undone."), t("恢复默认", "Reset"), () => {
         resetValues(plugin.name, storable);
         render();
       })))));
@@ -5562,7 +6792,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       refresh();
     }, plugin.required));
     const stage = error && { start: t("启动失败", "Failed to start"), stop: t("停止时出错", "Failed to stop"), settings: t("应用设置时出错", "Failed to apply a setting") }[error.stage];
-    const reason = crashed && h("div", { class: "card-error", title: error?.message ?? "" }, h("span", { class: "card-error-text" }, error ? `${stage}：${error.message}` : t("启动失败，详情见浏览器控制台", "Failed to start; see the browser console")), enabled && button("danger", t("关闭插件", "Turn off"), () => {
+    const reason = crashed && h("div", { class: "card-error", title: error?.message ?? "" }, h("span", { class: "card-error-text" }, error ? `${stage}：${error.message}` : t("启动失败，详情见浏览器控制台", "Failed to start; see the browser console")), enabled && button3("danger", t("关闭插件", "Turn off"), () => {
       setEnabled(plugin, false);
       refresh();
     }));
@@ -5634,7 +6864,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       const restart = pendingRestart();
       const children = [];
       if (restart.length) {
-        children.push(h("div", { class: "notice" }, h("span", {}, t(`「${restart.map((p) => tr(p.title)).join("」「")}」刷新页面后才会完全生效。`, `${restart.map((p) => tr(p.title)).join(", ")}: reload the page for the change to fully apply.`)), button("primary", t("刷新页面", "Reload"), () => pageWindow.location.reload(), "small")));
+        children.push(h("div", { class: "notice" }, h("span", {}, t(`「${restart.map((p) => tr(p.title)).join("」「")}」刷新页面后才会完全生效。`, `${restart.map((p) => tr(p.title)).join(", ")}: reload the page for the change to fully apply.`)), button3("primary", t("刷新页面", "Reload"), () => pageWindow.location.reload(), "small")));
       }
       if (top.length)
         children.push(grid(top));
@@ -5663,10 +6893,10 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       setValue(SELF2, LANGUAGE_KEY, value);
       openSettings("preferences");
     });
-    return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button("secondary", t("选择文件", "Choose file"), importBackup))));
+    return h("div", { class: "tab-root prefs" }, section(t("语言", "Language"), row(t("界面语言", "Language"), t("NotionAI++ 的设置、提示和面板使用的语言", "The language of NotionAI++'s settings, tooltips and panels"), language)), section(t("备份与恢复", "Backup and restore"), row(t("导出备份", "Export a backup"), t("把设置、星标、输入历史、用量记录、自定义 CSS 和提示音存成一个 JSON 文件", "Save settings, stars, prompt history, usage records, custom CSS and the reply sound to one JSON file"), button3("secondary", t("导出", "Export"), exportBackup)), row(t("从备份恢复", "Restore from a backup"), t("选择之前导出的文件；文件里有的项目会覆盖当前的，没有的保持不变", "Pick a file exported before; what it holds replaces the current values, everything else stays"), button3("secondary", t("选择文件", "Choose file"), importBackup))));
   }
   function exportBackup() {
-    const backup = collectBackup("[20261007] v1.11.7");
+    const backup = collectBackup("[20261007] v1.12.0");
     const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" }));
     const link = h("a", { href: url, download: backupFileName() });
     document.body.append(link);
@@ -5694,7 +6924,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     input.click();
   }
   function aboutTab() {
-    const version = "[20261007] v1.11.7";
+    const version = "[20261007] v1.12.0";
     return h("div", { class: "tab-root about" }, h("p", {}, t("NotionAI++ 是 Notion AI 的增强用户脚本：用量贴在 AI 输入框上，对话目录，以及更多小插件。", "NotionAI++ is a userscript for Notion AI: a usage meter docked to the AI composer, a chat outline and more.")), h("p", {}, t("只发同源请求，不读取 Cookie、token 或 Authorization；设置只保存在本机浏览器。", "Only same-origin requests; never reads cookies, tokens or Authorization. Settings stay in this browser.")), h("p", {}, `${t("版本", "Version")} ${version} · `, h("a", { href: REPO_URL, target: "_blank", rel: "noreferrer" }, "GitHub")));
   }
   var TABS = [
@@ -5707,13 +6937,13 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function close2() {
     for (const layer of layers.splice(0))
       layer.el.remove();
-    overlay4?.destroy();
-    overlay4 = null;
+    overlay7?.destroy();
+    overlay7 = null;
   }
   function openSettings(tab = "plugins") {
     close2();
-    overlay4 = createOverlay(SETTINGS_HOST_ID, CSS, "");
-    const { root } = overlay4;
+    overlay7 = createOverlay(SETTINGS_HOST_ID, CSS4, "");
+    const { root } = overlay7;
     const content = h("div", { class: "content" });
     const navItems = new Map;
     const select = (id) => {
@@ -5729,7 +6959,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       closeBtn.classList.add("close");
       content.replaceChildren(closeBtn, h("div", { class: "content-head" }, h("h2", {}, def.title()), hint && h("span", { class: "hint", title: hint }, icon(Icons.info))), def.render());
     };
-    const version = "[20261007] v1.11.7";
+    const version = "[20261007] v1.12.0";
     const nav = h("nav", { class: "nav" }, h("div", { class: "nav-group" }, "NotionAI++"), ...TABS.map((def) => {
       const item = h("button", { type: "button", class: "nav-item", onclick: () => select(def.id) }, icon(def.icon), def.title());
       navItems.set(def.id, item);
@@ -5753,6 +6983,40 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     dialog.tabIndex = -1;
     dialog.focus();
   }
+  var START_SETTLE_MS = RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1] + 1000;
+  var errorTimers = new Map;
+  function toastError(name) {
+    const plugin = allPlugins().find((p) => p.name === name);
+    const error = pluginError(name);
+    if (!plugin || !error || error.stage === "start" && plugin.started)
+      return;
+    showToast({
+      key: `plugin-error:${name}`,
+      kind: "error",
+      title: t(`插件「${tr(plugin.title)}」出错`, `${tr(plugin.title)} ran into an error`),
+      body: `${error.message} · ${t("点击打开设置", "Click to open settings")}`,
+      duration: 12000,
+      onClick: () => openSettings("plugins")
+    });
+  }
+  function watchErrors() {
+    const stop = onPluginError((name) => {
+      clearTimeout(errorTimers.get(name));
+      const stage = pluginError(name)?.stage;
+      errorTimers.set(name, window.setTimeout(() => {
+        errorTimers.delete(name);
+        toastError(name);
+      }, stage === "start" ? START_SETTLE_MS : 0));
+    });
+    return () => {
+      stop();
+      for (const timer of errorTimers.values())
+        clearTimeout(timer);
+      errorTimers.clear();
+      for (const plugin of allPlugins())
+        dismissToast(`plugin-error:${plugin.name}`);
+    };
+  }
   var settings_default = definePlugin({
     name: SELF2,
     title: { zh: "设置面板", en: "Settings" },
@@ -5761,7 +7025,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     enabledByDefault: true,
     required: true,
     start() {
-      cleanups8.push(on("openSettings", () => openSettings()), startQuickCss());
+      cleanups12.push(on("openSettings", () => openSettings()), startQuickCss(), watchErrors());
       if (typeof GM_registerMenuCommand === "function") {
         try {
           GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
@@ -5769,7 +7033,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       }
     },
     stop() {
-      for (const cleanup of cleanups8.splice(0))
+      for (const cleanup of cleanups12.splice(0))
         cleanup();
       stopQuickCss();
       close2();
@@ -5783,7 +7047,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var INTERACTIVE2 = "a, button, input, textarea, select, label, [contenteditable=''], [contenteditable='true'], " + "[role='button'], [role='link'], [role='menuitem'], [role='treeitem'], [role='option'], [role='tab'], [role='checkbox'], [role='switch'], [draggable='true']";
   var ACTIVE_CURSORS = new Set(["pointer", "text", "col-resize", "ew-resize", "row-resize", "grab", "grabbing", "move"]);
   var SLOP = 6;
-  var settings14 = definePluginSettings({
+  var settings17 = definePluginSettings({
     clickToToggle: {
       type: "boolean",
       label: { zh: "点击侧栏空白处收起/固定", en: "Click empty sidebar space to toggle" },
@@ -5836,7 +7100,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return true;
   }
   function onClick3(event) {
-    if (!settings14.store.clickToToggle)
+    if (!settings17.store.clickToToggle)
       return;
     const target = event.target instanceof Element ? event.target : null;
     const sidebar = target?.closest(SIDEBAR);
@@ -5852,7 +7116,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var stopWait = null;
   var collapsedOnce = false;
   function collapseOnLoad() {
-    if (collapsedOnce || !settings14.store.defaultCollapsed)
+    if (collapsedOnce || !settings17.store.defaultCollapsed)
       return;
     const attempt = () => {
       const sidebar = document.querySelector(SIDEBAR);
@@ -5888,7 +7152,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     icon: Icons.sidebar,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings14,
+    settings: settings17,
     start() {
       document.addEventListener("click", onClick3, true);
       collapseOnLoad();
@@ -5904,7 +7168,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var SPIN_MS = 120;
   var COLORS = { done: "#2383e2", error: "#e03e3e", streaming: "#2383e2", draft: "#9b9a97" };
   var EDITOR3 = "[data-notion-chat-input-container] [contenteditable='true']";
-  var settings15 = definePluginSettings({
+  var settings18 = definePluginSettings({
     showDone: {
       type: "boolean",
       label: { zh: "回复完成后显示蓝点", en: "Blue dot when a reply is done" },
@@ -5925,7 +7189,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   var painted = new Set;
   var angle = 0;
   var timer3 = 0;
-  var cleanups9 = [];
+  var cleanups13 = [];
   var iconLinks = () => [...document.querySelectorAll("link[rel~='icon']")];
   function remember2() {
     for (const link of iconLinks()) {
@@ -5983,7 +7247,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     ctx.fillStyle = COLORS[kind];
     ctx.fill();
   }
-  async function paint2() {
+  async function paint4() {
     remember2();
     if (!originals.size)
       return;
@@ -6018,17 +7282,17 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     if (next === "streaming") {
       timer3 = setInterval(() => {
         angle = (angle + Math.PI / 4) % (Math.PI * 2);
-        paint2();
+        paint4();
       }, SPIN_MS);
     }
-    paint2();
+    paint4();
   }
   var hasDraft = () => [...document.querySelectorAll(EDITOR3)].some((editor) => !!editor.innerText?.trim());
   function seen2() {
     if (document.visibilityState === "visible") {
       if (state2 === "done" || state2 === "error" || state2 === "draft")
         setState("idle");
-    } else if (state2 === "idle" && settings15.store.showDraft && hasDraft()) {
+    } else if (state2 === "idle" && settings18.store.showDraft && hasDraft()) {
       setState("draft");
     }
   }
@@ -6043,20 +7307,20 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     tags: ["chat"],
     enabledByDefault: true,
     updatedAt: "2026-10-10",
-    settings: settings15,
+    settings: settings18,
     start() {
       remember2();
       const onVisible = () => seen2();
       document.addEventListener("visibilitychange", onVisible);
       window.addEventListener("focus", onVisible);
-      cleanups9 = [
+      cleanups13 = [
         watchReplies(),
         on("replyStart", () => setState("streaming")),
         on("replyEnd", ({ error, stopped, left }) => {
           if (stopped || left)
             return setState("idle");
           const away = document.visibilityState !== "visible" || !document.hasFocus();
-          setState(error ? away ? "error" : "idle" : away && settings15.store.showDone ? "done" : "idle");
+          setState(error ? away ? "error" : "idle" : away && settings18.store.showDone ? "done" : "idle");
         }),
         onRouteChange(() => {
           if (state2 === "done" || state2 === "error" || state2 === "draft")
@@ -6064,14 +7328,14 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         }),
         onDomChange(() => {
           if (state2 !== "idle" && iconLinks().some((link) => link.href !== ours))
-            paint2();
+            paint4();
         }),
         () => document.removeEventListener("visibilitychange", onVisible),
         () => window.removeEventListener("focus", onVisible)
       ];
     },
     stop() {
-      for (const cleanup of cleanups9.splice(0))
+      for (const cleanup of cleanups13.splice(0))
         cleanup();
       setState("idle");
       originals = new Map;
@@ -6100,7 +7364,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const time = Date.parse(value);
     return Number.isFinite(time) ? time : null;
   }
-  var items = (value) => Array.isArray(value) ? value.slice(0, MAX_ITEMS) : isRecord(value) ? Object.values(value).slice(0, MAX_ITEMS) : [];
+  var items2 = (value) => Array.isArray(value) ? value.slice(0, MAX_ITEMS) : isRecord(value) ? Object.values(value).slice(0, MAX_ITEMS) : [];
   var productOf = (item) => isRecord(item) && isRecord(item.price) && typeof item.price.product === "string" ? item.price.product : null;
   function topProduct(list) {
     let best = null;
@@ -6161,7 +7425,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
         return null;
       if (endAt - reference > MAX_TRIAL_MS)
         return null;
-      const list = items(source.items);
+      const list = items2(source.items);
       const product = topProduct(list);
       if (endAt > reference && product === "business") {
         return {
@@ -6179,7 +7443,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     }
     if (!subscription)
       return { kind: "none", updatedAt: now };
-    const list = items(subscription.items);
+    const list = items2(subscription.items);
     const product = topProduct(list);
     if (product === "free" && !hasUnknownProduct(list))
       return { kind: "none", updatedAt: now };
@@ -6684,7 +7948,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
       return memory.get(key) ?? null;
     }
   }
-  function write(key, value) {
+  function write2(key, value) {
     try {
       if (value === null)
         pageWindow.localStorage.removeItem(key);
@@ -6759,7 +8023,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     const days = loadDays(space);
     days.set(day.date, day);
     prune(days, retain, now);
-    write(STATS_PREFIX + space, JSON.stringify({ days: Object.fromEntries(days) }));
+    write2(STATS_PREFIX + space, JSON.stringify({ days: Object.fromEntries(days) }));
     return days.get(day.date) ?? day;
   }
   function closeSegment(day, percent) {
@@ -6807,7 +8071,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
     return space && DATE_RE2.test(day.date) ? saveDay(space, { ...day, updatedAt: now }, retain, now) : null;
   }
   var readDay = (space, now = Date.now()) => loadDays(space).get(dateKey(now)) ?? null;
-  var clearDays = (space) => void (space && write(STATS_PREFIX + space, null));
+  var clearDays = (space) => void (space && write2(STATS_PREFIX + space, null));
   function looksWiped(day, previous) {
     if (day.carried > 0 || day.closedLast !== null || day.first === null || day.last === null)
       return false;
@@ -6854,7 +8118,7 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 
   // src/plugins/usage/statsDialog.ts
   var STATS_HOST_ID = "notionai-pp-usage-stats";
-  var CSS5 = `${CSS}
+  var CSS8 = `${CSS4}
 .sheet > .stack { gap: .875rem; }
 .toggle-row { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
 .toggle-row b { font-size: .875rem; font-weight: 500; }
@@ -6886,10 +8150,10 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
 .repair .input { width: 6rem; }
 .foot { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 `;
-  var overlay5 = null;
+  var overlay8 = null;
   function closeStats() {
-    overlay5?.destroy();
-    overlay5 = null;
+    overlay8?.destroy();
+    overlay8 = null;
   }
   function iconButton2(markup, label, onclick) {
     const button = el("button", { type: "button", class: "icon-btn close", title: label, "aria-label": label });
@@ -6959,8 +8223,8 @@ button { border: 0; background: transparent; color: inherit; font: inherit; curs
   function openStats(ctx, { confirmClearNow = false } = {}) {
     closeStats();
     ctx.refresh();
-    overlay5 = createOverlay(STATS_HOST_ID, CSS5, "");
-    const { root } = overlay5;
+    overlay8 = createOverlay(STATS_HOST_ID, CSS8, "");
+    const { root } = overlay8;
     const body = el("div", { class: "stack" });
     const sheet = el("div", { class: "sheet sheet-sm", role: "dialog", "aria-modal": "true" }, iconButton2(Icons.x, t("关闭", "Close"), closeStats), el("div", { class: "sheet-head" }, el("h3", { class: "sheet-title", text: t("按日期查看用量", "Usage by date") }), el("p", { class: "sheet-desc", text: t("每天用掉的月度额度百分比，仅保存在本设备。", "Share of the monthly allowance used each day, stored on this device.") })), body);
     const backdrop = el("div", { class: "layer layer-root" }, sheet);
@@ -7272,7 +8536,7 @@ button { font: inherit; }
 </div>`;
 
   // src/plugins/usage/ui.ts
-  var HOST_ID2 = "notionai-pp-usage";
+  var HOST_ID5 = "notionai-pp-usage";
   var KEYS = {
     anchor: "notionai-pp:usage:anchor:v1",
     legacyAnchor: "notion-ai-usage:position:v2"
@@ -7302,7 +8566,7 @@ button { font: inherit; }
     constructor(service, stats) {
       this.service = service;
       this.stats = stats;
-      this.overlay = createOverlay(HOST_ID2, USAGE_CSS, USAGE_HTML);
+      this.overlay = createOverlay(HOST_ID5, USAGE_CSS, USAGE_HTML);
       const { root } = this.overlay;
       this.q = (selector) => root.querySelector(selector);
       this.bind();
@@ -7463,7 +8727,7 @@ button { font: inherit; }
   }
 
   // src/plugins/usage/index.ts
-  var settings16 = definePluginSettings({
+  var settings19 = definePluginSettings({
     usageStats: {
       type: "boolean",
       label: { zh: "记录每日用量", en: "Daily usage stats" },
@@ -7513,24 +8777,24 @@ button { font: inherit; }
   var service = null;
   var widget = null;
   var stopRecording = null;
-  function record2() {
+  function record3() {
     const snapshot = service?.snapshot;
     const space = service?.spaceId;
-    if (!settings16.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
+    if (!settings19.store.usageStats || !space || !snapshot || snapshot.status === "not_applicable")
       return;
     const monthly = activeMonthly(snapshot);
     if (monthly)
-      recordSnapshot(space, monthly.percent, monthly.resetAt, settings16.store.retainDays);
+      recordSnapshot(space, monthly.percent, monthly.resetAt, settings19.store.retainDays);
   }
   var stats = {
     space: () => service?.spaceId ?? "",
-    enabled: () => settings16.store.usageStats,
-    setEnabled: (value) => void (settings16.store.usageStats = value),
-    retain: () => settings16.store.retainDays,
-    hoverDelay: () => settings16.store.hoverStatsDelay,
-    showPlan: () => settings16.store.showPlan,
-    showPercent: () => settings16.store.showPercent,
-    refresh: record2
+    enabled: () => settings19.store.usageStats,
+    setEnabled: (value) => void (settings19.store.usageStats = value),
+    retain: () => settings19.store.retainDays,
+    hoverDelay: () => settings19.store.hoverStatsDelay,
+    showPlan: () => settings19.store.showPlan,
+    showPercent: () => settings19.store.showPercent,
+    refresh: record3
   };
   function mount() {
     if (!service || widget || !document.body)
@@ -7549,10 +8813,10 @@ button { font: inherit; }
     enabledByDefault: true,
     updatedAt: "2026-10-08",
     startAt: "DocumentStart" /* DocumentStart */,
-    settings: settings16,
+    settings: settings19,
     start() {
       service = new UsageService;
-      stopRecording = service.onChange(record2);
+      stopRecording = service.onChange(record3);
       service.start();
       if (document.body)
         mount();
@@ -7570,7 +8834,7 @@ button { font: inherit; }
       service = null;
     },
     onSettingsChange() {
-      record2();
+      record3();
       widget?.render();
     }
   });
@@ -7578,7 +8842,7 @@ button { font: inherit; }
   // src/plugins/userQuotes/index.ts
   var STYLE_ID6 = "notionai-pp-user-quotes";
   var LEAF2 = `[${USER_STEP}] [data-content-editable-leaf]`;
-  var settings17 = definePluginSettings({
+  var settings20 = definePluginSettings({
     dim: {
       type: "boolean",
       label: { zh: "引用文字变淡", en: "Dim quoted text" },
@@ -7615,9 +8879,9 @@ button { font: inherit; }
 [${MIRROR}] > div:empty::after { content: "\\200b"; }
 [${MIRROR}] .q { border-inline-start: 3px solid var(--c-texTer, rgba(127,127,127,.55)); padding-inline-start: 10px; margin-block: 2px; }
 [${MIRROR}] .q > div:empty::after { content: "\\200b"; }
-${settings17.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
-${settings17.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
-${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
+${settings20.store.dim ? `[${MIRROR}] .q { color: var(--c-texSec, rgba(127,127,127,.95)); }` : ""}
+${settings20.store.italic ? `[${MIRROR}] .q { font-style: italic; }` : ""}
+${settings20.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: "“"; } [${MIRROR}] .q > div:last-child::after { content: "”"; }` : ""}`;
   }
   function buildMirror(text) {
     const fragment = document.createDocumentFragment();
@@ -7669,7 +8933,7 @@ ${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
     copy.replaceChildren(buildMirror(text));
     leaf.setAttribute(HIDDEN, "");
   }
-  function render2() {
+  function render3() {
     for (const leaf of document.querySelectorAll(LEAF2))
       mirror2(leaf);
     for (const copy of document.querySelectorAll(`[${MIRROR}]`)) {
@@ -7678,7 +8942,7 @@ ${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
         copy.remove();
     }
   }
-  var schedule4 = debounce(render2, 120, 400);
+  var schedule4 = debounce(render3, 120, 400);
   var stopDom6 = null;
   var textWatch = null;
   function applyStyle2() {
@@ -7701,10 +8965,10 @@ ${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
     tags: ["chat", "appearance"],
     enabledByDefault: true,
     updatedAt: "2026-10-08",
-    settings: settings17,
+    settings: settings20,
     start() {
       applyStyle2();
-      render2();
+      render3();
       stopDom6 = onDomChange((mutations) => {
         if (mutations.every((m) => m.target.closest?.(`[${MIRROR}]`)))
           return;
@@ -7738,7 +9002,7 @@ ${settings17.store.marks ? `[${MIRROR}] .q > div:first-child::before { content: 
   var MARK4 = "data-npp-chat-column";
   var COMPOSER5 = "[data-notion-chat-input-container]";
   var COMPOSER_INSET = 56;
-  var settings18 = definePluginSettings({
+  var settings21 = definePluginSettings({
     width: {
       type: "number",
       label: { zh: "对话最大宽度（像素）", en: "Maximum chat width (px)" },
@@ -7777,7 +9041,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       style.id = STYLE_ID7;
       (document.head ?? document.documentElement).append(style);
     }
-    style.textContent = css5(settings18.store.width);
+    style.textContent = css5(settings21.store.width);
   }
   var widerChat_default = definePlugin({
     name: "widerChat",
@@ -7789,7 +9053,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     icon: Icons.width,
     tags: ["appearance"],
     enabledByDefault: true,
-    settings: settings18,
+    settings: settings21,
     start() {
       apply4();
       mark2();
@@ -7814,7 +9078,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     const win = pageWindow;
     if (win[FLAG] || !isTopmostNotionDocument())
       return;
-    win[FLAG] = "[20261007] v1.11.7";
+    win[FLAG] = "[20261007] v1.12.0";
     installHooks();
     registerPlugins([
       settings_default,
@@ -7836,7 +9100,10 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
       noTelemetry_default,
       codeFold_default,
       autoAllow_default,
-      autoHidePanel_default
+      autoHidePanel_default,
+      chatDoneToast_default,
+      exportChat_default,
+      recentChats_default
     ]);
     startPlugins("DocumentStart" /* DocumentStart */);
     const ready = () => startPlugins("DomReady" /* DomReady */);
@@ -7845,7 +9112,7 @@ ${COMPOSER5} { max-width: ${width - COMPOSER_INSET}px !important; }`;
     else
       ready();
     pageWindow.addEventListener("storage", (event) => event.key === SETTINGS_KEY && reloadFromStorage(event.newValue));
-    logger8.info(`NotionAI++ ${"[20261007] v1.11.7"} started`);
+    logger8.info(`NotionAI++ ${"[20261007] v1.12.0"} started`);
   }
   boot();
 })();

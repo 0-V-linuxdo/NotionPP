@@ -49,13 +49,13 @@ export const CHECKS: Check[] = [
     {
         id: "send",
         label: { zh: "发送 / 停止按钮", en: "Send / stop button" },
-        plugins: ["replyNotification", "tabStatus", "chatNavigator"],
+        plugins: ["replyNotification", "tabStatus", "chatNavigator", "chatDoneToast"],
         found: () => !!document.querySelector(`[data-testid='agent-send-message-button'], ${STOP_BUTTON}`),
     },
     {
         id: "messages",
         label: { zh: "对话里的提问", en: "Questions in the chat" },
-        plugins: ["chatNavigator", "messageStars", "widerChat"],
+        plugins: ["chatNavigator", "messageStars", "widerChat", "exportChat", "recentChats"],
         found: hasMessages,
     },
     {
@@ -68,7 +68,7 @@ export const CHECKS: Check[] = [
     {
         id: "share",
         label: { zh: "右上角的分享按钮", en: "Share button at the top right" },
-        plugins: ["hideShare", "messageStars"],
+        plugins: ["hideShare", "messageStars", "exportChat"],
         found: () => !!document.querySelector(CHAT_SHARE),
     },
     {

@@ -7,8 +7,9 @@
 import { backupFileName, collectBackup, parseBackup, restoreBackup } from "@api/Backup";
 import { on } from "@api/Events";
 import { createOverlay, type Overlay } from "@api/Overlay";
-import { allPlugins, definePlugin, isEnabled, isNewPlugin, isRecentlyUpdated, pendingRestart, type Plugin, pluginError, type PluginTag, setEnabled } from "@api/PluginManager";
+import { allPlugins, definePlugin, isEnabled, isNewPlugin, isRecentlyUpdated, onPluginError, pendingRestart, type Plugin, pluginError, type PluginTag, RETRY_DELAYS_MS, setEnabled } from "@api/PluginManager";
 import { getValue, type OptionDef, resetValues, setValue } from "@api/Settings";
+import { dismissToast, showToast } from "@api/Toast";
 import { Icons } from "@utils/icons";
 import { button, h, icon, iconButton, optionRow, row, section, selectControl, switchControl } from "@utils/kit";
 import { pageWindow, t, type Text, tr } from "@utils/page";
@@ -408,6 +409,43 @@ export function openSettings(tab = "plugins") {
     dialog.focus();
 }
 
+/* ---------- errors on the page ---------- */
+
+/** A failed start is retried a few times as Notion fills in the page; only a lasting failure is shown. */
+const START_SETTLE_MS = RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1] + 1000;
+const errorTimers = new Map<string, number>();
+
+function toastError(name: string) {
+    const plugin = allPlugins().find(p => p.name === name);
+    const error = pluginError(name);
+    if (!plugin || !error || (error.stage === "start" && plugin.started)) return;
+    showToast({
+        key: `plugin-error:${name}`,
+        kind: "error",
+        title: t(`插件「${tr(plugin.title)}」出错`, `${tr(plugin.title)} ran into an error`),
+        body: `${error.message} · ${t("点击打开设置", "Click to open settings")}`,
+        duration: 12_000,
+        onClick: () => openSettings("plugins"),
+    });
+}
+
+function watchErrors() {
+    const stop = onPluginError(name => {
+        clearTimeout(errorTimers.get(name));
+        const stage = pluginError(name)?.stage;
+        errorTimers.set(name, window.setTimeout(() => {
+            errorTimers.delete(name);
+            toastError(name);
+        }, stage === "start" ? START_SETTLE_MS : 0));
+    });
+    return () => {
+        stop();
+        for (const timer of errorTimers.values()) clearTimeout(timer);
+        errorTimers.clear();
+        for (const plugin of allPlugins()) dismissToast(`plugin-error:${plugin.name}`);
+    };
+}
+
 export default definePlugin({
     name: SELF,
     title: { zh: "设置面板", en: "Settings" },
@@ -416,7 +454,7 @@ export default definePlugin({
     enabledByDefault: true,
     required: true,
     start() {
-        cleanups.push(on("openSettings", () => openSettings()), startQuickCss());
+        cleanups.push(on("openSettings", () => openSettings()), startQuickCss(), watchErrors());
         if (typeof GM_registerMenuCommand === "function") {
             try {
                 GM_registerMenuCommand(t("⚙️ NotionAI++ 设置", "⚙️ NotionAI++ settings"), () => openSettings());
